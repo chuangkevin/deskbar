@@ -9,6 +9,7 @@ from deskbar.layout import Rect
 from deskbar.ui import Hit
 
 LOGICAL_W, LOGICAL_H = 1920, 480
+DRAG_THRESHOLD = 24                     # px，觸控拖曳判定門檻
 
 
 class App:
@@ -28,6 +29,9 @@ class App:
         self.alarm_store = alarm_store
         self.firing = []
         self._last_alarm_check = None
+        self.view_anchor = None         # datetime|None，None=跟隨現在
+        self._drag_start = None         # 觸控/滑鼠按下時的邏輯座標 (x, y)
+        self._drag_last = None          # 拖曳中累計的最新座標（供未來即時重繪擴充）
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -58,7 +62,11 @@ class App:
         pygame.display.flip()
 
     def _dispatch(self, x: int, y: int) -> None:
+        from datetime import datetime, time as _time
+        from zoneinfo import ZoneInfo
+        from deskbar import sync
         from deskbar.ui import alarm_view, dashboard, detail, settings_view
+        from deskbar.viewwin import next_span
         for h in reversed(self.hits):   # 上層優先
             if h.rect.contains(x, y):
                 a = h.action
@@ -125,6 +133,22 @@ class App:
                     elif a == "rotate":
                         self.settings.rotation = 270 if self.settings.rotation == 90 else 90
                         self.on_save(self.settings)
+                    elif a == "cycle_span":
+                        self.settings.view_span = next_span(self.settings.view_span)
+                        self.on_save(self.settings)
+                    elif a == "cycle_view_mode":
+                        self.settings.view_mode = (
+                            "lanes" if self.settings.view_mode == "agenda" else "agenda")
+                        self.on_save(self.settings)
+                    elif a == "force_sync":
+                        sync.request_sync()
+                    elif a == "goto_now":
+                        self.view_anchor = None
+                    elif a == "goto_day":
+                        self.view_anchor = datetime.combine(
+                            h.data, _time(12, 0), tzinfo=ZoneInfo("Asia/Taipei"))
+                        self.settings.view_span = "day"
+                        self.on_save(self.settings)
                     elif a == "remove_account":
                         self.confirm_remove = h.data   # email；settings_view 畫二次確認
                     elif a == "confirm_remove":
@@ -164,13 +188,44 @@ class App:
             self.hits = alarm_view.render(self.logical, self.alarm_store,
                                           self.alarm_draft, now)
         else:
-            self.hits = dashboard.render(self.logical, snap, self.settings, now, clock_anim)
+            self.hits = dashboard.render(self.logical, snap, self.settings, now, clock_anim,
+                                         anchor=self.view_anchor)
             if self.view == "detail" and self.detail_event is not None:
                 self.hits += detail.render(self.logical, self.detail_event)
         self._flip()
         self._last_seq = snap.seq
         self._last_minute = now.minute
         self._last_clock_text = now.strftime("%H:%M")
+
+    def _handle_touch_up(self, x: int, y: int) -> None:
+        """FINGERUP／MOUSEBUTTONUP 共用：判斷是點擊還是時間軸平移拖曳。"""
+        if self._drag_start is None:
+            self._dispatch(x, y)
+            return
+        sx, _sy = self._drag_start
+        dx = x - sx
+        self._drag_start = None
+        from deskbar.ui.dashboard import TL_X0, TL_X1
+        if abs(dx) > DRAG_THRESHOLD and sx > TL_X0:
+            self._pan_view(dx, TL_X1 - TL_X0)
+            self._last_seq = -1      # 放手後強制重繪
+        else:
+            self._dispatch(x, y)
+
+    def _pan_view(self, dx_px: float, area_w: float) -> None:
+        """時間軸拖曳平移錨點：向右拖＝看過去。範圍 clamp 在資料窗口 [今天-7, 今天+30]。"""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from deskbar.viewwin import clamp_anchor, view_window
+        tz = ZoneInfo("Asia/Taipei")
+        now = datetime.now(tz)
+        with self.lock:
+            anchor_or_now = self.view_anchor if self.view_anchor is not None else now
+            win_start, win_end = view_window(self.settings.view_span, anchor_or_now, tz)
+            window_len = win_end - win_start
+            shift = dx_px / area_w * window_len
+            new_anchor = anchor_or_now - shift
+            self.view_anchor = clamp_anchor(new_anchor, now, tz)
 
     def run(self) -> None:
         self._init_display()
@@ -197,12 +252,32 @@ class App:
                 running = False
             elif ev.type == pygame.FINGERDOWN:
                 x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
-                self._dispatch(x, y)
+                self._drag_start = (x, y)
+                self._drag_last = (x, y)
+            elif ev.type == pygame.FINGERMOTION:
+                if self._drag_start is not None:
+                    x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
+                    self._drag_last = (x, y)
+            elif ev.type == pygame.FINGERUP:
+                x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
+                self._handle_touch_up(x, y)
             elif ev.type == pygame.MOUSEBUTTONDOWN:   # dev 模式滑鼠模擬觸控
                 nx = ev.pos[0] / max(1, self.win[0] - 1)
                 ny = ev.pos[1] / max(1, self.win[1] - 1)
                 x, y = transform.touch_to_logical(nx, ny, self.settings.rotation)
-                self._dispatch(x, y)
+                self._drag_start = (x, y)
+                self._drag_last = (x, y)
+            elif ev.type == pygame.MOUSEMOTION:
+                if self._drag_start is not None:
+                    nx = ev.pos[0] / max(1, self.win[0] - 1)
+                    ny = ev.pos[1] / max(1, self.win[1] - 1)
+                    x, y = transform.touch_to_logical(nx, ny, self.settings.rotation)
+                    self._drag_last = (x, y)
+            elif ev.type == pygame.MOUSEBUTTONUP:
+                nx = ev.pos[0] / max(1, self.win[0] - 1)
+                ny = ev.pos[1] / max(1, self.win[1] - 1)
+                x, y = transform.touch_to_logical(nx, ny, self.settings.rotation)
+                self._handle_touch_up(x, y)
         from datetime import datetime
         from zoneinfo import ZoneInfo
         import time
