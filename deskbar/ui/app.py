@@ -32,8 +32,12 @@ class App:
             os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
         pygame.init()
         flags = 0 if os.environ.get("DESKBAR_DEV") == "1" else pygame.FULLSCREEN
-        self.screen = pygame.display.set_mode(
-            (transform.NATIVE_W, transform.NATIVE_H), flags)
+        if os.environ.get("DESKBAR_DEV") == "1":
+            scale = float(os.environ.get("DESKBAR_DEV_SCALE", "0.45"))
+            self.win = (round(transform.NATIVE_W * scale), round(transform.NATIVE_H * scale))
+        else:
+            self.win = (transform.NATIVE_W, transform.NATIVE_H)
+        self.screen = pygame.display.set_mode(self.win, flags)
         pygame.display.set_caption("deskbar")
         pygame.mouse.set_visible(False)
         self.logical = pygame.Surface((LOGICAL_W, LOGICAL_H))
@@ -41,6 +45,8 @@ class App:
     def _flip(self) -> None:
         angle = transform.pygame_rotation_angle(self.settings.rotation)
         rotated = pygame.transform.rotate(self.logical, angle)
+        if self.win != (transform.NATIVE_W, transform.NATIVE_H):
+            rotated = pygame.transform.smoothscale(rotated, self.win)
         self.screen.blit(rotated, (0, 0))
         pygame.display.flip()
 
@@ -136,8 +142,8 @@ class App:
                     x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
                     self._dispatch(x, y)
                 elif ev.type == pygame.MOUSEBUTTONDOWN:   # dev 模式滑鼠模擬觸控
-                    nx = ev.pos[0] / (transform.NATIVE_W - 1)
-                    ny = ev.pos[1] / (transform.NATIVE_H - 1)
+                    nx = ev.pos[0] / max(1, self.win[0] - 1)
+                    ny = ev.pos[1] / max(1, self.win[1] - 1)
                     x, y = transform.touch_to_logical(nx, ny, self.settings.rotation)
                     self._dispatch(x, y)
             from datetime import datetime
