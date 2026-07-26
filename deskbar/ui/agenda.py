@@ -21,7 +21,7 @@ def render_agenda(surface, events, settings, win_start: datetime, win_end: datet
         (e for e in events if e.end > win_start and e.start < win_end),
         key=lambda e: e.start)
     if not in_window:
-        img = theme.font(26).render("這段期間沒有行程", True, theme.C["muted"])
+        img = theme.font(26).render("接下來沒有行程", True, theme.C["muted"])
         surface.blit(img, img.get_rect(center=(area.x + area.w / 2, area.y + area.h / 2)))
         return hits
 
@@ -35,7 +35,15 @@ def render_agenda(surface, events, settings, win_start: datetime, win_end: datet
         pygame.draw.rect(surface, theme.C["card"], card, border_radius=10)
         pygame.draw.rect(surface, main, pygame.Rect(card.x, card.y, 5, card.height),
                          border_radius=3)
-        when = "整日" if e.all_day else f"{e.start.strftime('%H:%M')}–{e.end.strftime('%H:%M')}"
+        d0, d1 = now.date(), e.start.date()
+        if d1 == d0:
+            prefix = ""
+        elif (d1 - d0).days == 1:
+            prefix = "明天 "
+        else:
+            prefix = f"{d1.month}/{d1.day} "
+        when = prefix + ("整日" if e.all_day
+                         else f"{e.start.strftime('%H:%M')}–{e.end.strftime('%H:%M')}")
         title = e.title if len(e.title) <= 10 else e.title[:10] + "…"
         img = theme.font(20).render(when, True, theme.C["muted"])
         surface.blit(img, (card.x + 20, card.y + 20))

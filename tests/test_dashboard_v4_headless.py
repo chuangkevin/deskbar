@@ -81,9 +81,10 @@ def test_month_span_returns_goto_day_hits():
 
 
 def test_agenda_mode_returns_open_detail_hits():
+    # 行程模式新契約（2026-07-26）：只列「從現在起」的行程，故事件須在 NOW 之後
     settings = _settings_with_account()
     settings.view_mode = "agenda"
-    st = _state_with_event(NOW.replace(hour=10), NOW.replace(hour=11))
+    st = _state_with_event(NOW + timedelta(hours=2), NOW + timedelta(hours=3))
     hits = dashboard.render(_surf(), st.snapshot(), settings, NOW)
     detail_hits = [h for h in hits if h.action == "open_detail"]
     assert detail_hits
@@ -109,13 +110,12 @@ def test_week_span_renders_long_event_without_crash():
     assert any(h.action == "open_detail" for h in hits)
 
 
-def test_week_span_suppresses_event_label_but_day_span_shows_it():
-    """規格：週檢視「免標籤」——事件色塊不畫標題文字，只留色塊。
+def test_week_span_shows_label_when_block_wide_enough():
+    """使用者要求（2026-07-26 推翻原規格）：週檢視的事件塊只要寬度夠
+    （>40px，約 4.8 小時以上）就要顯示標題（18px 小字），否則週視圖不可讀。
 
-    比較誠實的驗證方式：同一個 6 小時事件，分別在 day 檔／week 檔渲染，
-    在色塊內文字理應出現的那一小段水平帶掃描像素——
-    day 檔應該出現非底色像素（畫了字），week 檔應該完全等於色塊底色（沒畫字）。
-    這樣測的是「有沒有實際畫出文字」而不是內部旗標，比較不會被實作細節綁架。
+    驗證方式：同一個 6 小時事件（週檔寬約 51px），分別在 day／week 檔渲染，
+    掃描色塊內文字帶的像素——兩檔都應該出現非底色像素（都畫了字）。
     """
     # 刻意避開 NOW（14:37）落在事件區間內：「現在」豎線會穿過色塊，
     # 混進「這格有非底色像素」的判斷，干擾標籤有無的驗證。
@@ -133,12 +133,12 @@ def test_week_span_suppresses_event_label_but_day_span_shows_it():
         return surf, block.rect
 
     def _has_non_bg_pixel(surf, rect, bg):
-        # 文字左上角落在 (rect.x+8, rect.y + rect.h//2 - 14)（見 dashboard._text 呼叫），
-        # 掃這附近一小塊矩形（涵蓋整個字高＋開頭幾個字元寬），避免只挑到抗鋸齒空白列。
+        # 文字帶掃描範圍取兩種字級（day 22px 於 -14 起、week 18px 於 -12 起）的聯集，
+        # 避免只挑到抗鋸齒空白列。
         y0 = int(rect.y) + int(rect.h) // 2 - 14
-        x0 = int(rect.x) + 8
-        for y in range(y0, y0 + 26):
-            for x in range(x0, x0 + min(int(rect.w) - 12, 80)):
+        x0 = int(rect.x) + 6
+        for y in range(y0, y0 + 28):
+            for x in range(x0, x0 + min(int(rect.w) - 10, 80)):
                 if surf.get_at((x, y))[:3] != bg:
                     return True
         return False
@@ -147,7 +147,7 @@ def test_week_span_suppresses_event_label_but_day_span_shows_it():
     surf_week, r_week = _render_span("week")
 
     assert _has_non_bg_pixel(surf_day, r_day, dark), "day 檔應該畫出事件標題文字"
-    assert not _has_non_bg_pixel(surf_week, r_week, dark), "week 檔應該「免標籤」不畫文字"
+    assert _has_non_bg_pixel(surf_week, r_week, dark), "week 檔的寬事件塊也應該畫出標題"
 
 
 def test_month_span_does_not_emit_goto_day_for_out_of_window_days():
@@ -167,7 +167,7 @@ def test_agenda_mode_on_month_span_still_uses_agenda_not_month_grid():
     settings = _settings_with_account()
     settings.view_span = "month"
     settings.view_mode = "agenda"
-    st = _state_with_event(NOW.replace(hour=10), NOW.replace(hour=11))
+    st = _state_with_event(NOW + timedelta(hours=2), NOW + timedelta(hours=3))
     hits = dashboard.render(_surf(), st.snapshot(), settings, NOW)
     actions = {h.action for h in hits}
     assert "goto_day" not in actions

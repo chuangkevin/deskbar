@@ -56,7 +56,10 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None)
                              anchor is not None, hits)
 
     if settings.view_mode == "agenda":
-        hits += agenda.render_agenda(surface, visible, settings, win_start, win_end, now, TL_AREA)
+        upcoming = [e for e in snap.events
+                    if e.account in lane_emails and e.end > now]
+        hits += agenda.render_agenda(surface, upcoming, settings, now,
+                                     now + timedelta(days=31), now, TL_AREA)
     elif span == "month":
         hits += monthgrid.render_month(surface, visible, lane_emails, settings, win_start,
                                        TL_AREA, now)
@@ -70,9 +73,12 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None)
             r = pygame.Rect(int(p.rect.x), int(p.rect.y) + 2, int(p.rect.w), int(p.rect.h) - 4)
             pygame.draw.rect(surface, dark, r, border_radius=6)
             label = ("◀ " if p.clip_l else "") + p.event.title + (" ▶" if p.clip_r else "")
-            if span != "week" and r.width > 40:   # 規格：週檢視免標籤，只留色塊
+            if r.width > 40:                      # 塊夠寬就顯示標題；週檢視用小字
                 clipped = surface.subsurface(r.clip(surface.get_rect()))
-                _text(clipped, label, 22, main, 8, r.height // 2 - 14)
+                if span == "week":
+                    _text(clipped, label, 18, main, 6, r.height // 2 - 12)
+                else:
+                    _text(clipped, label, 22, main, 8, r.height // 2 - 14)
             hits.append(Hit(p.rect, "open_detail", p.event))
         if overflow:
             _text(surface, f"＋{len(overflow)} 更多", 20, theme.C["muted"], TL_X1, 44, "topright")
@@ -83,7 +89,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None)
 def _render_panel(surface, snap, settings, now, hits, clock_anim=None):
     anim = clock_anim if clock_anim else (now.strftime("%H:%M"), 1.0)
     from deskbar.ui import flipclock
-    flipclock.draw(surface, 40, 40, now.strftime("%H:%M"), anim[0], anim[1])
+    flipclock.draw(surface, 36, 40, now.strftime("%H:%M"), anim[0], anim[1],
+                   digit_h=118)   # 4 卡+冒號總寬 ≤440，收在左面板 480px 內
     wd = "週" + "一二三四五六日"[now.weekday()]
     _text(surface, f"{now.month}月{now.day}日 {wd}", 28, theme.C["text2"], 44, 190)
     w = snap.weather
