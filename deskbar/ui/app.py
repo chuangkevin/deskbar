@@ -15,7 +15,7 @@ class App:
         self.settings = settings
         self.lock = settings_lock
         self.on_save = on_save          # callable：settings 變更後持久化
-        self.view = "dashboard"         # dashboard | settings | detail
+        self.view = "dashboard"         # dashboard | settings | detail | alarms
         self.detail_event = None
         self.hits: list[Hit] = []
         self._last_seq = -1
@@ -26,6 +26,11 @@ class App:
         self.alarm_store = alarm_store
         self.firing = []
         self._last_alarm_check = None
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Asia/Taipei"))
+        self.alarm_draft = {"hour": (now.hour + 1) % 24, "minute": 0, "days": set(),
+                             "label_idx": 0}
 
     def _init_display(self) -> None:
         if os.environ.get("DESKBAR_DEV") != "1":
@@ -51,7 +56,7 @@ class App:
         pygame.display.flip()
 
     def _dispatch(self, x: int, y: int) -> None:
-        from deskbar.ui import dashboard, detail, settings_view
+        from deskbar.ui import alarm_view, dashboard, detail, settings_view
         for h in reversed(self.hits):   # 上層優先
             if h.rect.contains(x, y):
                 a = h.action
@@ -64,10 +69,36 @@ class App:
                 with self.lock:
                     if a == "open_settings":
                         self.view = "settings"
+                    elif a == "open_alarms":
+                        self.view = "alarms"
                     elif a == "open_detail":
                         self.view, self.detail_event = "detail", h.data
                     elif a in ("close", "settings_done"):
                         self.view = "dashboard"
+                    elif a == "toggle_alarm":
+                        if self.alarm_store is not None:
+                            current = next((al.enabled for al in self.alarm_store.list()
+                                             if al.id == h.data), None)
+                            if current is not None:
+                                self.alarm_store.set_enabled(h.data, not current)
+                    elif a == "delete_alarm":
+                        if self.alarm_store is not None:
+                            self.alarm_store.remove(h.data)
+                    elif a == "draft_hour":
+                        alarm_view.bump_draft(self.alarm_draft, "hour", h.data)
+                    elif a == "draft_minute":
+                        alarm_view.bump_draft(self.alarm_draft, "minute", h.data)
+                    elif a == "draft_day":
+                        alarm_view.bump_draft(self.alarm_draft, "day", h.data)
+                    elif a == "draft_label":
+                        alarm_view.bump_draft(self.alarm_draft, "label", h.data)
+                    elif a == "add_alarm":
+                        if self.alarm_store is not None:
+                            hh, mm = self.alarm_draft["hour"], self.alarm_draft["minute"]
+                            days = sorted(self.alarm_draft["days"])
+                            label = alarm_view.LABELS[self.alarm_draft["label_idx"]]
+                            self.alarm_store.add("%02d:%02d" % (hh, mm), days, label)
+                            self.alarm_draft["days"] = set()
                     elif a == "toggle_cal":
                         email, cal = h.data
                         cals = self.settings.accounts[email].calendars
@@ -107,7 +138,7 @@ class App:
     def _render(self, clock_anim=None) -> None:
         from datetime import datetime
         from zoneinfo import ZoneInfo
-        from deskbar.ui import alarm_overlay, dashboard, detail, settings_view
+        from deskbar.ui import alarm_overlay, alarm_view, dashboard, detail, settings_view
         now = datetime.now(ZoneInfo("Asia/Taipei"))
         if self.firing:
             self.hits = alarm_overlay.render(self.logical, self.firing[0], now)
@@ -118,6 +149,9 @@ class App:
         if self.view == "settings":
             self.hits = settings_view.render(self.logical, snap, self.settings,
                                              self.confirm_remove)
+        elif self.view == "alarms":
+            self.hits = alarm_view.render(self.logical, self.alarm_store,
+                                          self.alarm_draft, now)
         else:
             self.hits = dashboard.render(self.logical, snap, self.settings, now, clock_anim)
             if self.view == "detail" and self.detail_event is not None:
