@@ -2,10 +2,10 @@ PI ?= kevin@100.98.35.59
 KEY ?= ~/.ssh/kevinhome_key
 
 test:
-	python3 -m pytest -q
+	.venv/bin/python -m pytest -q
 
 dev:
-	DESKBAR_DEV=1 DESKBAR_FAKE=1 python3 -m deskbar
+	DESKBAR_DEV=1 DESKBAR_FAKE=1 .venv/bin/python -m deskbar
 
 deploy:
 	rsync -az --delete -e "ssh -i $(KEY)" --exclude .git --exclude .venv --exclude __pycache__ --exclude docs --exclude tests ./ $(PI):/home/kevin/deskbar/
