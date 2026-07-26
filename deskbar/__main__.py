@@ -46,7 +46,8 @@ def main() -> None:
     alarm_store.load()
     if os.environ.get("DESKBAR_NO_WEB") != "1":
         from deskbar.webserver import start_web
-        start_web(alarm_store)
+        start_web(alarm_store, settings_provider=settings, settings_lock=lock,
+                  on_save=config.save_settings)
 
     app = App(state, settings, lock, on_save=config.save_settings,
               alarm_store=alarm_store)

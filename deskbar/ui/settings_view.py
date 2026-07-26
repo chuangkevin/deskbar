@@ -52,7 +52,16 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
         _btn(surface, "移除", x + 330, 170, 84, 52, "remove_account", email, hits,
              size=22, fg=theme.C["warn"])
         cy = 230
-        for cal_id, enabled in list(acc.calendars.items())[:4]:
+        row_h = 36
+        max_rows = 5
+        cal_items = list(acc.calendars.items())
+        if len(cal_items) > max_rows:
+            shown_items = cal_items[:max_rows - 1]
+            remaining = len(cal_items) - len(shown_items)
+        else:
+            shown_items = cal_items
+            remaining = 0
+        for cal_id, enabled in shown_items:
             box = pygame.Rect(x + 16, cy, 24, 24)
             pygame.draw.rect(surface, theme.C["panel_line"], box, 0 if enabled else 1,
                              border_radius=4)
@@ -61,8 +70,11 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
             label = cal_id if len(cal_id) <= 24 else cal_id[:22] + "…"
             surface.blit(theme.font(20).render(label, True, theme.C["text2"]),
                          (x + 52, cy))
-            hits.append(Hit(Rect(x + 16, cy - 6, 400, 36), "toggle_cal", (email, cal_id)))
-            cy += 40
+            hits.append(Hit(Rect(x + 16, cy - 6, 400, row_h), "toggle_cal", (email, cal_id)))
+            cy += row_h
+        if remaining > 0:
+            surface.blit(theme.font(20).render(f"其餘 {remaining} 個用手機網頁管理", True,
+                                               theme.C["muted"]), (x + 16, cy))
         x += 460
     if x == 40:
         surface.blit(theme.font(24).render("尚無帳號——在 Mac 執行 make add-account",
