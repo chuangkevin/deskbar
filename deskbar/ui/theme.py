@@ -1,5 +1,4 @@
 import os
-from functools import lru_cache
 
 import pygame
 
@@ -19,15 +18,24 @@ _FONT_PATHS = [
     os.environ.get("DESKBAR_FONT", ""),
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
 ]
+_font_cache: dict = {}
 
 
-@lru_cache(maxsize=32)
 def font(size: int) -> "pygame.font.Font":
-    for p in _FONT_PATHS:
-        if p and os.path.exists(p):
-            return pygame.font.Font(p, size)
-    name = pygame.font.match_font("pingfangtc,pingfang,helvetica,arial") or None
-    return pygame.font.Font(name, size)
+    if not pygame.font.get_init():
+        pygame.font.init()
+        _font_cache.clear()
+    if size not in _font_cache:
+        f = None
+        for p in _FONT_PATHS:
+            if p and os.path.exists(p):
+                f = pygame.font.Font(p, size)
+                break
+        if f is None:
+            name = pygame.font.match_font("pingfangtc,pingfang,helvetica,arial") or None
+            f = pygame.font.Font(name, size)
+        _font_cache[size] = f
+    return _font_cache[size]
 
 
 def account_color(idx: int):

@@ -1,4 +1,3 @@
-import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -13,8 +12,6 @@ TZ = ZoneInfo("Asia/Taipei")
 
 
 def test_render_returns_hits_without_crash():
-    os.environ["SDL_VIDEODRIVER"] = "dummy"
-    pygame.init()
     surf = pygame.Surface((1920, 480))
     settings = Settings()
     settings.ensure_account("a@x.com").calendars["c"] = True
@@ -26,4 +23,3 @@ def test_render_returns_hits_without_crash():
     hits = dashboard.render(surf, st.snapshot(), settings, now)
     actions = {h.action for h in hits}
     assert "open_settings" in actions and "open_detail" in actions
-    pygame.quit()
