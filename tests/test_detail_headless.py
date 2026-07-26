@@ -38,17 +38,6 @@ def test_detail_card_does_not_overlap_left_panel():
     assert card.x + card.w <= TL_X1
 
 
-def test_allday_list_card_does_not_overlap_left_panel():
-    surf = pygame.Surface((1920, 480))
-    events = [Event("e", "a@x.com", "c", "整日事件",
-                    datetime(2026, 7, 27, tzinfo=TZ),
-                    datetime(2026, 7, 28, tzinfo=TZ), True, None, None)]
-    hits = detail.render_allday_list(surf, events)
-    card = _card_rect(hits)
-    assert card.x >= TL_X0 > PANEL_W
-    assert card.x + card.w <= TL_X1
-
-
 def test_long_description_wraps_to_at_most_two_lines_with_ellipsis():
     """描述最多畫 2 行（量測式換行），放不下的內容以「…」結尾——直接驗證
     detail.py 實際會用的參數餵給 theme.wrap_lines，跟 render() 內部邏輯一致。"""

@@ -23,6 +23,8 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
     hits: list[Hit] = []
     img = theme.font(32).render("帳號與日曆", True, theme.C["text"])
     surface.blit(img, (40, 24))
+    _btn(surface, f"在場感應：{'開' if settings.presence_enabled else '關'}",
+         220, 20, 260, 52, "toggle_presence", None, hits, size=22)
     _btn(surface, f"同步頻率：{settings.sync_interval_min} 分鐘", 1180, 20, 280, 52,
          "cycle_sync_interval", None, hits, size=22)
     _btn(surface, "旋轉螢幕", 1480, 20, 200, 52, "rotate", None, hits)

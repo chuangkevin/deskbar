@@ -44,6 +44,9 @@ def main() -> None:
     from deskbar.claudeusage import start_usage_thread
     start_usage_thread(state)      # 沒有 claude_oauth.json（沒跑過 claude-login）就直接跳過
 
+    from deskbar.presence import start_presence_thread
+    start_presence_thread(state, settings, lock)   # 沒設定 presence_enabled/mac 就自動跳過
+
     from deskbar.alarms import AlarmStore
     alarm_store = AlarmStore()
     alarm_store.load()

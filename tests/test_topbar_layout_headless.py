@@ -56,12 +56,6 @@ def _allday_settings_and_events(n: int, long_title: bool,
     return settings, events
 
 
-def _chip_row_hits(hits):
-    return [h for h in hits if h.rect.y == dashboard.CHIP_ROW_Y]
-
-
-
-
 def test_zero_allday_events_renders_without_overflow_chip():
     settings = Settings()
     settings.ensure_account("a@x.com").calendars["c"] = True
@@ -69,3 +63,23 @@ def test_zero_allday_events_renders_without_overflow_chip():
     st.set_events("a@x.com", [], NOW)
     hits = dashboard.render(_surf(), st.snapshot(), settings, NOW)
     assert "open_allday_list" not in {h.action for h in hits}
+
+
+def test_allday_events_never_produce_topbar_chip_hits():
+    """2026-07-27：頂欄整日行程膠囊（_render_allday／_layout_allday_chips）已整段
+    移除——即使塞進大量長標題整日事件，也不該再有 open_allday_list hit；頂帶
+    （y<52，寬度/模式鈕與回到今天鈕所在的那條）也不該再出現任何 chip 產生的
+    open_detail hit，該區域只允許既有的三個控制鈕。整日事件改在 agenda 模式的
+    日欄與 weekgrid 的格子內顯示，不再佔用頂帶空間。"""
+    settings, events = _allday_settings_and_events(30, long_title=True)
+    st = AppState()
+    st.set_events("a@x.com", events, NOW)
+    settings.view_span = "week"
+    hits = dashboard.render(_surf(), st.snapshot(), settings, NOW)
+    assert "open_allday_list" not in {h.action for h in hits}
+    # 中欄頂帶（x>=TL_X0、y<52）：整日 chips 移除前會擠在這塊，現在只允許既有的
+    # 寬度/模式/回到今天三顆控制鈕。
+    topbar_zone_hits = [h for h in hits if h.rect.x >= dashboard.TL_X0 and h.rect.y < 52]
+    assert topbar_zone_hits and all(
+        h.action in ("cycle_span", "cycle_view_mode", "goto_now") for h in topbar_zone_hits), \
+        f"頂欄（x>=TL_X0, y<52）不該再有整日 chip 產生的 hit：{topbar_zone_hits}"

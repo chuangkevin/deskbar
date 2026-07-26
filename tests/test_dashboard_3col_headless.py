@@ -188,6 +188,3 @@ def test_gap_between_mid_column_and_usage_column_stays_clean():
     assert not bad, f"中欄／右欄留白區被畫到了：{bad[:10]}"
 
 
-# ---------------------------------------------------------------- 整日 chips 仍守 CHIP_MAX_X
-
-

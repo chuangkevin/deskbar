@@ -216,8 +216,6 @@ class App:
                                              weather_tick=self._weather_tick)
                 if self.view == "detail" and self.detail_event is not None:
                     self.hits += detail.render(self.logical, self.detail_event)
-                elif self.view == "allday_list" and self.allday_events is not None:
-                    self.hits += detail.render_allday_list(self.logical, self.allday_events)
 
     def _render(self, clock_anim=None) -> None:
         from datetime import datetime
@@ -235,32 +233,36 @@ class App:
         self._last_minute = now.minute
         self._last_clock_text = now.strftime("%H:%M")
 
-    def _start_transition(self) -> None:
-        """cycle_span/cycle_view_mode/goto_now/goto_day 觸發時呼叫：把「現在畫面」存成
-        過場用的舊畫面快照。沒有真的顯示器時（測試直接呼叫 _dispatch，不經 _init_display）
-        self.logical 不存在，直接跳過——過場只是視覺加分，不該讓沒有畫面可存的呼叫端炸掉。
+    def _start_transition(self, direction: int = 1) -> None:
+        """cycle_span/cycle_view_mode/goto_now/goto_day 觸發時呼叫：把「現在畫面」交給
+        SlideTransition 存成過場素材。沒有真的顯示器時（測試直接呼叫 _dispatch，不經
+        _init_display）self.logical 不存在，直接跳過——過場只是視覺加分，不該讓沒有畫面
+        可存的呼叫端炸掉。direction>=0：舊畫面往左滑出／新畫面從右側滑入（前進）；
+        direction<0：方向相反（後退）。
         """
         logical = getattr(self, "logical", None)
         if logical is not None:
-            self._transition_old = logical.copy()
-            self._transition_frame = 0
+            import time
+            self._transition.start(logical, direction)
+            self._transition_start = time.monotonic()
 
     def _render_transition_frame(self, now) -> None:
-        """切換過場的其中一幀：先照常畫「新」畫面，再把「舊」畫面以遞減寬度往左滑出蓋上去
-        （舊畫面右側先露出新畫面），共 TRANSITION_FRAMES 幀後舊畫面完全滑出、過場結束。"""
+        """切換過場的其中一幀：先照常畫「新」畫面進 self.logical，再交給 SlideTransition
+        依實際經過秒數合成舊畫面滑出的效果；超過 DURATION（0.2s）後直接使用新畫面本身，
+        過場結束。"""
+        import time
         snap = self.state.snapshot()
         self._draw_frame(snap, now)
-        frac = (self._transition_frame + 1) / TRANSITION_FRAMES
-        old_x = -round(LOGICAL_W * frac)
-        self.logical.blit(self._transition_old, (old_x, 0))
+        elapsed = time.monotonic() - self._transition_start
+        composed = self._transition.frame(self.logical, elapsed)
+        if composed is not self.logical:
+            self.logical.blit(composed, (0, 0))
         self._flip()
         self._last_seq = snap.seq
         self._last_minute = now.minute
         self._last_clock_text = now.strftime("%H:%M")
-        self._transition_frame += 1
-        if self._transition_frame >= TRANSITION_FRAMES:
-            self._transition_frame = None
-            self._transition_old = None
+        if not self._transition.active():
+            self._transition_start = None
 
     def _handle_touch_up(self, x: int, y: int) -> None:
         """FINGERUP／MOUSEBUTTONUP 共用：判斷是點擊還是時間軸平移拖曳。"""
@@ -308,8 +310,21 @@ class App:
                 new_anchor = anchor_or_now - shift
             self.view_anchor = clamp_anchor(new_anchor, now, tz)
 
+    def _play_splash(self) -> None:
+        """開機播一次 deskbar 掃光 splash（13 張 × 60ms ≈ 0.78s）；
+        DESKBAR_NO_SPLASH=1 時跳過（開發/測試模式用，避免每次重開發流程都要等）。"""
+        if os.environ.get("DESKBAR_NO_SPLASH") == "1":
+            return
+        from deskbar.ui import transitions
+        for frame in transitions.splash_frames(LOGICAL_W, LOGICAL_H):
+            self.logical.blit(frame, (0, 0))
+            self._flip()
+            pygame.event.pump()      # 避免視窗管理器誤判成無回應
+            pygame.time.delay(60)
+
     def run(self) -> None:
         self._init_display()
+        self._play_splash()
         clock = pygame.time.Clock()
         self._render()
         running = True
@@ -363,6 +378,10 @@ class App:
         from zoneinfo import ZoneInfo
         import time
         now = datetime.now(ZoneInfo("Asia/Taipei"))
+        current_second = int(now.timestamp())
+        if self._last_tick_second is None or current_second != self._last_tick_second:
+            self._weather_tick += 1        # 天氣微動態節奏：每秒 +1，不跟著畫格數走
+            self._last_tick_second = current_second
         if self.alarm_store is not None:
             due = self.alarm_store.due(self._last_alarm_check, now)
             self._last_alarm_check = now
@@ -373,6 +392,10 @@ class App:
             self._anim_start = None
             self._render()          # 閃爍需每圈重繪
             clock.tick(10)
+            return running
+        if self._transition_start is not None:    # 切換過場優先於翻牌動畫（兩者不會同時發生）
+            self._render_transition_frame(now)
+            clock.tick(30)
             return running
         # 翻牌動畫（30fps 燒 400ms）只在 dashboard 頁才有意義；離開 dashboard 就不該
         # 燒 CPU（1GHz 的 Pi Zero 2 W 上，設定/鬧鐘頁跑這個純屬浪費）。

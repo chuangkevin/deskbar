@@ -40,38 +40,3 @@ def render(surface, event) -> list[Hit]:
     surface.blit(img, (TEXT_X, CARD_Y + 312))
     return [Hit(Rect(0, 0, 1920, 480), "close", None),
             Hit(Rect(card.x, card.y, card.w, card.h), "noop", None)]
-
-
-MAX_ALLDAY_LIST_LINES = 8   # 超過就收成「…以及其他 N 筆」，避免蓋過下方關閉提示
-
-# 同樣要完全落在中欄（TL_X0=420..TL_X1=1520）內，不蓋左欄也不溢進右欄。
-ALLDAY_CARD_X, ALLDAY_CARD_Y, ALLDAY_CARD_W, ALLDAY_CARD_H = 520, 40, 900, 400
-ALLDAY_TEXT_X = ALLDAY_CARD_X + 40
-
-
-def render_allday_list(surface, events) -> list[Hit]:
-    """整日 chips 排不下時的「＋N 整日」點開浮層：沿用 render() 同一套全螢幕
-    半透明遮罩＋卡片樣式，簡單列出全部整日事件的日期＋標題，點外側關閉
-    （noop/close 機制與 render() 完全共用）。"""
-    overlay = pygame.Surface((1920, 480), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 170))
-    surface.blit(overlay, (0, 0))
-    card = pygame.Rect(ALLDAY_CARD_X, ALLDAY_CARD_Y, ALLDAY_CARD_W, ALLDAY_CARD_H)
-    pygame.draw.rect(surface, theme.C["card"], card, border_radius=10)
-    img = theme.font(32).render(f"整日行程（{len(events)}）", True, theme.C["text"])
-    surface.blit(img, (ALLDAY_TEXT_X, ALLDAY_CARD_Y + 20))
-    y = ALLDAY_CARD_Y + 76
-    shown = events[:MAX_ALLDAY_LIST_LINES]
-    for e in shown:
-        line = f"{e.start.month}/{e.start.day} · {e.title}"
-        img = theme.font(24).render(line[:60], True, theme.C["text2"])
-        surface.blit(img, (ALLDAY_TEXT_X, y))
-        y += 32
-    extra = len(events) - len(shown)
-    if extra > 0:
-        img = theme.font(22).render(f"…以及其他 {extra} 筆", True, theme.C["muted"])
-        surface.blit(img, (ALLDAY_TEXT_X, y))
-    img = theme.font(22).render("點擊空白處關閉", True, theme.C["muted"])
-    surface.blit(img, (ALLDAY_TEXT_X, ALLDAY_CARD_Y + 370))
-    return [Hit(Rect(0, 0, 1920, 480), "close", None),
-            Hit(Rect(card.x, card.y, card.w, card.h), "noop", None)]
