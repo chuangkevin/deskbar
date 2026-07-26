@@ -152,6 +152,12 @@ class App:
                         self.view_anchor = clamp_anchor(candidate, datetime.now(tz), tz)
                         self.settings.view_span = "day"
                         self.on_save(self.settings)
+                    elif a == "cycle_sync_interval":
+                        cycle = [1, 3, 5, 10, 30]
+                        cur = self.settings.sync_interval_min
+                        i = cycle.index(cur) if cur in cycle else -1
+                        self.settings.sync_interval_min = cycle[(i + 1) % len(cycle)]
+                        self.on_save(self.settings)
                     elif a == "remove_account":
                         self.confirm_remove = h.data   # email；settings_view 畫二次確認
                     elif a == "confirm_remove":

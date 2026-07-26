@@ -145,8 +145,8 @@ def _render_window_label(surface, span, anchor_or_now, win_start, win_end, show_
     r = img.get_rect(center=(cx, 22))
     surface.blit(img, r)
     if show_goto_now:
-        btn = Rect(r.right + 12, 4, 96, 40)
-        _chip_btn(surface, "回今天", btn, "goto_now", hits, size=20)
+        btn = Rect(r.right + 12, 4, 110, 40)
+        _chip_btn(surface, "回到今天", btn, "goto_now", hits, size=20)
 
 
 def _render_grid_range(surface, span, win_start, win_end):

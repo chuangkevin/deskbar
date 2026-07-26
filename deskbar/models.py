@@ -4,6 +4,10 @@ from datetime import datetime, date, time
 from zoneinfo import ZoneInfo
 
 
+MAX_DESCRIPTION_LEN = 200
+MAX_LOCATION_LEN = 80
+
+
 @dataclass(frozen=True)
 class Event:
     id: str
@@ -33,6 +37,12 @@ def normalize_event(raw: dict, account: str, calendar_id: str, tz: ZoneInfo) -> 
         end, _ = _parse_side(raw["end"], tz)
     except (KeyError, ValueError):
         return None
+    location = raw.get("location")
+    if location is not None:
+        location = location[:MAX_LOCATION_LEN]
+    description = raw.get("description")
+    if description is not None:
+        description = description[:MAX_DESCRIPTION_LEN]
     return Event(
         id=raw.get("id", ""),
         account=account,
@@ -41,8 +51,8 @@ def normalize_event(raw: dict, account: str, calendar_id: str, tz: ZoneInfo) -> 
         start=start,
         end=end,
         all_day=all_day,
-        location=raw.get("location"),
-        description=raw.get("description"),
+        location=location,
+        description=description,
     )
 
 

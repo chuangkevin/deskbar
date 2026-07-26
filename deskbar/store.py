@@ -35,13 +35,22 @@ class AppState:
         self._statuses: dict[str, AccountStatus] = {}
         self._seq = 0
         self._syncing = False
+        self._cached_snapshot: Snapshot | None = None
+        self._cached_seq: int | None = None
 
     def snapshot(self) -> Snapshot:
+        """render 每格都會呼叫；事件全量重排序在幾百筆時不算貴，但沒必要每格白做。
+        只要 _seq 沒變（沒有任何 set_* 呼叫發生），就回傳上次建好的快取。"""
         with self._lock:
+            if self._cached_snapshot is not None and self._cached_seq == self._seq:
+                return self._cached_snapshot
             events = [e for lst in self._events.values() for e in lst]
             events.sort(key=lambda e: (e.start, e.id))
-            return Snapshot(events, self._weather, dict(self._statuses), self._seq,
+            snap = Snapshot(events, self._weather, dict(self._statuses), self._seq,
                             self._syncing)
+            self._cached_snapshot = snap
+            self._cached_seq = self._seq
+            return snap
 
     def set_syncing(self, v: bool) -> None:
         with self._lock:

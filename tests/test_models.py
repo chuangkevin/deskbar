@@ -42,6 +42,19 @@ def test_untitled_gets_placeholder():
     assert normalize_event(raw, "a@x.com", "c", TZ).title == "（未命名）"
 
 
+def test_description_and_location_truncated_at_ingestion():
+    raw = {
+        "id": "e6", "summary": "長會", "status": "confirmed",
+        "start": {"dateTime": "2026-07-27T02:00:00Z"},
+        "end": {"dateTime": "2026-07-27T03:00:00Z"},
+        "location": "L" * 100,
+        "description": "D" * 300,
+    }
+    e = normalize_event(raw, "a@x.com", "cal1", TZ)
+    assert len(e.location) == 80 and e.location == "L" * 80
+    assert len(e.description) == 200 and e.description == "D" * 200
+
+
 def test_json_roundtrip():
     raw = {"id": "e5", "summary": "T", "status": "confirmed",
            "start": {"dateTime": "2026-07-27T02:00:00Z"},

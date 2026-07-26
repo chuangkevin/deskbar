@@ -14,7 +14,7 @@ import pygame
 from deskbar import sync
 from deskbar.config import Settings
 from deskbar.store import AppState
-from deskbar.ui import dashboard
+from deskbar.ui import dashboard, settings_view
 from deskbar.ui.app import App
 from deskbar.ui.dashboard import TL_X0, TL_X1
 
@@ -92,6 +92,19 @@ def test_goto_day_dispatch_sets_anchor_noon_and_day_span(tmp_path, monkeypatch):
     assert app.view_anchor is not None
     assert app.view_anchor.hour == 12 and app.view_anchor.minute == 0
     assert app.settings.view_span == "day"
+
+
+def test_cycle_sync_interval_dispatch_cycles_5_to_10(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch)
+    app.view = "settings"
+    app.settings.sync_interval_min = 5
+    hits = settings_view.render(_dummy_surface(), app.state.snapshot(), app.settings, None)
+    app.hits = hits
+    hit = next(h for h in hits if h.action == "cycle_sync_interval")
+    cx, cy = hit.rect.x + hit.rect.w / 2, hit.rect.y + hit.rect.h / 2
+    app._dispatch(cx, cy)
+    assert app.settings.sync_interval_min == 10
+    assert app._saved, "cycle_sync_interval 應呼叫 on_save"
 
 
 def test_drag_inside_timeline_pans_anchor_into_past(tmp_path, monkeypatch):

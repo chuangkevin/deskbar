@@ -23,6 +23,8 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
     hits: list[Hit] = []
     img = theme.font(32).render("帳號與日曆", True, theme.C["text"])
     surface.blit(img, (40, 24))
+    _btn(surface, f"同步頻率：{settings.sync_interval_min} 分鐘", 1180, 20, 280, 52,
+         "cycle_sync_interval", None, hits, size=22)
     _btn(surface, "旋轉螢幕", 1480, 20, 200, 52, "rotate", None, hits)
     _btn(surface, "完成", 1700, 20, 180, 52, "settings_done", None, hits)
     x = 40
