@@ -1,0 +1,66 @@
+import pygame
+
+from deskbar.layout import Rect
+from deskbar.ui import Hit
+from deskbar.ui import theme
+
+
+def _btn(surface, label, x, y, w, h, action, data, hits, size=24, fg=None):
+    r = pygame.Rect(x, y, w, h)
+    pygame.draw.rect(surface, theme.C["card"], r, border_radius=8)
+    pygame.draw.rect(surface, theme.C["panel_line"], r, 1, border_radius=8)
+    img = theme.font(size).render(label, True, fg or theme.C["text"])
+    surface.blit(img, img.get_rect(center=r.center))
+    hits.append(Hit(Rect(x, y, w, h), action, data))
+
+
+def render(surface, snap, settings, confirm_remove) -> list[Hit]:
+    hits: list[Hit] = []
+    img = theme.font(32).render("帳號與日曆", True, theme.C["text"])
+    surface.blit(img, (40, 24))
+    _btn(surface, "旋轉螢幕", 1480, 20, 200, 52, "rotate", None, hits)
+    _btn(surface, "完成", 1700, 20, 180, 52, "settings_done", None, hits)
+    x = 40
+    for email, acc in settings.accounts.items():
+        main, dark = theme.account_color(acc.color)
+        card = pygame.Rect(x, 96, 430, 330)
+        pygame.draw.rect(surface, theme.C["card"], card, border_radius=10)
+        pygame.draw.circle(surface, main, (x + 26, 126), 8)
+        st = snap.statuses.get(email)
+        name = email if len(email) <= 26 else email[:24] + "…"
+        surface.blit(theme.font(22).render(name, True, theme.C["text"]), (x + 44, 112))
+        if st is None:
+            surface.blit(theme.font(20).render("（已離線）", True, theme.C["muted"]),
+                         (x + 44, 140))
+        elif not st.ok:
+            surface.blit(theme.font(20).render(st.error or "同步異常", True,
+                                               theme.C["warn"]), (x + 44, 140))
+        _btn(surface, f"泳道：{acc.lane_label}", x + 16, 170, 200, 44,
+             "cycle_label", email, hits, size=22)
+        _btn(surface, "移除", x + 330, 170, 84, 44, "remove_account", email, hits,
+             size=22, fg=theme.C["warn"])
+        cy = 230
+        for cal_id, enabled in list(acc.calendars.items())[:4]:
+            box = pygame.Rect(x + 16, cy, 24, 24)
+            pygame.draw.rect(surface, theme.C["panel_line"], box, 0 if enabled else 1,
+                             border_radius=4)
+            if enabled:
+                pygame.draw.rect(surface, main, box.inflate(-8, -8), border_radius=2)
+            label = cal_id if len(cal_id) <= 24 else cal_id[:22] + "…"
+            surface.blit(theme.font(20).render(label, True, theme.C["text2"]),
+                         (x + 52, cy))
+            hits.append(Hit(Rect(x + 16, cy - 6, 400, 36), "toggle_cal", (email, cal_id)))
+            cy += 40
+        x += 460
+    if x == 40:
+        surface.blit(theme.font(24).render("尚無帳號——在 Mac 執行 make add-account",
+                                           True, theme.C["muted"]), (40, 200))
+    if confirm_remove:
+        bar = pygame.Rect(0, 380, 1920, 100)
+        pygame.draw.rect(surface, (40, 20, 20), bar)
+        surface.blit(theme.font(26).render(f"確定移除 {confirm_remove}？", True,
+                                           theme.C["text"]), (60, 414))
+        _btn(surface, "確定移除", 1420, 398, 220, 60, "confirm_remove",
+             confirm_remove, hits, fg=theme.C["warn"])
+        _btn(surface, "取消", 1660, 398, 180, 60, "remove_account", None, hits)
+    return hits
