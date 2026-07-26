@@ -8,7 +8,7 @@ import pygame
 
 from deskbar.layout import Rect, layout_timeline_range, split_allday, time_to_x_range
 from deskbar.ui import Hit
-from deskbar.ui import agenda, icons, monthgrid, theme, usagewidget, weekgrid
+from deskbar.ui import agenda, icons, monthgrid, theme, transitions, usagewidget, weekgrid
 from deskbar.viewwin import agenda_window, data_window, view_window, window_label
 from deskbar.weather import code_text
 
@@ -17,8 +17,6 @@ from deskbar.weather import code_text
 # grid_range/now_line/lanes）一律吃 TL_AREA 或 module 常量，不再各自硬寫魔術數字。
 PANEL_W, TL_X0, TL_X1 = 400, 420, 1520
 TL_AREA = Rect(TL_X0, 52, TL_X1 - TL_X0, 368)
-CHIP_MAX_X = 1250                        # 整日 chips／溢出小字的絕對右界（早於寬度鈕留白，
-                                          # 即使沒有窗口標籤／回到今天鈕分走版面也不會逼近按鈕）
 USAGE_X0, USAGE_W = 1540, 360            # 右欄 1540..1900：跟左/中欄一樣在螢幕右緣留 20px
 SPAN_LABELS = {"half": "半天", "day": "日", "week": "週", "month": "月"}
 # 寬度鈕／模式鈕改放中欄頂帶右側（原本在畫面最右側，現在中欄變窄，兩顆鈕改貼中欄右界，
@@ -27,31 +25,11 @@ SPAN_BTN = Rect(1290, 2, 110, 48)
 MODE_BTN = Rect(1408, 2, 110, 48)
 GOTO_NOW_W, GOTO_NOW_H = 110, 40        # 「回到今天」鈕：緊貼寬度鈕左側
 TOPBAR_GAP = 16                          # 頂帶固定區塊之間的最小留白
-CHIP_ROW_Y, CHIP_ROW_H = 8, 28           # 整日 chips／溢出小字所在的列
-IMMINENT_WINDOW = timedelta(minutes=5)  # 「迫近」定義：尚未開始、且開始時間在 now 起 5 分鐘內
-PULSE_PERIOD_S = 2.0                    # 呼吸邊框的完整週期（秒）
-
-
-def imminent_events(events, now: datetime) -> list:
-    """純函數：從 events 中挑出「即將開始」的行程——尚未開始（start > now），
-    且開始時間落在 now 起算 5 分鐘內（含 5 分鐘整）。已經開始（start <= now）的一律不算。
-
-    給 App 主迴圈用便宜的純時間比較判斷要不要維持每圈重繪（見 app.py），
-    也給 render() 內部決定哪些色塊要疊呼吸邊框。
-    """
-    return [e for e in events if now < e.start <= now + IMMINENT_WINDOW]
-
-
-def _pulse_t(now: datetime) -> float:
-    """呼吸亮度 0~1：sin(now.timestamp() * 2π / 週期) 映射到 [0,1]。"""
-    phase = math.sin(now.timestamp() * (2 * math.pi / PULSE_PERIOD_S))
-    return (phase + 1) / 2
-
-
-def _pulse_color(main, now: datetime):
-    """帳號主色與白色之間依呼吸亮度插值，供迫近行程色塊的外框使用。"""
-    t = _pulse_t(now)
-    return tuple(round(c + (255 - c) * t) for c in main)
+# 2026-07-27：頂欄整日行程膠囊（_render_allday／_layout_allday_chips）已移除——
+# 整日事件已在 agenda 模式的日欄與 weekgrid 的格子內顯示徽章，頂帶空間讓給窗口
+# 標籤／按鈕。迫近脈動（imminent_events/_pulse_t/_pulse_color）改用
+# deskbar.ui.transitions 的等價實作（imminent_ids/pulse_border_color），這裡不再
+# 重複一份。
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft"):
@@ -136,9 +114,13 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
 
     lane_emails = [e for e in settings.accounts if settings.accounts[e].calendars] \
         or list(snap.statuses)
+    if settings.presence_enabled and settings.presence_hide_accounts \
+            and not snap.presence.present:
+        hidden = set(settings.presence_hide_accounts)
+        lane_emails = [e for e in lane_emails if e not in hidden]
     visible = [e for e in snap.events
                if e.account in lane_emails and e.end > win_start and e.start < win_end]
-    allday, timed = split_allday(visible)
+    _, timed = split_allday(visible)
 
     # v4.1：行程模式改回「視窗制」（跟河道共用 anchor／資料窗口概念），故窗口標籤
     # 與「回到今天」鈕的顯示條件不再依 is_agenda 特判——回到 fixwave2 之前、
@@ -157,7 +139,6 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     topbar = _layout_topbar(span, anchor_or_now, win_start, win_end, show_goto_now, show_label,
                             label_override)
 
-    _render_allday(surface, allday, settings, hits, topbar.chip_right_x)
     _render_span_mode_buttons(surface, settings, hits)
     if topbar.goto_now_rect is not None:
         _chip_btn(surface, "回到今天", topbar.goto_now_rect, "goto_now", hits, size=20)
@@ -184,13 +165,14 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         _render_data_window_overlay(surface, win_start, win_end, now, tz)
         placed, overflow = layout_timeline_range(timed, lane_emails, win_start, win_end, TL_AREA)
         _render_lanes(surface, lane_emails, settings)
-        imminent_ids = {e.id for e in imminent_events(timed, now)}
+        imminent_evt_ids = transitions.imminent_ids(timed, now)
         for p in placed:
             main, dark = theme.account_color(settings.accounts[p.event.account].color)
             r = pygame.Rect(int(p.rect.x), int(p.rect.y) + 2, int(p.rect.w), int(p.rect.h) - 4)
             pygame.draw.rect(surface, dark, r, border_radius=6)
-            if p.event.id in imminent_ids:
-                pygame.draw.rect(surface, _pulse_color(main, now), r, width=3, border_radius=6)
+            if p.event.id in imminent_evt_ids:
+                pygame.draw.rect(surface, transitions.pulse_border_color(main, now), r,
+                                 width=3, border_radius=6)
             label = ("◀ " if p.clip_l else "") + p.event.title + (" ▶" if p.clip_r else "")
             fitted = theme.truncate_to_width(label, theme.font(22), r.width - 12)
             if fitted:                             # 量不出能放下的內容就乾脆不畫
@@ -200,10 +182,25 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
             _text(surface, f"＋{len(overflow)} 更多", 20, theme.C["muted"], TL_X1, 44, "topright")
         _render_now_line_range(surface, win_start, win_end, now)
 
+    if settings.presence_enabled and settings.presence_hide_accounts:
+        _render_presence_lock(surface, hiding=not snap.presence.present)
     # 右欄：Claude usage 油表——獨立呼叫，不吃 TL_AREA、不產生 hits（純資訊面板，
     # 跟左欄時鐘/天氣一樣不可互動），畫在最後純粹是慣例（跟中欄內容互不重疊，順序無關）。
     usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
     return hits
+
+
+def _render_presence_lock(surface, hiding: bool) -> None:
+    """右上角鎖頭：presence_enabled 且有設定要隱藏的帳號時才顯示（在 usagewidget
+    的 TITLE_Y=60 之前、右欄頂帶完全沒人用的 y=0..50 這塊畫）。
+    hiding=True（手機不在場，正在隱藏個人行程）用警示色實心鎖；
+    hiding=False（功能開著、手機在場、目前沒隱藏中）用 muted 色描邊鎖，
+    讓使用者知道「功能有開」而不是完全沒反應。"""
+    cx, cy = 1878, 24
+    color = theme.C["warn"] if hiding else theme.C["muted"]
+    body = pygame.Rect(cx - 10, cy - 2, 20, 16)
+    pygame.draw.rect(surface, color, body, border_radius=3)
+    pygame.draw.arc(surface, color, pygame.Rect(cx - 7, cy - 16, 14, 18), 0, math.pi, 3)
 
 
 def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_tick=0):
@@ -245,74 +242,6 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_t
     gear = Rect(320, 396, 72, 72)
     icons.draw_gear(surface, 352, 432, 18, theme.C["muted"])
     hits.append(Hit(gear, "open_settings", None))
-
-
-def _allday_label(e) -> str:
-    return f"整日 · {e.title}"
-
-
-def _layout_allday_chips(allday: list, right_limit: float) -> int:
-    """回傳「放得下」的 chips 數 k（0..len(allday)）：chips[0:k] 個別都落在
-    [TL_X0, right_limit] 內；若 k<len(allday)，還要保證「＋N 整日」溢出小字
-    本身也放得下——放不下就再往回收一顆 chip 讓位，直到放得下或 k=0 為止。
-    只量寬度（Font.size，不必真的 render 出 Surface），供 render 與測試共用。
-    """
-    n = len(allday)
-    if n == 0:
-        return 0
-    widths = [theme.font(20).size(_allday_label(e))[0] + 20 for e in allday]
-    xs = []
-    x = TL_X0
-    for w in widths:
-        xs.append(x)
-        x += w + 10
-
-    k = 0
-    for i in range(n):
-        if xs[i] + widths[i] <= right_limit:
-            k = i + 1
-        else:
-            break
-
-    while 0 < k < n:
-        remaining = n - k
-        overflow_w = theme.font(20).size(f"＋{remaining} 整日")[0] + 20
-        if xs[k] + overflow_w <= right_limit:
-            break
-        k -= 1
-    return k
-
-
-def _render_allday(surface, allday: list, settings, hits, right_limit: float):
-    """整日 chips 從 TL_X0 起橫向排列；放不下的一律收成右側一顆「＋N 整日」
-    小字（點開 open_allday_list 浮層列出全部整日事件標題），確保無論資料量
-    多寡都不會畫出 right_limit 之外，跟頂帶其他固定元素相撞。"""
-    if not allday:
-        return
-    n = len(allday)
-    k = _layout_allday_chips(allday, right_limit)
-
-    x = TL_X0
-    for e in allday[:k]:
-        main, dark = theme.account_color(settings.accounts[e.account].color)
-        label = _allday_label(e)
-        w = theme.font(20).size(label)[0] + 20
-        img = theme.font(20).render(label, True, main)
-        pygame.draw.rect(surface, dark, pygame.Rect(x, CHIP_ROW_Y, w, CHIP_ROW_H),
-                         border_radius=5)
-        surface.blit(img, (x + 10, CHIP_ROW_Y + 3))
-        hits.append(Hit(Rect(x, CHIP_ROW_Y, w, CHIP_ROW_H), "open_detail", e))
-        x += w + 10
-
-    if k < n:
-        remaining = n - k
-        label = f"＋{remaining} 整日"
-        w = theme.font(20).size(label)[0] + 20
-        img = theme.font(20).render(label, True, theme.C["muted"])
-        pygame.draw.rect(surface, theme.C["card"], pygame.Rect(x, CHIP_ROW_Y, w, CHIP_ROW_H),
-                         border_radius=5)
-        surface.blit(img, (x + 10, CHIP_ROW_Y + 3))
-        hits.append(Hit(Rect(x, CHIP_ROW_Y, w, CHIP_ROW_H), "open_allday_list", allday))
 
 
 def _render_span_mode_buttons(surface, settings, hits):

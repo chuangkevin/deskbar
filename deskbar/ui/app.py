@@ -7,11 +7,11 @@ import pygame
 from deskbar import transform
 from deskbar.layout import Rect
 from deskbar.ui import Hit
+from deskbar.ui.transitions import SlideTransition
 
 LOGICAL_W, LOGICAL_H = 1920, 480
 DRAG_THRESHOLD = 24                     # px，觸控拖曳判定門檻
 SYNC_INTERVALS = [1, 3, 5, 10, 30]       # 設定頁「同步頻率」鈕的循環清單（分鐘）
-TRANSITION_FRAMES = 6                    # 切換過場：200ms @ tick(30) = 6 幀
 
 
 class App:
@@ -20,9 +20,8 @@ class App:
         self.settings = settings
         self.lock = settings_lock
         self.on_save = on_save          # callable：settings 變更後持久化
-        self.view = "dashboard"         # dashboard | settings | detail | alarms | allday_list
+        self.view = "dashboard"         # dashboard | settings | detail | alarms
         self.detail_event = None
-        self.allday_events = None       # open_allday_list 點開時存的整日事件清單
         self.hits: list[Hit] = []
         self._last_seq = -1
         self._last_minute = None
@@ -35,8 +34,8 @@ class App:
         self.view_anchor = None         # datetime|None，None=跟隨現在
         self._drag_start = None         # 觸控/滑鼠按下時的邏輯座標 (x, y)
         self._drag_last = None          # 拖曳中累計的最新座標（供未來即時重繪擴充）
-        self._transition_old = None     # 切換過場：舊畫面快照（pygame.Surface｜None）
-        self._transition_frame = None   # 切換過場：目前幀數（None＝沒在跑）
+        self._transition = SlideTransition()   # 切換過場：舊/新畫面滑動合成
+        self._transition_start = None   # time.monotonic()，None＝沒在跑過場
         self._last_imminent_check = None  # 迫近行程：上次檢查時間（每秒檢查一次即可）
         self._imminent_active = False     # 迫近行程：本秒是否有迫近中的行程
         self._weather_tick = 0            # 天氣微動態節奏：每秒 +1，重開機歸零無妨
@@ -92,8 +91,6 @@ class App:
                         self.view = "alarms"
                     elif a == "open_detail":
                         self.view, self.detail_event = "detail", h.data
-                    elif a == "open_allday_list":
-                        self.view, self.allday_events = "allday_list", h.data
                     elif a in ("close", "settings_done"):
                         self.view = "dashboard"
                     elif a == "toggle_alarm":
@@ -143,6 +140,9 @@ class App:
                         self.on_save(self.settings)
                     elif a == "rotate":
                         self.settings.rotation = 270 if self.settings.rotation == 90 else 90
+                        self.on_save(self.settings)
+                    elif a == "toggle_presence":
+                        self.settings.presence_enabled = not self.settings.presence_enabled
                         self.on_save(self.settings)
                     elif a == "cycle_span":
                         self._start_transition()

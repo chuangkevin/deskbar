@@ -191,13 +191,3 @@ def test_gap_between_mid_column_and_usage_column_stays_clean():
 # ---------------------------------------------------------------- 整日 chips 仍守 CHIP_MAX_X
 
 
-def test_allday_chips_never_exceed_chip_max_x():
-    settings = _settings_with_account()
-    settings.view_span = "week"
-    st = _busy_state()
-    hits = dashboard.render(_surf(), st.snapshot(), settings, NOW)
-    chip_hits = [h for h in hits if h.action in ("open_detail", "open_allday_list")
-                and h.rect.y == dashboard.CHIP_ROW_Y]
-    assert chip_hits
-    for h in chip_hits:
-        assert h.rect.x + h.rect.w <= dashboard.CHIP_MAX_X + 1e-6
