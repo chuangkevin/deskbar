@@ -1,0 +1,16 @@
+[Unit]
+Description=deskbar calendar dashboard
+After=network-online.target systemd-timesyncd.service
+Wants=network-online.target
+
+[Service]
+User=kevin
+SupplementaryGroups=render video input
+WorkingDirectory=/home/kevin/deskbar
+Environment=SDL_VIDEODRIVER=kmsdrm
+ExecStart=/home/kevin/deskbar/.venv/bin/python -m deskbar
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
