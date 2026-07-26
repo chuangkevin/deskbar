@@ -6,11 +6,14 @@ WEB_URL），沒有需要保留多組快取的情境，單一 slot 就能避免�
 
 from __future__ import annotations
 
+import os
+
 import pygame
 import qrcode
 
 # 未來要改網址只改這裡。
-WEB_URL = "https://desk.sisihome.org"
+# 實際網址由裝置端環境變數 DESKBAR_WEB_URL 指定（不入版控）；未設定時用區網預設。
+WEB_URL = os.environ.get("DESKBAR_WEB_URL", "http://deskbar.local:8080")
 
 _cache_key: tuple[str, int] | None = None
 _cache_surface: "pygame.Surface | None" = None

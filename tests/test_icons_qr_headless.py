@@ -26,7 +26,7 @@ def test_qr_matrix_renders():
     surf = pygame.Surface((1920, 480))
     surf.fill((15, 15, 15))
     x, y, size = 100, 50, 200
-    text = "https://desk.sisihome.org/test-qr"
+    text = "https://example.org/test-qr"
 
     before = qr.build_count
     qr.draw_qr(surf, x, y, size, text)

@@ -89,7 +89,8 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
     qr.draw_qr(surface, QR_X, QR_Y, QR_SIZE, qr.WEB_URL)
     surface.blit(theme.font(20).render("掃描設定鬧鐘", True, theme.C["text2"]),
                  (QR_X, QR_Y + QR_SIZE + 10))
-    surface.blit(theme.font(22).render("desk.sisihome.org", True, theme.C["muted"]),
+    host = qr.WEB_URL.split("//")[-1].rstrip("/")
+    surface.blit(theme.font(22).render(host, True, theme.C["muted"]),
                  (QR_X, QR_Y + QR_SIZE + 36))
     if confirm_remove:
         bar = pygame.Rect(0, 380, 1920, 100)
