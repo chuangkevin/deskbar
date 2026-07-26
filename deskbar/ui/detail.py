@@ -5,9 +5,9 @@ from deskbar.ui import Hit
 from deskbar.ui import theme
 
 
-# 卡片必須完全落在時間軸區（x=500 起）內，不能蓋到左面板（PANEL_W=480）；
-# 右緣 1800 在時間軸右界 1900 內留白，不頂邊。
-CARD_X, CARD_Y, CARD_W, CARD_H = 560, 60, 1240, 360
+# 三欄版面（中欄 TL_X0=420..TL_X1=1520）：卡片必須完全落在中欄內，不能蓋到左欄
+# （PANEL_W=400）也不能溢進右欄的 usage 油表；左右各留 100px，不頂邊。
+CARD_X, CARD_Y, CARD_W, CARD_H = 520, 60, 900, 360
 TEXT_X = CARD_X + 40            # 卡片內文字左邊距，固定 40px
 TEXT_MAX_W = CARD_W - 80        # 內文可用寬度：左右各留 40px
 
@@ -44,8 +44,8 @@ def render(surface, event) -> list[Hit]:
 
 MAX_ALLDAY_LIST_LINES = 8   # 超過就收成「…以及其他 N 筆」，避免蓋過下方關閉提示
 
-# 同樣要完全落在時間軸區（x=500 起）內，不蓋左面板；右緣 1760 留在 1900 內。
-ALLDAY_CARD_X, ALLDAY_CARD_Y, ALLDAY_CARD_W, ALLDAY_CARD_H = 560, 40, 1200, 400
+# 同樣要完全落在中欄（TL_X0=420..TL_X1=1520）內，不蓋左欄也不溢進右欄。
+ALLDAY_CARD_X, ALLDAY_CARD_Y, ALLDAY_CARD_W, ALLDAY_CARD_H = 520, 40, 900, 400
 ALLDAY_TEXT_X = ALLDAY_CARD_X + 40
 
 

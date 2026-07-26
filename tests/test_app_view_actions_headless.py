@@ -123,7 +123,7 @@ def test_drag_inside_timeline_pans_anchor_into_past(tmp_path, monkeypatch):
 def test_drag_starting_in_panel_area_does_not_pan(tmp_path, monkeypatch):
     app = _make_app(tmp_path, monkeypatch)
     app._drag_start = (100, 200)
-    app._handle_touch_up(400, 200)    # dx=300 但起點在面板區（x<=500）→ 視為點擊，不平移
+    app._handle_touch_up(400, 200)    # dx=300 但起點在面板區（x<=TL_X0=420）→ 視為點擊，不平移
     assert app.view_anchor is None
 
 
@@ -146,7 +146,7 @@ def test_drag_pans_by_day_in_agenda_mode(tmp_path, monkeypatch):
     「所有視圖皆可左右滑動（含行程模式）」）。"""
     app = _make_app(tmp_path, monkeypatch)
     app.settings.view_mode = "agenda"
-    assert app.settings.view_span == "day"   # n_days=1 → 欄寬=1400（TL_X1-TL_X0）
+    assert app.settings.view_span == "day"   # n_days=1 → 欄寬=TL_X1-TL_X0（三欄版面下為 1100）
     assert app.view_anchor is None
     t0 = datetime.now(TZ)
     app._drag_start = (700, 200)

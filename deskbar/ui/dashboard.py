@@ -8,15 +8,23 @@ import pygame
 
 from deskbar.layout import Rect, layout_timeline_range, split_allday, time_to_x_range
 from deskbar.ui import Hit
-from deskbar.ui import agenda, icons, monthgrid, theme, weekgrid
+from deskbar.ui import agenda, icons, monthgrid, theme, usagewidget, weekgrid
 from deskbar.viewwin import agenda_window, data_window, view_window, window_label
 from deskbar.weather import code_text
 
-PANEL_W, TL_X0, TL_X1 = 480, 500, 1900
+# 三欄版面（2026-07 三欄重構）：左＝時鐘/日期/天氣/同步狀態，中＝行事曆時間軸，
+# 右＝Claude usage 油表。座標全部集中在這裡，其餘子渲染（agenda/weekgrid/monthgrid/
+# grid_range/now_line/lanes）一律吃 TL_AREA 或 module 常量，不再各自硬寫魔術數字。
+PANEL_W, TL_X0, TL_X1 = 400, 420, 1520
 TL_AREA = Rect(TL_X0, 52, TL_X1 - TL_X0, 368)
+CHIP_MAX_X = 1250                        # 整日 chips／溢出小字的絕對右界（早於寬度鈕留白，
+                                          # 即使沒有窗口標籤／回到今天鈕分走版面也不會逼近按鈕）
+USAGE_X0, USAGE_W = 1540, 360            # 右欄 1540..1900：跟左/中欄一樣在螢幕右緣留 20px
 SPAN_LABELS = {"half": "半天", "day": "日", "week": "週", "month": "月"}
-SPAN_BTN = Rect(1650, 2, 115, 48)
-MODE_BTN = Rect(1775, 2, 115, 48)
+# 寬度鈕／模式鈕改放中欄頂帶右側（原本在畫面最右側，現在中欄變窄，兩顆鈕改貼中欄右界，
+# 右欄完全不放任何頂帶元素）。
+SPAN_BTN = Rect(1290, 2, 110, 48)
+MODE_BTN = Rect(1408, 2, 110, 48)
 GOTO_NOW_W, GOTO_NOW_H = 110, 40        # 「回到今天」鈕：緊貼寬度鈕左側
 TOPBAR_GAP = 16                          # 頂帶固定區塊之間的最小留白
 CHIP_ROW_Y, CHIP_ROW_H = 8, 28           # 整日 chips／溢出小字所在的列
@@ -124,6 +132,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
 
     _render_panel(surface, snap, settings, now, hits, clock_anim, weather_tick)
     pygame.draw.line(surface, theme.C["panel_line"], (PANEL_W, 0), (PANEL_W, 480))
+    pygame.draw.line(surface, theme.C["panel_line"], (TL_X1, 0), (TL_X1, 480))
 
     lane_emails = [e for e in settings.accounts if settings.accounts[e].calendars] \
         or list(snap.statuses)
@@ -190,26 +199,33 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         if overflow:
             _text(surface, f"＋{len(overflow)} 更多", 20, theme.C["muted"], TL_X1, 44, "topright")
         _render_now_line_range(surface, win_start, win_end, now)
+
+    # 右欄：Claude usage 油表——獨立呼叫，不吃 TL_AREA、不產生 hits（純資訊面板，
+    # 跟左欄時鐘/天氣一樣不可互動），畫在最後純粹是慣例（跟中欄內容互不重疊，順序無關）。
+    usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
     return hits
 
 
 def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_tick=0):
+    """左欄（0..PANEL_W=400）：時鐘/日期/天氣/同步狀態。三欄重構把這欄從 480 縮到
+    400px，時鐘改用 digit_h=96（4 卡+冒號實測總寬 342px，遠低於 360 的安全上限），
+    其餘文字/圖示座標跟著往內收，確保沒有任何元素畫出 PANEL_W 之外。"""
     w = snap.weather
     if w is not None:
         from deskbar.ui import weatherfx
-        weatherfx.draw(surface, w.code, weather_tick)   # 背景層：畫在時鐘/文字之前
+        weatherfx.draw(surface, w.code, weather_tick, w=PANEL_W)   # 背景層：畫在時鐘/文字之前
     anim = clock_anim if clock_anim else (now.strftime("%H:%M"), 1.0)
     from deskbar.ui import flipclock
-    flipclock.draw(surface, 36, 40, now.strftime("%H:%M"), anim[0], anim[1],
-                   digit_h=118)   # 4 卡+冒號總寬 ≤440，收在左面板 480px 內
+    flipclock.draw(surface, 24, 34, now.strftime("%H:%M"), anim[0], anim[1],
+                   digit_h=96)    # 4 卡+冒號實測總寬 342px，PANEL_W=400 內綽綽有餘
     wd = "週" + "一二三四五六日"[now.weekday()]
-    _text(surface, f"{now.month}月{now.day}日 {wd}", 28, theme.C["text2"], 44, 190)
+    _text(surface, f"{now.month}月{now.day}日 {wd}", 24, theme.C["text2"], 24, 150)
     if w is not None:
         age = (now - w.fetched_at).total_seconds()
         stale = "（舊）" if age > 7200 else ""
         _text(surface, f"{code_text(w.code)} {round(w.temp)}° {w.label}{stale}",
-              28, theme.C["text"], 44, 250)
-        _text(surface, f"{round(w.tmin)}° / {round(w.tmax)}°", 24, theme.C["muted"], 44, 290)
+              24, theme.C["text"], 24, 196)
+        _text(surface, f"{round(w.tmin)}° / {round(w.tmax)}°", 20, theme.C["muted"], 24, 230)
     if snap.syncing:
         msg = "同步中…"
         dot = theme.C["now"]
@@ -222,12 +238,12 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_t
         else:
             msg = "等待首次同步"
         dot = theme.col((93, 202, 165)) if ok else theme.C["warn"]
-    pygame.draw.circle(surface, dot, (52, 442), 5)
-    _text(surface, msg, 20, theme.C["muted"], 66, 430)
-    hits.append(Hit(Rect(30, 30, 470, 150), "open_alarms", None))
-    hits.append(Hit(Rect(40, 424, 300, 48), "force_sync", None))    # 左下同步狀態＝點擊強制同步
-    gear = Rect(396, 396, 72, 72)
-    icons.draw_gear(surface, 432, 432, 20, theme.C["muted"])
+    pygame.draw.circle(surface, dot, (32, 449), 5)
+    _text(surface, msg, 18, theme.C["muted"], 46, 440)
+    hits.append(Hit(Rect(20, 26, 370, 130), "open_alarms", None))
+    hits.append(Hit(Rect(20, 424, 290, 48), "force_sync", None))    # 左下同步狀態＝點擊強制同步
+    gear = Rect(320, 396, 72, 72)
+    icons.draw_gear(surface, 352, 432, 18, theme.C["muted"])
     hits.append(Hit(gear, "open_settings", None))
 
 
@@ -308,7 +324,11 @@ def _render_span_mode_buttons(surface, settings, hits):
 
 def _render_grid_range(surface, win_start, win_end):
     """half / day 專用（v4.1 起 week 改走 weekgrid，不再共用這支）：每 2 小時
-    整點畫一條淡格線＋時刻標籤。"""
+    整點畫一條淡格線＋時刻標籤。時刻標籤用「midtop」置中在格線上，但兩端的
+    格線可能剛好落在 TL_X0/TL_X1 邊界上（例如 win_end=24:00）——置中錨點不夾住
+    的話，文字會有半個字寬畫出中欄邊界外（縮窄成 1100px 中欄後，這幾像素就
+    緊貼著跟右欄之間僅 20px 的留白，值得夾住避免溢出）。格線本身仍畫在真實
+    時間位置，只有文字錨點夾在 [TL_X0, TL_X1] 內。"""
     t = win_start.replace(minute=0, second=0, microsecond=0)
     if t < win_start:
         t += timedelta(hours=1)
@@ -316,7 +336,10 @@ def _render_grid_range(surface, win_start, win_end):
         if t.hour % 2 == 0:
             x = time_to_x_range(t, win_start, win_end, TL_X0, TL_X1)
             pygame.draw.line(surface, theme.C["grid"], (x, 52), (x, 420))
-            _text(surface, f"{t.hour:02d}", 20, theme.C["muted"], x, 434, "midtop")
+            label = f"{t.hour:02d}"
+            half_w = theme.font(20).size(label)[0] / 2
+            label_x = min(max(x, TL_X0 + half_w), TL_X1 - half_w)
+            _text(surface, label, 20, theme.C["muted"], label_x, 434, "midtop")
         t += timedelta(hours=1)
 
 
