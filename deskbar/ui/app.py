@@ -10,6 +10,8 @@ from deskbar.ui import Hit
 
 LOGICAL_W, LOGICAL_H = 1920, 480
 DRAG_THRESHOLD = 24                     # px，觸控拖曳判定門檻
+SYNC_INTERVALS = [1, 3, 5, 10, 30]       # 設定頁「同步頻率」鈕的循環清單（分鐘）
+TRANSITION_FRAMES = 6                    # 切換過場：200ms @ tick(30) = 6 幀
 
 
 class App:
@@ -18,8 +20,9 @@ class App:
         self.settings = settings
         self.lock = settings_lock
         self.on_save = on_save          # callable：settings 變更後持久化
-        self.view = "dashboard"         # dashboard | settings | detail | alarms
+        self.view = "dashboard"         # dashboard | settings | detail | alarms | allday_list
         self.detail_event = None
+        self.allday_events = None       # open_allday_list 點開時存的整日事件清單
         self.hits: list[Hit] = []
         self._last_seq = -1
         self._last_minute = None
@@ -32,6 +35,12 @@ class App:
         self.view_anchor = None         # datetime|None，None=跟隨現在
         self._drag_start = None         # 觸控/滑鼠按下時的邏輯座標 (x, y)
         self._drag_last = None          # 拖曳中累計的最新座標（供未來即時重繪擴充）
+        self._transition_old = None     # 切換過場：舊畫面快照（pygame.Surface｜None）
+        self._transition_frame = None   # 切換過場：目前幀數（None＝沒在跑）
+        self._last_imminent_check = None  # 迫近行程：上次檢查時間（每秒檢查一次即可）
+        self._imminent_active = False     # 迫近行程：本秒是否有迫近中的行程
+        self._weather_tick = 0            # 天氣微動態節奏：每秒 +1，重開機歸零無妨
+        self._last_tick_second = None     # 天氣微動態節奏：上次 tick 遞增所在的整數秒
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -83,6 +92,8 @@ class App:
                         self.view = "alarms"
                     elif a == "open_detail":
                         self.view, self.detail_event = "detail", h.data
+                    elif a == "open_allday_list":
+                        self.view, self.allday_events = "allday_list", h.data
                     elif a in ("close", "settings_done"):
                         self.view = "dashboard"
                     elif a == "toggle_alarm":
@@ -134,17 +145,21 @@ class App:
                         self.settings.rotation = 270 if self.settings.rotation == 90 else 90
                         self.on_save(self.settings)
                     elif a == "cycle_span":
+                        self._start_transition()
                         self.settings.view_span = next_span(self.settings.view_span)
                         self.on_save(self.settings)
                     elif a == "cycle_view_mode":
+                        self._start_transition()
                         self.settings.view_mode = (
                             "lanes" if self.settings.view_mode == "agenda" else "agenda")
                         self.on_save(self.settings)
                     elif a == "force_sync":
                         sync.request_sync()
                     elif a == "goto_now":
+                        self._start_transition()
                         self.view_anchor = None
                     elif a == "goto_day":
+                        self._start_transition()
                         tz = ZoneInfo("Asia/Taipei")
                         candidate = datetime.combine(h.data, _time(12, 0), tzinfo=tz)
                         # 月視圖已經只給窗口內的日子出 hit，這裡再夾一次是防禦性重複保險
@@ -153,10 +168,10 @@ class App:
                         self.settings.view_span = "day"
                         self.on_save(self.settings)
                     elif a == "cycle_sync_interval":
-                        cycle = [1, 3, 5, 10, 30]
                         cur = self.settings.sync_interval_min
-                        i = cycle.index(cur) if cur in cycle else -1
-                        self.settings.sync_interval_min = cycle[(i + 1) % len(cycle)]
+                        i = SYNC_INTERVALS.index(cur) if cur in SYNC_INTERVALS else -1
+                        self.settings.sync_interval_min = SYNC_INTERVALS[
+                            (i + 1) % len(SYNC_INTERVALS)]
                         self.on_save(self.settings)
                     elif a == "remove_account":
                         self.confirm_remove = h.data   # email；settings_view 畫二次確認
@@ -179,16 +194,11 @@ class App:
 
     confirm_remove = None
 
-    def _render(self, clock_anim=None) -> None:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        from deskbar.ui import alarm_overlay, alarm_view, dashboard, detail, settings_view
-        now = datetime.now(ZoneInfo("Asia/Taipei"))
-        if self.firing:
-            self.hits = alarm_overlay.render(self.logical, self.firing[0], now)
-            self._flip()
-            return
-        snap = self.state.snapshot()
+    def _draw_frame(self, snap, now, clock_anim=None) -> None:
+        """把目前 view 畫進 self.logical（不 flip、不動 _last_* 記帳）。
+        拆出這支給 _render()（正常重繪）與 _render_transition_frame()（切換過場，
+        還要在這之上疊一層舊畫面滑出效果）共用。"""
+        from deskbar.ui import alarm_view, dashboard, detail, settings_view
         self.logical.fill((15, 15, 15))
         # sync 現在只在 phase (a) 短暫持鎖（微秒級），這裡加鎖不會再造成長時間凍結；
         # 反過來若不加鎖，sync 的 phase (a) 可能正好在改 settings.accounts 途中被讀到。
@@ -202,13 +212,55 @@ class App:
                                               self.alarm_draft, now)
             else:
                 self.hits = dashboard.render(self.logical, snap, self.settings, now, clock_anim,
-                                             anchor=self.view_anchor)
+                                             anchor=self.view_anchor,
+                                             weather_tick=self._weather_tick)
                 if self.view == "detail" and self.detail_event is not None:
                     self.hits += detail.render(self.logical, self.detail_event)
+                elif self.view == "allday_list" and self.allday_events is not None:
+                    self.hits += detail.render_allday_list(self.logical, self.allday_events)
+
+    def _render(self, clock_anim=None) -> None:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from deskbar.ui import alarm_overlay
+        now = datetime.now(ZoneInfo("Asia/Taipei"))
+        if self.firing:
+            self.hits = alarm_overlay.render(self.logical, self.firing[0], now)
+            self._flip()
+            return
+        snap = self.state.snapshot()
+        self._draw_frame(snap, now, clock_anim)
         self._flip()
         self._last_seq = snap.seq
         self._last_minute = now.minute
         self._last_clock_text = now.strftime("%H:%M")
+
+    def _start_transition(self) -> None:
+        """cycle_span/cycle_view_mode/goto_now/goto_day 觸發時呼叫：把「現在畫面」存成
+        過場用的舊畫面快照。沒有真的顯示器時（測試直接呼叫 _dispatch，不經 _init_display）
+        self.logical 不存在，直接跳過——過場只是視覺加分，不該讓沒有畫面可存的呼叫端炸掉。
+        """
+        logical = getattr(self, "logical", None)
+        if logical is not None:
+            self._transition_old = logical.copy()
+            self._transition_frame = 0
+
+    def _render_transition_frame(self, now) -> None:
+        """切換過場的其中一幀：先照常畫「新」畫面，再把「舊」畫面以遞減寬度往左滑出蓋上去
+        （舊畫面右側先露出新畫面），共 TRANSITION_FRAMES 幀後舊畫面完全滑出、過場結束。"""
+        snap = self.state.snapshot()
+        self._draw_frame(snap, now)
+        frac = (self._transition_frame + 1) / TRANSITION_FRAMES
+        old_x = -round(LOGICAL_W * frac)
+        self.logical.blit(self._transition_old, (old_x, 0))
+        self._flip()
+        self._last_seq = snap.seq
+        self._last_minute = now.minute
+        self._last_clock_text = now.strftime("%H:%M")
+        self._transition_frame += 1
+        if self._transition_frame >= TRANSITION_FRAMES:
+            self._transition_frame = None
+            self._transition_old = None
 
     def _handle_touch_up(self, x: int, y: int) -> None:
         """FINGERUP／MOUSEBUTTONUP 共用：判斷是點擊還是時間軸平移拖曳。"""
