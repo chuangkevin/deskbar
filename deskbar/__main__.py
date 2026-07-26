@@ -40,7 +40,16 @@ def main() -> None:
     else:
         from deskbar import sync
         sync.start_threads(state, settings, lock)
-    app = App(state, settings, lock, on_save=config.save_settings)
+
+    from deskbar.alarms import AlarmStore
+    alarm_store = AlarmStore()
+    alarm_store.load()
+    if os.environ.get("DESKBAR_NO_WEB") != "1":
+        from deskbar.webserver import start_web
+        start_web(alarm_store)
+
+    app = App(state, settings, lock, on_save=config.save_settings,
+              alarm_store=alarm_store)
     app.run()
 
 

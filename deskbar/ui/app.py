@@ -10,7 +10,7 @@ LOGICAL_W, LOGICAL_H = 1920, 480
 
 
 class App:
-    def __init__(self, state, settings, settings_lock, on_save):
+    def __init__(self, state, settings, settings_lock, on_save, alarm_store=None):
         self.state = state
         self.settings = settings
         self.lock = settings_lock
@@ -23,6 +23,9 @@ class App:
         self._last_clock_text = None
         self._clock_prev = None
         self._anim_start = None
+        self.alarm_store = alarm_store
+        self.firing = []
+        self._last_alarm_check = None
 
     def _init_display(self) -> None:
         if os.environ.get("DESKBAR_DEV") != "1":
@@ -47,6 +50,10 @@ class App:
             if h.rect.contains(x, y):
                 a = h.action
                 if a == "noop":
+                    return
+                if a == "dismiss_alarm":
+                    self.firing and self.firing.pop(0)
+                    self._last_seq = -1
                     return
                 with self.lock:
                     if a == "open_settings":
@@ -94,8 +101,12 @@ class App:
     def _render(self, clock_anim=None) -> None:
         from datetime import datetime
         from zoneinfo import ZoneInfo
-        from deskbar.ui import dashboard, detail, settings_view
+        from deskbar.ui import alarm_overlay, dashboard, detail, settings_view
         now = datetime.now(ZoneInfo("Asia/Taipei"))
+        if self.firing:
+            self.hits = alarm_overlay.render(self.logical, self.firing[0], now)
+            self._flip()
+            return
         snap = self.state.snapshot()
         self.logical.fill((15, 15, 15))
         if self.view == "settings":
@@ -133,6 +144,16 @@ class App:
             from zoneinfo import ZoneInfo
             import time
             now = datetime.now(ZoneInfo("Asia/Taipei"))
+            if self.alarm_store is not None:
+                due = self.alarm_store.due(self._last_alarm_check, now)
+                self._last_alarm_check = now
+                if due:
+                    self.firing.extend(due)
+                    self._last_seq = -1
+            if self.firing:
+                self._render()          # 閃爍需每圈重繪
+                clock.tick(10)
+                continue
             if self._anim_start is None and now.minute != self._last_minute \
                     and self._last_clock_text is not None:
                 self._clock_prev = self._last_clock_text
