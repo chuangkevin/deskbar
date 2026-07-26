@@ -4,14 +4,20 @@ from deskbar.ui import theme
 
 CARD = (28, 28, 28)
 SPLIT = (12, 12, 12)
+RADIUS = 14
+_cache: dict = {}
 
 
 def _digit_card(ch: str, w: int, h: int) -> "pygame.Surface":
-    s = pygame.Surface((w, h))
-    s.fill(CARD)
-    img = theme.font(int(h * 0.78)).render(ch, True, theme.C["text"])
-    s.blit(img, img.get_rect(center=(w // 2, h // 2)))
-    pygame.draw.line(s, SPLIT, (0, h // 2), (w, h // 2), 2)
+    key = (ch, w, h)
+    s = _cache.get(key)
+    if s is None:
+        s = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.rect(s, CARD, pygame.Rect(0, 0, w, h), border_radius=RADIUS)
+        img = theme.font(int(h * 0.78)).render(ch, True, theme.C["text"])
+        s.blit(img, img.get_rect(center=(w // 2, h // 2)))
+        pygame.draw.line(s, SPLIT, (2, h // 2), (w - 2, h // 2), 2)
+        _cache[key] = s
     return s
 
 
