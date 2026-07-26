@@ -7,7 +7,10 @@ from datetime import datetime
 
 from deskbar import config
 from deskbar.models import Event, event_from_json, event_to_json
+from deskbar.presence import PresenceState
 from deskbar.weather import Weather
+
+_DEFAULT_PRESENCE = PresenceState(present=True, rssi=None, last_seen=None, enabled=False)
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,7 @@ class Snapshot:
     statuses: dict[str, AccountStatus]
     seq: int
     syncing: bool = False
+    presence: PresenceState = _DEFAULT_PRESENCE
 
 
 class AppState:
@@ -35,6 +39,7 @@ class AppState:
         self._statuses: dict[str, AccountStatus] = {}
         self._seq = 0
         self._syncing = False
+        self._presence: PresenceState = _DEFAULT_PRESENCE
         self._cached_snapshot: Snapshot | None = None
         self._cached_seq: int | None = None
 
@@ -47,7 +52,7 @@ class AppState:
             events = [e for lst in self._events.values() for e in lst]
             events.sort(key=lambda e: (e.start, e.id))
             snap = Snapshot(events, self._weather, dict(self._statuses), self._seq,
-                            self._syncing)
+                            self._syncing, self._presence)
             self._cached_snapshot = snap
             self._cached_seq = self._seq
             return snap
@@ -79,6 +84,11 @@ class AppState:
     def set_weather(self, w: Weather) -> None:
         with self._lock:
             self._weather = w
+            self._seq += 1
+
+    def set_presence(self, ps: PresenceState) -> None:
+        with self._lock:
+            self._presence = ps
             self._seq += 1
 
     def save_cache(self) -> None:

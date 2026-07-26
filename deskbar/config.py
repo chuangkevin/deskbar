@@ -46,6 +46,11 @@ class Settings:
     view_span: str = "day"
     view_mode: str = "lanes"
     accounts: dict[str, AccountCfg] = field(default_factory=dict)
+    presence_enabled: bool = False
+    presence_mac: str = ""
+    presence_rssi_threshold: int = -75
+    presence_hide_accounts: list[str] = field(default_factory=list)
+    presence_grace_sec: int = 150
 
     def ensure_account(self, email: str) -> AccountCfg:
         if email not in self.accounts:
@@ -76,6 +81,24 @@ def load_settings() -> Settings:
         if not isinstance(sync_interval_min, int) or isinstance(sync_interval_min, bool) \
                 or not (1 <= sync_interval_min <= 120):
             sync_interval_min = 5
+        presence_enabled = raw.get("presence_enabled", False)
+        if not isinstance(presence_enabled, bool):
+            presence_enabled = False
+        presence_mac = raw.get("presence_mac", "")
+        if not isinstance(presence_mac, str):
+            presence_mac = ""
+        presence_rssi_threshold = raw.get("presence_rssi_threshold", -75)
+        if not isinstance(presence_rssi_threshold, int) \
+                or isinstance(presence_rssi_threshold, bool):
+            presence_rssi_threshold = -75
+        presence_hide_accounts = raw.get("presence_hide_accounts", [])
+        if not isinstance(presence_hide_accounts, list) \
+                or not all(isinstance(x, str) for x in presence_hide_accounts):
+            presence_hide_accounts = []
+        presence_grace_sec = raw.get("presence_grace_sec", 150)
+        if not isinstance(presence_grace_sec, int) or isinstance(presence_grace_sec, bool) \
+                or presence_grace_sec < 0:
+            presence_grace_sec = 150
         return Settings(
             rotation=raw.get("rotation", 90),
             weather_lat=raw.get("weather_lat", DEFAULT_LAT),
@@ -87,6 +110,11 @@ def load_settings() -> Settings:
             view_span=view_span,
             view_mode=view_mode,
             accounts=accounts,
+            presence_enabled=presence_enabled,
+            presence_mac=presence_mac,
+            presence_rssi_threshold=presence_rssi_threshold,
+            presence_hide_accounts=presence_hide_accounts,
+            presence_grace_sec=presence_grace_sec,
         )
     except (OSError, ValueError, KeyError, TypeError):
         return Settings()
@@ -103,6 +131,11 @@ def save_settings(s: Settings) -> None:
         "sync_interval_min": s.sync_interval_min,
         "view_span": s.view_span,
         "view_mode": s.view_mode,
+        "presence_enabled": s.presence_enabled,
+        "presence_mac": s.presence_mac,
+        "presence_rssi_threshold": s.presence_rssi_threshold,
+        "presence_hide_accounts": s.presence_hide_accounts,
+        "presence_grace_sec": s.presence_grace_sec,
         "accounts": {
             e: {"lane_label": a.lane_label, "color": a.color, "calendars": a.calendars}
             for e, a in s.accounts.items()
