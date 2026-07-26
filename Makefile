@@ -1,5 +1,8 @@
-PI ?= kevin@100.98.35.59
-KEY ?= ~/.ssh/kevinhome_key
+# 本機實際主機/金鑰/路徑放 local.mk（gitignored），範例見 local.mk.example
+-include local.mk
+PI ?= pi@deskbar.local
+KEY ?= ~/.ssh/id_ed25519
+DEST ?= /home/pi/deskbar
 
 .PHONY: test dev deploy add-account
 
@@ -10,8 +13,8 @@ dev:
 	DESKBAR_DEV=1 DESKBAR_FAKE=1 .venv/bin/python -m deskbar
 
 deploy:
-	rsync -az --delete -e "ssh -i $(KEY)" --exclude .git --exclude .venv --exclude __pycache__ --exclude .superpowers --exclude docs --exclude tests ./ $(PI):/home/kevin/deskbar/
-	ssh -i $(KEY) $(PI) "bash /home/kevin/deskbar/deploy/install.sh && sudo systemctl restart deskbar"
+	rsync -az --delete -e "ssh -i $(KEY)" --exclude .git --exclude .venv --exclude __pycache__ --exclude .superpowers --exclude docs --exclude tests ./ $(PI):$(DEST)/
+	ssh -i $(KEY) $(PI) "bash $(DEST)/deploy/install.sh && sudo systemctl restart deskbar"
 
 add-account:
 	.venv/bin/python tools/add_account.py

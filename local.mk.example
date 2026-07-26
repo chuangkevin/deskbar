@@ -1,0 +1,4 @@
+# 複製成 local.mk（不會進版控）並改成你的實際值
+PI = pi@your-pi.local
+KEY = ~/.ssh/id_ed25519
+DEST = /home/pi/deskbar

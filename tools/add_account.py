@@ -1,7 +1,7 @@
 """Mac 端：新增 Google 帳號到 deskbar。
 
 前置：~/.config/deskbar/client_secret.json（GCP 桌面應用程式 OAuth client）
-用法：python3 tools/add_account.py [--pi kevin@100.98.35.59] [--key ~/.ssh/kevinhome_key]
+用法：python3 tools/add_account.py [--pi pi@deskbar.local] [--key ~/.ssh/id_ed25519]
 """
 import argparse
 import json
@@ -19,8 +19,8 @@ CFG = Path.home() / ".config" / "deskbar"
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pi", default="kevin@100.98.35.59")
-    ap.add_argument("--key", default=str(Path.home() / ".ssh" / "kevinhome_key"))
+    ap.add_argument("--pi", default="pi@deskbar.local")
+    ap.add_argument("--key", default=str(Path.home() / ".ssh" / "id_ed25519"))
     args = ap.parse_args()
 
     secret = CFG / "client_secret.json"
@@ -51,7 +51,7 @@ def main() -> None:
                                      encoding="utf-8") as f:
         json.dump(token, f, ensure_ascii=False)
         tmp = f.name
-    dest = f"/home/kevin/.config/deskbar/accounts/{email}.json"
+    dest = f"/home/pi/.config/deskbar/accounts/{email}.json"
     subprocess.run(["ssh", "-i", args.key, args.pi,
                     "mkdir -p ~/.config/deskbar/accounts"], check=True)
     subprocess.run(["scp", "-i", args.key, tmp, f"{args.pi}:{dest}"], check=True)

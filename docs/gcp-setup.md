@@ -52,7 +52,7 @@ cd ~/Documents/Projects/deskbar && make add-account
 - 完成後工具會自動把授權部署到 Pi，並印出該帳號的日曆數量
 - 螢幕最慢 5 分鐘後出現該帳號的泳道；想立刻看到就重啟服務：
   ```bash
-  ssh -i ~/.ssh/kevinhome_key kevin@100.98.35.59 "sudo systemctl restart deskbar"
+  ssh -i ~/.ssh/id_ed25519 pi@deskbar.local "sudo systemctl restart deskbar"
   ```
 
 ## 7. 切換到真實資料模式
@@ -60,7 +60,7 @@ cd ~/Documents/Projects/deskbar && make add-account
 第一次接入真帳號後，關掉示範資料：
 
 ```bash
-ssh -i ~/.ssh/kevinhome_key kevin@100.98.35.59 "sudo rm -f /etc/systemd/system/deskbar.service.d/fake.conf && sudo systemctl daemon-reload && sudo systemctl restart deskbar"
+ssh -i ~/.ssh/id_ed25519 pi@deskbar.local "sudo rm -f /etc/systemd/system/deskbar.service.d/fake.conf && sudo systemctl daemon-reload && sudo systemctl restart deskbar"
 ```
 
 ## 常見問題

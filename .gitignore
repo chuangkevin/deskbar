@@ -7,3 +7,5 @@ settings.json
 *.token.json
 .cache/
 .DS_Store
+local.mk
+.superpowers/

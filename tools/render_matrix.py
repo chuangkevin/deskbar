@@ -199,7 +199,7 @@ def render_empty_states(out_dir: Path) -> list[str]:
 def render_token_invalid(state: AppState, settings: Settings, out_dir: Path) -> list[str]:
     """帳號 token 失效狀態：設定頁該帳號卡片顯示實際錯誤訊息（st.error）。"""
     manifest: list[str] = []
-    target = "kevin@interagent.io" if "kevin@interagent.io" in settings.accounts \
+    target = "work@example.com" if "work@example.com" in settings.accounts \
         else next(iter(settings.accounts), None)
     if target is not None:
         state.set_error(target, "帳號授權已失效，請重新登入", NOW)
