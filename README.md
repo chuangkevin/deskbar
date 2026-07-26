@@ -34,7 +34,7 @@ A tactical calendar dashboard for an 8.8" 1920×480 ultrawide touchscreen, drive
 - **翻頁時鐘動畫**：左側大時鐘分鐘變化時播放翻牌卡片動畫。
 - **天氣**：Open-Meteo 現況溫度＋當日高低溫，免 API key。
 - **螢幕旋轉**：設定頁一鍵在 90°/270° 間切換，免重開機。
-- **Claude Code 用量油表**：右欄顯示個人 Claude Code 用量（5 小時視窗／本週／Fable 方案）三組進度條，OAuth 走最小唯讀 scope（`user:profile`），純資訊顯示不可互動。
+- **Claude Code 用量油表**：右欄顯示個人 Claude Code 用量（5 小時視窗／本週／Fable 方案）三組進度條，純資訊顯示不可互動。裝置端不做任何 OAuth 或網路抓取——資料由 Mac 上常駐的 agent 讀本機 Keychain 憑證、打官方 usage API，再主動 POST 推給 deskbar（見下方疑難排解）。
 - **離線快取**：行事曆與天氣資料落地快取；斷網時用快取渲染並標示資料年齡。
 - **強制同步**：點擊同步狀態列立即觸發一輪日曆＋天氣同步；同步頻率（1/3/5/10/30 分鐘）可在設定頁調整。
 
@@ -130,6 +130,7 @@ make test    # .venv/bin/python -m pytest -q
 | Google 授權每 7 天就失效，泳道顯示「需重新授權」 | OAuth 同意畫面還停在「測試」模式。到 GCP Console 把發布狀態改成「正式版」（見 `docs/gcp-setup.md` 第 3 步），發布後長期有效 |
 | 登入時出現「Google 尚未驗證這個應用程式」 | 個人自用未驗證應用程式的正常提示，點「進階」→「前往 deskbar（不安全）」即可；授權範圍只有唯讀查看日曆 |
 | 觸控方向跟畫面對不起來 / 點哪都不準 | 先確認設定頁「旋轉螢幕」是否切到正確的 90°/270°；`deskbar/transform.py` 的觸控反解矩陣跟目前旋轉角度綁定，兩者要一致 |
+| Claude usage 油表一直顯示「usage 未推送」 | deskbar 本身不抓取 usage，要靠 Mac 上的 agent 主動 POST `/api/usage`（見 `tools/usage_push_snippet.py`／`tools/usage_push_demo.py`）；確認該 agent 有在跑、網路能連到 Pi，若 Pi 上設了 `DESKBAR_PUSH_TOKEN` 環境變數，推送端也要帶同樣的 `X-Deskbar-Token` header 否則會被 401 拒絕 |
 
 ## 授權與資料範圍
 

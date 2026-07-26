@@ -150,7 +150,7 @@ def test_usage_widget_content_starts_at_or_after_usage_x0():
     settings = _settings_with_account()
     st = _busy_state()
     st.set_usage(UsageInfo(42.0, NOW + timedelta(hours=2), 61.0, NOW + timedelta(days=1),
-                           12.0, NOW + timedelta(hours=1), NOW, needs_login=False))
+                           12.0, NOW + timedelta(hours=1), NOW))
     surf = _surf()
     dashboard.render(surf, st.snapshot(), settings, NOW)
     bg = theme.C["bg"]

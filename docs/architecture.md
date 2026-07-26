@@ -10,7 +10,7 @@
 
 | 檔案 | 職責 |
 |---|---|
-| `__main__.py` | 進入點：載入 settings、建立 `AppState`、啟動同步/web/在場感應/用量等背景執行緒、組出 `App` 並 `run()` |
+| `__main__.py` | 進入點：載入 settings、建立 `AppState`、啟動同步/web/在場感應等背景執行緒、組出 `App` 並 `run()`（Claude usage 沒有背景執行緒，改由 `webserver.py` 的 `/api/usage` 被動接收 Mac agent 推送） |
 | `config.py` | `Settings`/`AccountCfg` dataclass 與 `settings.json` 載入/儲存（原子寫入）；`config_dir()`/`cache_dir()`/`accounts_dir()` 路徑解析（吃 `DESKBAR_CONFIG_DIR`/`DESKBAR_CACHE_DIR` 環境變數，供測試隔離） |
 | `store.py` | `AppState`：執行緒安全的應用狀態（事件、天氣、帳號同步狀態、在場狀態、Claude usage），`snapshot()` 給 UI 讀、依 `seq` 做零成本快取；`save_cache()`/`load_cache()` 落地事件快取（原子寫入） |
 | `alarms.py` | `AlarmStore`：鬧鐘 CRUD、`due()` 到點判斷（一次性自動停用）、`alarms.json` 原子讀寫 |
@@ -23,8 +23,8 @@
 | `viewwin.py` | 顯示窗口純函數：依 `span`（half/day/week/month）與錨點算 `view_window()`/`agenda_window()`；`clamp_anchor()` 限制平移範圍在資料窗口內；`next_span()`、`window_label()` |
 | `transform.py` | 螢幕旋轉角度對照、`touch_to_logical()` 觸控座標反解（原生 480×1920 → 邏輯 1920×480） |
 | `presence.py` | 藍牙在場感應（可選功能）：`probe_once()` 用 `l2ping`/`hcitool` 探測、`decide()` 純函數狀態機（含防抖寬限）、`start_presence_thread()` |
-| `claudeusage.py` | Claude Code usage 唯讀資料層：OAuth token 存取/刷新、`fetch_usage()` 解析用量 API（僅 `user:profile` scope） |
-| `webserver.py` | Flask app：`/` 手機網頁、`/api/alarms` CRUD、`/api/calendars` 日曆開關；`start_web()` 起背景執行緒（`0.0.0.0:8080`） |
+| `claudeusage.py` | Claude Code usage 純資料層：`UsageInfo` dataclass 與 `fmt_countdown()` 倒數格式化純函數；不做任何網路呼叫或 OAuth（裝置端自行登入這條路已驗證會被 Cloudflare/限流擋下，改由 Mac agent 推送，見下） |
+| `webserver.py` | Flask app：`/` 手機網頁、`/api/alarms` CRUD、`/api/calendars` 日曆開關、`POST /api/usage` 被動接收 Mac agent 推送的 Claude usage（選填 `DESKBAR_PUSH_TOKEN` 環境變數做簡單保護）；`start_web()` 起背景執行緒（`0.0.0.0:8080`） |
 
 ### `deskbar/ui/`（Pygame 渲染與觸控分派）
 
@@ -53,7 +53,8 @@
 |---|---|
 | `add_account.py` | Google OAuth 桌面流程精靈：本機開瀏覽器授權，完成後把 token JSON 部署到 Pi 帳號目錄 |
 | `render_matrix.py` | 渲染驗證矩陣：載入真實/假資料，把顯示寬度×模式×錨點全排列存成 PNG，供人眼核對版面 |
-| `claude_login.py` | Claude Code usage 功能的 OAuth 登入腳本（對應 `claudeusage.py` 的唯讀 `user:profile` scope） |
+| `usage_push_snippet.py` | 可直接複製貼進既有 usage agent（例如 claude-usage-cube/agent/cube_agent.py）的 `push_to_deskbar()` 函數，把讀好的 usage POST 給 `/api/usage` |
+| `usage_push_demo.py` | 獨立小工具：讀本機 Keychain 的 Claude Code 憑證、打官方 usage API、POST 到 deskbar，不想改既有 agent 時單獨用 |
 
 ## 2. 資料流
 
@@ -100,9 +101,10 @@ Google Calendar API ──┐                      Open-Meteo API
 | **UI 主執行緒** | `App.run()`（程式主執行緒） | 事件迴圈；idle 時 `clock.tick(10)`，鬧鐘閃爍/翻頁動畫時提高到 30fps | 渲染前用 `App.lock`（＝`settings_lock`）短暫鎖住讀 `settings`；讀 `AppState` 一律透過 `snapshot()`（內部自己上 `AppState._lock`），不直接碰內部欄位 |
 | **日曆同步執行緒**（`cal_loop`） | `sync.start_threads()` | 開機先跑一次，之後每秒檢查一次是否達 `settings.sync_interval_min`（1/3/5/10/30 分）或 `FORCE_CAL` 事件被 set | 只在階段 (a)（讀帳號目錄/註冊新帳號/存 settings）持 `settings_lock`；換 token、打 API 的階段 (b) 不持鎖；寫回 `AppState` 靠 `set_events`/`set_error` 自己的內部鎖 |
 | **天氣同步執行緒**（`wx_loop`） | `sync.start_threads()` | 開機先跑一次，之後每秒檢查是否達 `WX_INTERVAL`(1800s) 或 `FORCE_WX` 事件 | 讀 `weather_lat/lon/label` 時短暫持 `settings_lock`；`fetch_weather` 網路階段不持鎖；失敗只印一行 stderr、保留舊值，不寫額外的 last_error 狀態（見下方說明） |
-| **Web 執行緒**（Flask） | `webserver.start_web()`（`__main__.py` 啟動，可用 `DESKBAR_NO_WEB=1` 關閉） | Flask `app.run()` 常駐，`0.0.0.0:8080` | 鬧鐘 CRUD 直接呼叫 `AlarmStore`（自帶鎖）；`/api/calendars` 讀寫 `settings.accounts` 時持 `settings_lock`，寫回呼叫 `on_save`（即 `config.save_settings`，本身也是鎖外的原子寫入） |
+| **Web 執行緒**（Flask） | `webserver.start_web()`（`__main__.py` 啟動，可用 `DESKBAR_NO_WEB=1` 關閉） | Flask `app.run()` 常駐，`0.0.0.0:8080` | 鬧鐘 CRUD 直接呼叫 `AlarmStore`（自帶鎖）；`/api/calendars` 讀寫 `settings.accounts` 時持 `settings_lock`，寫回呼叫 `on_save`（即 `config.save_settings`，本身也是鎖外的原子寫入）；`POST /api/usage` 驗證完 body 直接呼叫 `AppState.set_usage`（自己的鎖），不碰 `settings_lock` |
 | **在場感應執行緒**（可選） | `presence.start_presence_thread()`（僅 `presence_enabled` 且設了 `presence_mac` 才建立） | 每 45 秒一輪（`interval` 參數） | 每輪只在讀 `mac/threshold/grace/enabled` 時短暫持 `settings_lock`；`l2ping`/`hcitool` 探測（可能秒級延遲）在鎖外執行；結果寫回 `AppState.set_presence`（自己的鎖） |
-| **Claude usage 執行緒**（可選） | `claudeusage.start_usage_thread()` | 每 60 秒一輪（`interval` 參數） | 不碰 `settings`；OAuth 刷新與 API 呼叫皆為獨立 HTTP 呼叫，結果寫回 `AppState.set_usage`（自己的鎖） |
+
+Claude usage 沒有裝置端背景執行緒：資料改由 Mac 上的 agent（`tools/usage_push_snippet.py`／`tools/usage_push_demo.py`）每 60 秒主動 `POST /api/usage` 推送，deskbar 純被動接收（見上方 Web 執行緒那一列）。
 
 ### 關於天氣同步的錯誤可見性
 

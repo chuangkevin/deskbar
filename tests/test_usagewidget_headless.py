@@ -18,14 +18,12 @@ def _surf():
     return s
 
 
-def _usage(session_pct=42.0, weekly_pct=61.0, fable_pct=12.0, fetched_at=None,
-          needs_login=False):
+def _usage(session_pct=42.0, weekly_pct=61.0, fable_pct=12.0, fetched_at=None):
     return UsageInfo(
         session_pct=session_pct, session_resets_at=NOW + timedelta(hours=2, minutes=3),
         weekly_pct=weekly_pct, weekly_resets_at=NOW + timedelta(days=1, hours=4),
         fable_pct=fable_pct, fable_resets_at=NOW + timedelta(hours=1),
         fetched_at=fetched_at if fetched_at is not None else NOW,
-        needs_login=needs_login,
     )
 
 
@@ -93,42 +91,56 @@ def test_bar_color_warn_tier_above_85_percent():
     assert _bar_fill_pixel(surf) == theme.C["warn"]
 
 
-# ---------------------------------------------------------------- 狀態：None／needs_login
+# ---------------------------------------------------------------- 狀態：None／stale／very stale
 
 
-def test_none_usage_shows_not_connected_hint():
+def test_none_usage_shows_not_pushed_hint():
     surf = _surf()
     usagewidget.render(surf, None, NOW, 1540, 360)
     bg = theme.C["bg"]
     has_ink = any(
         surf.get_at((x, 220))[:3] != bg for x in range(1540, 1900, 2))
-    assert has_ink, "usage 未連結時應該在中央畫出提示文字"
+    assert has_ink, "usage 未推送時應該在中央畫出提示文字"
     # None 狀態不畫任何橫條（第一組橫條理應存在的位置應該還是純背景色）。
     card_probe = surf.get_at((1540 + usagewidget.BAR_MARGIN + 5,
                               usagewidget.GROUP_START_Y + 26 + usagewidget.BAR_H // 2))[:3]
     assert card_probe == bg
 
 
-def test_needs_login_shows_relogin_hint_in_warn_color():
-    surf = _surf()
-    usage = _usage(session_pct=None, weekly_pct=None, fable_pct=None, needs_login=True)
-    usagewidget.render(surf, usage, NOW, 1540, 360)
-    bg = theme.C["bg"]
-    warn = theme.C["warn"]
-    has_warn_ink = any(
-        surf.get_at((x, 220))[:3] == warn for x in range(1540, 1900, 2))
-    assert has_warn_ink, "需重新登入時中央提示文字應為 warn 色"
-
-
 def test_stale_fetched_at_shows_minutes_ago_note():
     surf = _surf()
-    usage = _usage(fetched_at=NOW - timedelta(minutes=10))
+    usage = _usage(fetched_at=NOW - timedelta(minutes=10))   # 600s > STALE_AFTER_S(300)
     usagewidget.render(surf, usage, NOW, 1540, 360)
     bg = theme.C["bg"]
     has_ink = any(
         surf.get_at((x, usagewidget.TITLE_Y + 4))[:3] != bg
         for x in range(1700, 1900, 2))
-    assert has_ink, "距上次更新超過 180 秒時，標題列右側應該加註「(N 分前)」"
+    assert has_ink, "距上次推送超過 300 秒時，標題列右側應該加註「(N 分前)」"
+
+
+def test_fresh_fetched_at_shows_no_minutes_ago_note():
+    surf = _surf()
+    usage = _usage(fetched_at=NOW - timedelta(seconds=30))   # 遠低於 STALE_AFTER_S
+    usagewidget.render(surf, usage, NOW, 1540, 360)
+    bg = theme.C["bg"]
+    has_ink = any(
+        surf.get_at((x, usagewidget.TITLE_Y + 4))[:3] != bg
+        for x in range(1700, 1900, 2))
+    assert not has_ink, "剛推送不久不該顯示「(N 分前)」"
+
+
+def test_very_stale_fetched_at_turns_bars_muted_gray():
+    surf = _surf()
+    fresh = _usage(session_pct=90.0)   # 90% 正常時應該是 warn 色
+    usagewidget.render(surf, fresh, NOW, 1540, 360)
+    fresh_pixel = _bar_fill_pixel(surf)
+    assert fresh_pixel == theme.C["warn"]
+
+    surf2 = _surf()
+    stale = _usage(session_pct=90.0, fetched_at=NOW - timedelta(hours=2))   # > VERY_STALE_AFTER_S(3600)
+    usagewidget.render(surf2, stale, NOW, 1540, 360)
+    stale_pixel = _bar_fill_pixel(surf2)
+    assert stale_pixel == theme.C["muted"], "超過 1 小時沒推送，橫條應該整組轉 muted 灰"
 
 
 # ---------------------------------------------------------------- 不越界

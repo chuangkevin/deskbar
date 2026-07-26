@@ -1,16 +1,54 @@
+import os
 import re
 import threading
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request
 
 from deskbar import auth, config
+from deskbar.claudeusage import UsageInfo
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_USAGE_TZ = ZoneInfo("Asia/Taipei")
+_PCT_FIELDS = ("session_pct", "weekly_pct", "fable_pct")
+_RESETS_FIELDS = ("session_resets_at", "weekly_resets_at", "fable_resets_at")
 
 
-def create_app(store, settings_provider=None, settings_lock=None, on_save=None) -> Flask:
+def _valid_pct(v) -> bool:
+    if v is None:
+        return True
+    if isinstance(v, bool):
+        return False
+    if not isinstance(v, (int, float)):
+        return False
+    return 0 <= v <= 100
+
+
+def _valid_resets_at(v) -> bool:
+    if v is None:
+        return True
+    if not isinstance(v, str):
+        return False
+    try:
+        datetime.fromisoformat(v.replace("Z", "+00:00"))
+        return True
+    except ValueError:
+        return False
+
+
+def _parse_dt(v):
+    return None if v is None else datetime.fromisoformat(v.replace("Z", "+00:00"))
+
+
+def _to_float(v):
+    return None if v is None else float(v)
+
+
+def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
+              usage_state=None) -> Flask:
     app = Flask("deskbar")
     web_dir = Path(__file__).parent / "web"
 
@@ -91,13 +129,48 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None) 
             on_save(settings_provider)
         return jsonify({"ok": True})
 
+    @app.post("/api/usage")
+    def push_usage():
+        """Mac 上的 agent 每 60 秒讀本機 Keychain 的 Claude Code 憑證、打 usage
+        API，主動 POST 這支端點推 usage 過來——deskbar 本身不再持有任何憑證、
+        不對外發任何請求（見 deskbar.claudeusage 檔頭說明）。跟 /api/alarms 一樣
+        在區網/tailnet 內預設無認證；設了 DESKBAR_PUSH_TOKEN 環境變數才要求
+        X-Deskbar-Token 相符，避免同網段裝置誤打這支端點污染畫面。"""
+        if usage_state is None:
+            return jsonify({"error": "not available"}), 501
+        push_token = os.environ.get("DESKBAR_PUSH_TOKEN")
+        if push_token and request.headers.get("X-Deskbar-Token") != push_token:
+            return jsonify({"error": "unauthorized"}), 401
+
+        d = request.get_json(force=True, silent=True)
+        if not isinstance(d, dict):
+            return jsonify({"error": "body must be a JSON object"}), 400
+        for f in _PCT_FIELDS:
+            if not _valid_pct(d.get(f)):
+                return jsonify({"error": f"invalid {f}"}), 400
+        for f in _RESETS_FIELDS:
+            if not _valid_resets_at(d.get(f)):
+                return jsonify({"error": f"invalid {f}"}), 400
+
+        info = UsageInfo(
+            session_pct=_to_float(d.get("session_pct")),
+            session_resets_at=_parse_dt(d.get("session_resets_at")),
+            weekly_pct=_to_float(d.get("weekly_pct")),
+            weekly_resets_at=_parse_dt(d.get("weekly_resets_at")),
+            fable_pct=_to_float(d.get("fable_pct")),
+            fable_resets_at=_parse_dt(d.get("fable_resets_at")),
+            fetched_at=datetime.now(_USAGE_TZ),
+        )
+        usage_state.set_usage(info)
+        return "", 204
+
     return app
 
 
 def start_web(store, port: int = 8080, settings_provider=None, settings_lock=None,
-              on_save=None) -> None:
+              on_save=None, usage_state=None) -> None:
     app = create_app(store, settings_provider=settings_provider, settings_lock=settings_lock,
-                      on_save=on_save)
+                      on_save=on_save, usage_state=usage_state)
     t = threading.Thread(
         target=lambda: app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False),
         daemon=True)

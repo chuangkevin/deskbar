@@ -41,9 +41,6 @@ def main() -> None:
         from deskbar import sync
         sync.start_threads(state, settings, lock)
 
-    from deskbar.claudeusage import start_usage_thread
-    start_usage_thread(state)      # 沒有 claude_oauth.json（沒跑過 claude-login）就直接跳過
-
     from deskbar.presence import start_presence_thread
     start_presence_thread(state, settings, lock)   # 沒設定 presence_enabled/mac 就自動跳過
 
@@ -53,7 +50,7 @@ def main() -> None:
     if os.environ.get("DESKBAR_NO_WEB") != "1":
         from deskbar.webserver import start_web
         start_web(alarm_store, settings_provider=settings, settings_lock=lock,
-                  on_save=config.save_settings)
+                  on_save=config.save_settings, usage_state=state)
 
     app = App(state, settings, lock, on_save=config.save_settings,
               alarm_store=alarm_store)

@@ -198,7 +198,7 @@ def render_empty_states(out_dir: Path) -> list[str]:
 
 
 def render_usage_pages(state: AppState, settings: Settings, out_dir: Path) -> list[str]:
-    """右欄 Claude usage 油表：正常三組／未連結／需重新登入各一張，人眼核對
+    """右欄 Claude usage 油表：正常三組／未推送／過期灰階各一張，人眼核對
     分級顏色、倒數格式、未越界（跟中欄／螢幕右緣都留了 20px）。直接沿用既有
     state（真實行事曆事件快取）疊上不同 usage 狀態，畫完照舊放回 None，
     不影響後面其他 render_* 函式看到的 state。"""
@@ -210,13 +210,18 @@ def render_usage_pages(state: AppState, settings: Settings, out_dir: Path) -> li
         session_pct=42.0, session_resets_at=NOW + timedelta(hours=2, minutes=3),
         weekly_pct=71.0, weekly_resets_at=NOW + timedelta(days=1, hours=4),
         fable_pct=91.0, fable_resets_at=NOW + timedelta(hours=1),
-        fetched_at=NOW, needs_login=False,
+        fetched_at=NOW,
+    )
+    stale = UsageInfo(
+        session_pct=55.0, session_resets_at=NOW + timedelta(hours=2, minutes=3),
+        weekly_pct=71.0, weekly_resets_at=NOW + timedelta(days=1, hours=4),
+        fable_pct=None, fable_resets_at=None,
+        fetched_at=NOW - timedelta(hours=2),   # 超過 VERY_STALE_AFTER_S，整組轉 muted 灰
     )
     scenarios = [
         ("usage_normal_three_groups", normal),
-        ("usage_not_connected", None),
-        ("usage_needs_login", UsageInfo(None, None, None, None, None, None, NOW,
-                                        needs_login=True)),
+        ("usage_not_pushed", None),
+        ("usage_stale_muted", stale),
     ]
     for name, usage in scenarios:
         state.set_usage(usage)

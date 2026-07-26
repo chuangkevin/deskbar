@@ -1,12 +1,17 @@
 """右欄：Claude Code usage 油表——三組（5H SESSION／本週／FABLE）橫條，唯讀顯示，
 不產生任何 Hit（純資訊面板，跟左欄時鐘/天氣一樣不可互動）。
 
-三種狀態：
-- usage is None：從沒連結過（或憑證檔不存在、start_usage_thread 沒啟動）
-  → 中央提示「usage 未連結」＋「在 Pi 執行 make claude-login」。
-- usage.needs_login：曾經連結過，但 token 已失效（refresh_token 被撤銷／4xx）
-  → 中央提示「需重新登入」（warn 色）。
-- 其餘：畫三組（FABLE 沒有資料就整組略過，見 deskbar.claudeusage.fetch_usage）。
+usage 資料完全被動：Mac 上的 agent 每 60 秒讀本機 Keychain 的 Claude Code 憑證、
+打 usage API，主動 POST 到 deskbar 的 /api/usage（見 deskbar.webserver）；deskbar
+本身不持有任何憑證、不主動抓取（見 deskbar.claudeusage 檔頭說明）。
+
+兩種狀態：
+- usage is None：從沒收過推送（agent 沒在跑，或還沒送過第一筆）
+  → 中央提示「usage 未推送」＋「Mac agent 未執行」。
+- 其餘：畫三組（FABLE 沒有資料就整組略過，見上游 payload）。距上次推送
+  （fetched_at）超過 STALE_AFTER_S 秒，標題旁加「(N 分前)」；超過
+  VERY_STALE_AFTER_S 秒（代表 agent 可能已經停了很久），三組全部轉 muted 灰，
+  跟正常新鮮資料的分級色一眼區分開。
 """
 from __future__ import annotations
 
@@ -23,7 +28,8 @@ GROUP_STEP = 84
 BAR_H = 12
 BAR_RADIUS = 6
 BAR_MARGIN = 20              # 橫條左右各留白，寬度＝欄寬-2*BAR_MARGIN，置中排列
-STALE_AFTER_S = 180          # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
+STALE_AFTER_S = 300          # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
+VERY_STALE_AFTER_S = 3600    # 超過這麼久，整組轉 muted 灰（agent 可能已經停了）
 
 _LOW_COLOR = (93, 202, 165)      # <60%
 _MID_COLOR = (239, 169, 72)      # 60~85%
@@ -51,10 +57,12 @@ def _level_color(pct: float):
 
 
 def _draw_group(surface, x0: float, w: float, y: float, label: str,
-                pct: float | None, resets_at, now: datetime) -> None:
-    _text(surface, label, 18, theme.C["text2"], x0, y)
+                pct: float | None, resets_at, now: datetime, muted: bool = False) -> None:
+    label_color = theme.C["muted"] if muted else theme.C["text2"]
+    pct_color = theme.C["muted"] if muted else theme.C["text"]
+    _text(surface, label, 18, label_color, x0, y)
     pct_label = f"{round(pct)}%" if pct is not None else "—"
-    _text(surface, pct_label, 20, theme.C["text"], x0 + w - 8, y - 2, "topright")
+    _text(surface, pct_label, 20, pct_color, x0 + w - 8, y - 2, "topright")
 
     bar_x = x0 + BAR_MARGIN
     bar_w = w - 2 * BAR_MARGIN
@@ -64,7 +72,8 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
                      border_radius=BAR_RADIUS)
     if pct is not None and pct > 0:
         fill_w = max(0.0, min(bar_w, bar_w * pct / 100))
-        pygame.draw.rect(surface, _level_color(pct),
+        fill_color = theme.C["muted"] if muted else _level_color(pct)
+        pygame.draw.rect(surface, fill_color,
                          pygame.Rect(round(bar_x), round(bar_y), round(fill_w), BAR_H),
                          border_radius=BAR_RADIUS)
 
@@ -81,18 +90,15 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360) -> N
     _text(surface, "CLAUDE CODE", 16, theme.C["muted"], x0, TITLE_Y)
 
     if usage is None:
-        _center_text(surface, "usage 未連結", 22, theme.C["muted"], x0, w, 220)
-        _center_text(surface, "在 Pi 執行 make claude-login", 16, theme.C["muted"], x0, w, 250)
+        _center_text(surface, "usage 未推送", 22, theme.C["muted"], x0, w, 220)
+        _center_text(surface, "Mac agent 未執行", 16, theme.C["muted"], x0, w, 250)
         return
 
     age = (now - usage.fetched_at).total_seconds()
+    muted = age > VERY_STALE_AFTER_S
     if age > STALE_AFTER_S:
         mins = int(age // 60)
         _text(surface, f"({mins} 分前)", 16, theme.C["muted"], x0 + w - 8, TITLE_Y, "topright")
-
-    if usage.needs_login:
-        _center_text(surface, "需重新登入", 22, theme.C["warn"], x0, w, 220)
-        return
 
     groups = [
         ("5H SESSION", usage.session_pct, usage.session_resets_at),
@@ -103,5 +109,5 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360) -> N
 
     y = GROUP_START_Y
     for label, pct, resets_at in groups:
-        _draw_group(surface, x0, w, y, label, pct, resets_at, now)
+        _draw_group(surface, x0, w, y, label, pct, resets_at, now, muted=muted)
         y += GROUP_STEP
