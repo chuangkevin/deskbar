@@ -181,17 +181,21 @@ class App:
             return
         snap = self.state.snapshot()
         self.logical.fill((15, 15, 15))
-        if self.view == "settings":
-            self.hits = settings_view.render(self.logical, snap, self.settings,
-                                             self.confirm_remove)
-        elif self.view == "alarms":
-            self.hits = alarm_view.render(self.logical, self.alarm_store,
-                                          self.alarm_draft, now)
-        else:
-            self.hits = dashboard.render(self.logical, snap, self.settings, now, clock_anim,
-                                         anchor=self.view_anchor)
-            if self.view == "detail" and self.detail_event is not None:
-                self.hits += detail.render(self.logical, self.detail_event)
+        # sync 現在只在 phase (a) 短暫持鎖（微秒級），這裡加鎖不會再造成長時間凍結；
+        # 反過來若不加鎖，sync 的 phase (a) 可能正好在改 settings.accounts 途中被讀到。
+        # _dispatch 的 with self.lock: 區塊不會呼叫 _render，故這裡再取鎖不會死結。
+        with self.lock:
+            if self.view == "settings":
+                self.hits = settings_view.render(self.logical, snap, self.settings,
+                                                 self.confirm_remove)
+            elif self.view == "alarms":
+                self.hits = alarm_view.render(self.logical, self.alarm_store,
+                                              self.alarm_draft, now)
+            else:
+                self.hits = dashboard.render(self.logical, snap, self.settings, now, clock_anim,
+                                             anchor=self.view_anchor)
+                if self.view == "detail" and self.detail_event is not None:
+                    self.hits += detail.render(self.logical, self.detail_event)
         self._flip()
         self._last_seq = snap.seq
         self._last_minute = now.minute

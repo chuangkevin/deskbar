@@ -95,6 +95,25 @@ def test_request_sync_sets_event(monkeypatch):
     sync.FORCE_SYNC.clear()
 
 
+def test_request_sync_sets_both_independent_events_no_race(monkeypatch):
+    """舊版單一 FORCE_SYNC 事件被 cal_loop／wx_loop 共用：先醒來的那個 loop 一
+    clear() 掉，另一個就永遠等不到（race）。現在 FORCE_CAL/FORCE_WX 各自獨立，
+    模擬 cal_loop 消費完只 clear 自己的，FORCE_WX 應該不受影響、仍是 set 狀態。"""
+    sync.FORCE_CAL.clear()
+    sync.FORCE_WX.clear()
+    sync.request_sync()
+    assert sync.FORCE_CAL.is_set()
+    assert sync.FORCE_WX.is_set()
+
+    # 模擬 cal_loop 消費（跟 start_threads.cal_loop 一樣：check-and-clear 自己的事件）
+    if sync.FORCE_CAL.is_set():
+        sync.FORCE_CAL.clear()
+
+    assert not sync.FORCE_CAL.is_set()
+    assert sync.FORCE_WX.is_set(), "wx_loop 還沒消費，FORCE_WX 不該被 cal_loop 誤清掉"
+    sync.FORCE_WX.clear()
+
+
 class FakeResp:
     def __init__(self, status_code, payload):
         self.status_code = status_code
