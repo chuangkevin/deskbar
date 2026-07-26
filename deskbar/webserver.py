@@ -24,8 +24,8 @@ def create_app(store) -> Flask:
     def add_alarm():
         d = request.get_json(force=True, silent=True) or {}
         time_s, days, label = d.get("time", ""), d.get("days", []), str(d.get("label", ""))[:40]
-        if not _TIME_RE.match(time_s) or not isinstance(days, list) \
-                or any((not isinstance(x, int)) or x < 0 or x > 6 for x in days):
+        if not isinstance(time_s, str) or not _TIME_RE.match(time_s) or not isinstance(days, list) \
+                or any((not isinstance(x, int)) or isinstance(x, bool) or x < 0 or x > 6 for x in days):
             return jsonify({"error": "invalid time or days"}), 400
         a = store.add(time_s, days, label or "提醒")
         return jsonify(asdict(a)), 201
@@ -33,7 +33,9 @@ def create_app(store) -> Flask:
     @app.patch("/api/alarms/<aid>")
     def patch_alarm(aid):
         d = request.get_json(force=True, silent=True) or {}
-        if store.set_enabled(aid, bool(d.get("enabled"))):
+        if not isinstance(d.get("enabled"), bool):
+            return jsonify({"error": "enabled must be boolean"}), 400
+        if store.set_enabled(aid, d.get("enabled")):
             return jsonify({"ok": True})
         return jsonify({"error": "not found"}), 404
 

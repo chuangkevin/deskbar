@@ -29,6 +29,10 @@ def test_validation(client):
     assert client.post("/api/alarms", json={"time": "09:00", "days": [7], "label": "x"}).status_code == 400
     assert client.patch("/api/alarms/nope", json={"enabled": True}).status_code == 404
     assert client.delete("/api/alarms/nope").status_code == 404
+    assert client.post("/api/alarms", json={"time": 900, "days": [0], "label": "x"}).status_code == 400
+    assert client.post("/api/alarms", json={"time": None, "days": [0], "label": "x"}).status_code == 400
+    assert client.post("/api/alarms", json={"time": "09:00", "days": [True], "label": "x"}).status_code == 400
+    assert client.patch("/api/alarms/nope", json={}).status_code == 400
 
 
 def test_index_served(client):
