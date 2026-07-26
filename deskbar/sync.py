@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import threading
 import time as _time
 from dataclasses import dataclass
@@ -126,8 +127,10 @@ def weather_sync_once(state: AppState, settings, deps: SyncDeps,
     try:
         w = fetch_weather(lat, lon, label, http_get=deps.http_get, now_fn=deps.now_fn)
         state.set_weather(w)
-    except Exception:
-        pass  # 保留舊值，UI 顯示資料年齡
+    except Exception as e:
+        # 保留舊值，UI 顯示資料年齡（AppState 沒有天氣專屬的 last_error 欄位，
+        # 這裡本來完全靜默、故障時無從得知原因——至少寫一行 stderr 供 journald 除錯。
+        print(f"[deskbar] weather sync failed: {e}", file=sys.stderr)
 
 
 def start_threads(state: AppState, settings, settings_lock: threading.Lock) -> None:

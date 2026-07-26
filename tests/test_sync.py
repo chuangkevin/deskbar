@@ -66,3 +66,21 @@ def test_removed_account_dropped(tmp_path, monkeypatch):
     (cfg.accounts_dir() / "a@x.com.json").unlink()
     sync.calendar_sync_once(state, settings, deps)
     assert "a@x.com" not in state.snapshot().statuses
+
+
+def test_weather_sync_failure_logs_to_stderr_and_keeps_old_value(capsys):
+    from deskbar.store import AppState
+    from deskbar.weather import Weather
+
+    def boom(*a, **k):
+        raise OSError("network down")
+
+    deps = sync.SyncDeps(today_fn=lambda: date(2026, 7, 27), now_fn=lambda: NOW,
+                         http_get=boom, http_post=None, tz=TZ)
+    state, settings = AppState(), Settings()
+    old = Weather(20.0, 0, 25.0, 15.0, "台北", NOW)
+    state.set_weather(old)
+    sync.weather_sync_once(state, settings, deps)
+    assert state.snapshot().weather == old            # 舊值保留
+    err = capsys.readouterr().err
+    assert "weather sync failed" in err and "network down" in err

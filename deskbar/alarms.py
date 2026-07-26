@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 import threading
 import uuid
 from dataclasses import asdict, dataclass
@@ -82,9 +84,12 @@ class AlarmStore:
                              if a is not None]
 
     def _save_locked(self) -> None:
-        self._path().write_text(
-            json.dumps([asdict(a) for a in self._alarms], ensure_ascii=False, indent=1),
-            encoding="utf-8")
+        """原子寫入（tempfile + os.replace），比照 config.save_settings：半途出例外
+        （例如 json.dump 中途拋錯）不會留下截斷的 alarms.json，舊檔內容維持完好。"""
+        fd, tmp = tempfile.mkstemp(dir=config.config_dir(), suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump([asdict(a) for a in self._alarms], f, ensure_ascii=False, indent=1)
+        os.replace(tmp, self._path())
 
     def list(self) -> list[Alarm]:
         with self._lock:
