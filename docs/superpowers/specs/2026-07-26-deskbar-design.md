@@ -1,4 +1,4 @@
-# pical — Raspberry Pi 桌面行事曆儀表板 設計文件
+# deskbar — Raspberry Pi 桌面行事曆儀表板 設計文件
 
 - 日期：2026-07-26
 - 狀態：設計已與使用者逐項確認，待最終審查
@@ -22,14 +22,14 @@
 | 帳號模型 | 多帳號，每帳號一個 token 檔，Pi 每同步週期重掃帳號目錄 | 新增帳號免重啟；單帳號失效不影響其他帳號 |
 | 日曆資料 | Google Calendar API `calendar.readonly`，每 5 分鐘輪詢 | 近即時；唯讀最小權限 |
 | GCP 同意畫面 | External ＋ **發布為正式版**（不驗證） | 測試模式 refresh token 七天過期，發布後長期有效；「未驗證應用程式」警告為個人自用預期行為 |
-| 天氣 | Open-Meteo（免 API key），預設台北市南港區座標，每 30 分鐘更新 | 免申請、免保管金鑰；地點為設定值可改 |
+| 天氣 | Open-Meteo（免 API key），預設台北市中心範例座標，每 30 分鐘更新 | 免申請、免保管金鑰；地點為設定值可改 |
 | 螢幕旋轉 | 應用內以 1920×480 邏輯座標作畫，輸出前旋轉 90° 到面板原生 480×1920；觸控座標做同一旋轉的反向轉換 | KMS 下最單純可控；方向（90°/270°）為設定值，點亮時實測定案 |
 | 觸控範圍 | 基本互動：點行程看詳情、點齒輪進設定 | 使用者確認；重度互動不做 |
 | 公司/私人區分 | 時間軸依帳號切**獨立泳道**，左緣色條＋可自訂短標籤（如「工作」「個人」） | 使用者要求一眼可分公私行程；色點圖例不夠明確 |
 
 ## 3. 系統架構
 
-### Pi 端：單一 Python 程序（`pical`）
+### Pi 端：單一 Python 程序（`deskbar`）
 
 三執行緒，程序內以 thread-safe 的狀態儲存（store）溝通，UI 每幀讀取快照：
 
@@ -46,8 +46,8 @@
 ### 目錄結構
 
 ```
-pical/
-├── pical/                 # Pi 端應用（Mac dev 模式共用）
+deskbar/
+├── deskbar/                 # Pi 端應用（Mac dev 模式共用）
 │   ├── __main__.py        # 進入點與主迴圈
 │   ├── config.py          # settings 載入/儲存
 │   ├── accounts.py        # 帳號目錄掃描與各帳號狀態
@@ -63,7 +63,7 @@ pical/
 │       ├── settings_view.py # 設定頁（帳號/日曆開關/泳道改名/移除帳號）
 │       └── touch.py       # 觸控座標旋轉轉換＋命中測試
 ├── tools/add_account.py   # Mac 授權精靈
-├── deploy/                # pical.service、install.sh、開機設定片段
+├── deploy/                # deskbar.service、install.sh、開機設定片段
 ├── tests/                 # pytest（Mac 上跑）
 ├── Makefile
 └── docs/superpowers/specs/
@@ -71,10 +71,10 @@ pical/
 
 ### Pi 上的資料位置
 
-- `~/.config/pical/settings.json` — 顯示設定（各帳號啟用日曆、泳道標籤與顏色、天氣座標、旋轉方向、時間軸起訖）
-- `~/.config/pical/client_secret.json` — GCP 桌面型 OAuth client（chmod 600）
-- `~/.config/pical/accounts/<email>.json` — 各帳號 refresh token（chmod 600）
-- `~/.cache/pical/events.json`、`weather.json` — 離線快取（含抓取時間戳）
+- `~/.config/deskbar/settings.json` — 顯示設定（各帳號啟用日曆、泳道標籤與顏色、天氣座標、旋轉方向、時間軸起訖）
+- `~/.config/deskbar/client_secret.json` — GCP 桌面型 OAuth client（chmod 600）
+- `~/.config/deskbar/accounts/<email>.json` — 各帳號 refresh token（chmod 600）
+- `~/.cache/deskbar/events.json`、`weather.json` — 離線快取（含抓取時間戳）
 
 ## 4. UI 設計（1920×480，深色主題）
 
@@ -106,14 +106,14 @@ pical/
 - **行程正規化**：各帳號各日曆的 events 統一為 `{id, account, calendar_id, title, start, end, all_day, location, description}`；時區一律轉 `Asia/Taipei`（系統時區）。
 - **輪詢**：`events.list(timeMin=今日00:00, timeMax=明日00:00, singleEvents=true, orderBy=startTime)`；每帳號每日曆一次請求，配額遠低於上限。
 - **快取**：每次成功同步覆寫磁碟快取；開機或斷網時以快取渲染，並在同步狀態顯示資料年齡。
-- **天氣**：Open-Meteo current ＋ daily high/low，座標存於 settings（預設南港 25.055, 121.607）。
+- **天氣**：Open-Meteo current ＋ daily high/low，座標存於裝置上的 settings.json（範例值 25.046, 121.517；實際地點不入 repo）。
 
 ## 6. 顯示管線與開機設定
 
 - SDL 後端：Pi 上 `SDL_VIDEODRIVER=kmsdrm`（Bookworm 的 SDL2 支援）；Mac dev 模式為一般視窗。
 - 若面板 EDID 不被正確識別，於 `cmdline.txt` 以 `video=HDMI-A-1:480x1920@60` 強制模式；文字主控台加 `fbcon=rotate:1` 讓 log 可讀。
 - 防休眠：`cmdline.txt` 加 `consoleblank=0`；無 X/桌面故無 DPMS/xset 需求。
-- 開機流程：`raspi-config` 設 boot to CLI（不自動登入桌面）→ `pical.service`（systemd，`After=network-online.target`、`Restart=always`、以一般使用者執行，加入 `render`/`input` 群組）啟動應用。
+- 開機流程：`raspi-config` 設 boot to CLI（不自動登入桌面）→ `deskbar.service`（systemd，`After=network-online.target`、`Restart=always`、以一般使用者執行，加入 `render`/`input` 群組）啟動應用。
 
 ## 7. 錯誤處理與韌性
 
@@ -140,6 +140,6 @@ pical/
 
 ## 10. 一次性人工步驟（使用者操作，我逐步指引）
 
-1. ✅ Raspberry Pi Imager：主機名/帳號/2.4G Wi-Fi/SSH 公鑰（kevinhome_key）已設定燒錄。
+1. ✅ Raspberry Pi Imager：主機名/帳號/2.4G Wi-Fi/SSH 公鑰已設定燒錄。
 2. GCP Console：建專案 → 啟用 Google Calendar API → OAuth 同意畫面（External、加 `calendar.readonly` scope、**發布正式版**）→ 建「桌面應用程式」OAuth client → 下載 `client_secret.json` 交給專案。
 3. 每個要顯示的 Google 帳號在 Mac 上跑一次 `make add-account`（含公司帳號；登入時的「未驗證應用程式」警告點「進階→繼續」）。
