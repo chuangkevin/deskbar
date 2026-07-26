@@ -1,6 +1,8 @@
 PI ?= kevin@100.98.35.59
 KEY ?= ~/.ssh/kevinhome_key
 
+.PHONY: test dev deploy add-account
+
 test:
 	.venv/bin/python -m pytest -q
 
