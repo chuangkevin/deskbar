@@ -5,7 +5,7 @@ import pygame
 from deskbar.layout import Rect, layout_timeline_range, split_allday, time_to_x_range
 from deskbar.ui import Hit
 from deskbar.ui import agenda, icons, monthgrid, theme
-from deskbar.viewwin import view_window, window_label
+from deskbar.viewwin import data_window, view_window, window_label
 from deskbar.weather import code_text
 
 PANEL_W, TL_X0, TL_X1 = 480, 500, 1900
@@ -37,7 +37,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None)
     tz = now.tzinfo
     span = settings.view_span
     anchor_or_now = anchor if anchor is not None else now
-    win_start, win_end = view_window(span, anchor_or_now, tz)
+    win_start, win_end = view_window(span, anchor_or_now, tz,
+                                     start_hour=settings.start_hour, end_hour=settings.end_hour)
 
     _render_panel(surface, snap, settings, now, hits, clock_anim)
     pygame.draw.line(surface, theme.C["panel_line"], (PANEL_W, 0), (PANEL_W, 480))
@@ -58,9 +59,10 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None)
         hits += agenda.render_agenda(surface, visible, settings, win_start, win_end, now, TL_AREA)
     elif span == "month":
         hits += monthgrid.render_month(surface, visible, lane_emails, settings, win_start,
-                                       TL_AREA)
+                                       TL_AREA, now)
     else:
         _render_grid_range(surface, span, win_start, win_end)
+        _render_data_window_overlay(surface, win_start, win_end, now, tz)
         placed, overflow = layout_timeline_range(timed, lane_emails, win_start, win_end, TL_AREA)
         _render_lanes(surface, lane_emails, settings)
         for p in placed:
@@ -68,7 +70,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None)
             r = pygame.Rect(int(p.rect.x), int(p.rect.y) + 2, int(p.rect.w), int(p.rect.h) - 4)
             pygame.draw.rect(surface, dark, r, border_radius=6)
             label = ("◀ " if p.clip_l else "") + p.event.title + (" ▶" if p.clip_r else "")
-            if r.width > 40:
+            if span != "week" and r.width > 40:   # 規格：週檢視免標籤，只留色塊
                 clipped = surface.subsurface(r.clip(surface.get_rect()))
                 _text(clipped, label, 22, main, 8, r.height // 2 - 14)
             hits.append(Hit(p.rect, "open_detail", p.event))
@@ -166,6 +168,31 @@ def _render_grid_range(surface, span, win_start, win_end):
                 pygame.draw.line(surface, theme.C["grid"], (x, 52), (x, 420))
                 _text(surface, f"{t.hour:02d}", 20, theme.C["muted"], x, 434, "midtop")
             t += timedelta(hours=1)
+
+
+def _render_data_window_overlay(surface, win_start, win_end, now, tz) -> None:
+    """半天/日/週連續軸視圖：若可視窗口有一段落在「已同步資料窗口」之外，
+    在那段 x 範圍蓋一層暗色帶＋一次「未同步範圍」提示，避免把「還沒同步」畫成「真的沒事」。"""
+    dw_start, dw_end = data_window(now.date(), tz)
+    segments = []
+    if win_start < dw_start:
+        segments.append((win_start, min(win_end, dw_start)))
+    if win_end > dw_end:
+        segments.append((max(win_start, dw_end), win_end))
+    labeled = False
+    for seg_start, seg_end in segments:
+        if seg_end <= seg_start:
+            continue
+        x0 = time_to_x_range(seg_start, win_start, win_end, TL_X0, TL_X1)
+        x1 = time_to_x_range(seg_end, win_start, win_end, TL_X0, TL_X1)
+        w = max(1, round(x1 - x0))
+        band = pygame.Surface((w, TL_AREA.h), pygame.SRCALPHA)
+        band.fill((20, 20, 20, 170))
+        surface.blit(band, (round(x0), TL_AREA.y))
+        if not labeled:
+            _text(surface, "未同步範圍", 20, theme.C["muted"],
+                 (x0 + x1) / 2, TL_AREA.y + TL_AREA.h / 2, "center")
+            labeled = True
 
 
 def _render_lanes(surface, lane_emails, settings):

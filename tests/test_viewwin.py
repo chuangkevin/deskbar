@@ -21,6 +21,15 @@ def test_day_window_is_08_to_24():
     assert end == datetime(2026, 7, 28, 0, 0, tzinfo=TZ)
 
 
+def test_day_window_honors_custom_start_end_hour():
+    # settings.start_hour/end_hour 曾經是死參數（day 檔永遠硬編碼 08–24）；
+    # 現在 view_window 要真的套用傳進來的自訂值。
+    anchor = datetime(2026, 7, 27, 15, 0, tzinfo=TZ)
+    start, end = view_window("day", anchor, TZ, start_hour=6, end_hour=22)
+    assert start == datetime(2026, 7, 27, 6, 0, tzinfo=TZ)
+    assert end == datetime(2026, 7, 27, 22, 0, tzinfo=TZ)
+
+
 def test_week_window_starts_monday():
     # 2026-07-27 是週一
     monday = datetime(2026, 7, 27, 9, 0, tzinfo=TZ)

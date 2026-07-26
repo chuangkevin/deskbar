@@ -66,7 +66,7 @@ class App:
         from zoneinfo import ZoneInfo
         from deskbar import sync
         from deskbar.ui import alarm_view, dashboard, detail, settings_view
-        from deskbar.viewwin import next_span
+        from deskbar.viewwin import clamp_anchor, next_span
         for h in reversed(self.hits):   # 上層優先
             if h.rect.contains(x, y):
                 a = h.action
@@ -145,8 +145,11 @@ class App:
                     elif a == "goto_now":
                         self.view_anchor = None
                     elif a == "goto_day":
-                        self.view_anchor = datetime.combine(
-                            h.data, _time(12, 0), tzinfo=ZoneInfo("Asia/Taipei"))
+                        tz = ZoneInfo("Asia/Taipei")
+                        candidate = datetime.combine(h.data, _time(12, 0), tzinfo=tz)
+                        # 月視圖已經只給窗口內的日子出 hit，這裡再夾一次是防禦性重複保險
+                        # （和 _pan_view 用同一支 clamp_anchor，行為一致）。
+                        self.view_anchor = clamp_anchor(candidate, datetime.now(tz), tz)
                         self.settings.view_span = "day"
                         self.on_save(self.settings)
                     elif a == "remove_account":
@@ -225,7 +228,9 @@ class App:
         now = datetime.now(tz)
         with self.lock:
             anchor_or_now = self.view_anchor if self.view_anchor is not None else now
-            win_start, win_end = view_window(self.settings.view_span, anchor_or_now, tz)
+            win_start, win_end = view_window(
+                self.settings.view_span, anchor_or_now, tz,
+                start_hour=self.settings.start_hour, end_hour=self.settings.end_hour)
             window_len = win_end - win_start
             shift = dx_px / area_w * window_len
             new_anchor = anchor_or_now - shift

@@ -1,5 +1,5 @@
 """v4 視圖層：寬度切換/模式切換/強制同步/回今天/月視圖/行程模式的 render() hits 驗證。"""
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pygame
@@ -7,7 +7,7 @@ import pygame
 from deskbar.config import Settings
 from deskbar.models import Event
 from deskbar.store import AppState
-from deskbar.ui import dashboard
+from deskbar.ui import dashboard, theme
 
 TZ = ZoneInfo("Asia/Taipei")
 NOW = datetime(2026, 7, 27, 14, 37, tzinfo=TZ)   # 週一
@@ -96,6 +96,71 @@ def test_agenda_mode_empty_window_still_returns_control_hits():
     hits = dashboard.render(_surf(), st.snapshot(), settings, NOW)
     actions = {h.action for h in hits}
     assert "cycle_span" in actions and "force_sync" in actions
+
+
+def test_week_span_renders_long_event_without_crash():
+    """規格：週＝免標籤。先確保跨小時的事件在週檔渲染不會爆炸（基本煙霧測試），
+    標籤是否真的被壓下由下面的像素比對測試驗證。"""
+    settings = _settings_with_account()
+    settings.view_span = "week"
+    start = NOW.replace(hour=10, minute=0)
+    st = _state_with_event(start, start + timedelta(hours=6), title="很長很長的會議標題文字")
+    hits = dashboard.render(_surf(), st.snapshot(), settings, NOW)
+    assert any(h.action == "open_detail" for h in hits)
+
+
+def test_week_span_suppresses_event_label_but_day_span_shows_it():
+    """規格：週檢視「免標籤」——事件色塊不畫標題文字，只留色塊。
+
+    比較誠實的驗證方式：同一個 6 小時事件，分別在 day 檔／week 檔渲染，
+    在色塊內文字理應出現的那一小段水平帶掃描像素——
+    day 檔應該出現非底色像素（畫了字），week 檔應該完全等於色塊底色（沒畫字）。
+    這樣測的是「有沒有實際畫出文字」而不是內部旗標，比較不會被實作細節綁架。
+    """
+    # 刻意避開 NOW（14:37）落在事件區間內：「現在」豎線會穿過色塊，
+    # 混進「這格有非底色像素」的判斷，干擾標籤有無的驗證。
+    start = NOW.replace(hour=18, minute=0)
+    end = start + timedelta(hours=6)
+    dark = theme.account_color(0)[1]      # a@x.com 預設 color=0 的色塊底色
+
+    def _render_span(span):
+        settings = _settings_with_account()
+        settings.view_span = span
+        st = _state_with_event(start, end, title="很長很長的會議標題文字")
+        surf = _surf()
+        hits = dashboard.render(surf, st.snapshot(), settings, NOW)
+        block = next(h for h in hits if h.action == "open_detail")
+        return surf, block.rect
+
+    def _has_non_bg_pixel(surf, rect, bg):
+        # 文字左上角落在 (rect.x+8, rect.y + rect.h//2 - 14)（見 dashboard._text 呼叫），
+        # 掃這附近一小塊矩形（涵蓋整個字高＋開頭幾個字元寬），避免只挑到抗鋸齒空白列。
+        y0 = int(rect.y) + int(rect.h) // 2 - 14
+        x0 = int(rect.x) + 8
+        for y in range(y0, y0 + 26):
+            for x in range(x0, x0 + min(int(rect.w) - 12, 80)):
+                if surf.get_at((x, y))[:3] != bg:
+                    return True
+        return False
+
+    surf_day, r_day = _render_span("day")
+    surf_week, r_week = _render_span("week")
+
+    assert _has_non_bg_pixel(surf_day, r_day, dark), "day 檔應該畫出事件標題文字"
+    assert not _has_non_bg_pixel(surf_week, r_week, dark), "week 檔應該「免標籤」不畫文字"
+
+
+def test_month_span_does_not_emit_goto_day_for_out_of_window_days():
+    """規格：月視圖資料窗口是 [今天-7, 今天+30]。NOW=2026-07-27，窗口外的
+    7 月 1 日（早於 7/20）不該出現 goto_day hit——避免使用者點了一個從沒同步過、
+    畫面上看起來像「這天沒事」的日子，跳過去卻只是空白（假空）。"""
+    settings = _settings_with_account()
+    settings.view_span = "month"
+    st = _state_with_event(NOW.replace(hour=10), NOW.replace(hour=11))
+    hits = dashboard.render(_surf(), st.snapshot(), settings, NOW)
+    goto_day_dates = {h.data for h in hits if h.action == "goto_day"}
+    assert date(2026, 7, 1) not in goto_day_dates
+    assert date(2026, 7, 27) in goto_day_dates   # 今天本身一定在窗口內
 
 
 def test_agenda_mode_on_month_span_still_uses_agenda_not_month_grid():
