@@ -93,7 +93,7 @@ def _render_draft(surface, draft, hits) -> None:
     x0 = DIVIDER_X + 40
     _text(surface, "新增鬧鐘", 24, theme.C["muted"], x0, 32)
     h, m = draft["hour"], draft["minute"]
-    _text(surface, f"{h:02d}:{m:02d}", 72, theme.C["text"], 1440, 150, "midtop")
+    _text(surface, f"{h:02d}:{m:02d}", 72, theme.C["text"], x0 + 265, 140, "midtop")
 
     _btn(surface, "時 －", x0, 230, 110, 56, "draft_hour", -1, hits)
     _btn(surface, "時 ＋", x0 + 120, 230, 110, 56, "draft_hour", 1, hits)
