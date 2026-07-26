@@ -4,7 +4,7 @@ PI ?= pi@deskbar.local
 KEY ?= ~/.ssh/id_ed25519
 DEST ?= /home/pi/deskbar
 
-.PHONY: test dev deploy add-account
+.PHONY: test dev deploy add-account claude-login
 
 test:
 	.venv/bin/python -m pytest -q
@@ -18,3 +18,8 @@ deploy:
 
 add-account:
 	.venv/bin/python tools/add_account.py
+
+# 在 Pi 上互動登入 Claude 帳號（usage 唯讀 OAuth）。使用者自己在終端機貼授權碼，
+# 不是 AI 代跑——見 tools/claude_login.py 檔頭說明。
+claude-login:
+	ssh -i $(KEY) $(PI) "cd $(DEST) && .venv/bin/python tools/claude_login.py"

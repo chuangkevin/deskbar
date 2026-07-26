@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pygame  # noqa: E402
 
 from deskbar.alarms import Alarm  # noqa: E402
+from deskbar.claudeusage import UsageInfo  # noqa: E402
 from deskbar.config import Settings  # noqa: E402
 from deskbar.models import event_from_json  # noqa: E402
 from deskbar.store import AppState  # noqa: E402
@@ -196,6 +197,36 @@ def render_empty_states(out_dir: Path) -> list[str]:
     return manifest
 
 
+def render_usage_pages(state: AppState, settings: Settings, out_dir: Path) -> list[str]:
+    """右欄 Claude usage 油表：正常三組／未連結／需重新登入各一張，人眼核對
+    分級顏色、倒數格式、未越界（跟中欄／螢幕右緣都留了 20px）。直接沿用既有
+    state（真實行事曆事件快取）疊上不同 usage 狀態，畫完照舊放回 None，
+    不影響後面其他 render_* 函式看到的 state。"""
+    manifest: list[str] = []
+    settings.view_span = "day"
+    settings.view_mode = "lanes"
+
+    normal = UsageInfo(
+        session_pct=42.0, session_resets_at=NOW + timedelta(hours=2, minutes=3),
+        weekly_pct=71.0, weekly_resets_at=NOW + timedelta(days=1, hours=4),
+        fable_pct=91.0, fable_resets_at=NOW + timedelta(hours=1),
+        fetched_at=NOW, needs_login=False,
+    )
+    scenarios = [
+        ("usage_normal_three_groups", normal),
+        ("usage_not_connected", None),
+        ("usage_needs_login", UsageInfo(None, None, None, None, None, None, NOW,
+                                        needs_login=True)),
+    ]
+    for name, usage in scenarios:
+        state.set_usage(usage)
+        surf = _surface()
+        dashboard.render(surf, state.snapshot(), settings, NOW)
+        _save(surf, out_dir, name, manifest)
+    state.set_usage(None)
+    return manifest
+
+
 def render_token_invalid(state: AppState, settings: Settings, out_dir: Path) -> list[str]:
     """帳號 token 失效狀態：設定頁該帳號卡片顯示實際錯誤訊息（st.error）。"""
     manifest: list[str] = []
@@ -230,6 +261,7 @@ def main() -> None:
     manifest += render_syncing(state, settings, args.out)
     manifest += render_token_invalid(state, settings, args.out)
     manifest += render_empty_states(args.out)
+    manifest += render_usage_pages(state, settings, args.out)
 
     print(f"共產出 {len(manifest)} 張 PNG：")
     for p in manifest:

@@ -41,6 +41,9 @@ def main() -> None:
         from deskbar import sync
         sync.start_threads(state, settings, lock)
 
+    from deskbar.claudeusage import start_usage_thread
+    start_usage_thread(state)      # 沒有 claude_oauth.json（沒跑過 claude-login）就直接跳過
+
     from deskbar.alarms import AlarmStore
     alarm_store = AlarmStore()
     alarm_store.load()
