@@ -75,13 +75,16 @@ def _render_list(surface, store, hits) -> None:
     y = 100
     for a in alarms:
         _text(surface, a.time, 40, theme.C["text"], 40, y)
-        _text(surface, a.label, 22, theme.C["text2"], 190, y + 4)
-        days = ("每" + "".join(WEEKDAY_CHARS[d] for d in sorted(a.days))
-                if a.days else "一次性")
+        label = a.label if len(a.label) <= 12 else a.label[:12] + "…"
+        _text(surface, label, 22, theme.C["text2"], 190, y + 4)
+        # 防呆：只渲染合法的星期索引（0..6），避免壞資料撐爆索引。
+        valid_days = sorted(d for d in a.days if isinstance(d, int) and 0 <= d <= 6)
+        days = ("每" + "".join(WEEKDAY_CHARS[d] for d in valid_days)
+                if valid_days else "一次性")
         _text(surface, days, 20, theme.C["muted"], 190, y + 34)
         toggle_label = "停用" if a.enabled else "啟用"
-        _btn(surface, toggle_label, 560, y, 130, 48, "toggle_alarm", a.id, hits, size=22)
-        _btn(surface, "刪除", 710, y, 100, 48, "delete_alarm", a.id, hits,
+        _btn(surface, toggle_label, 560, y, 130, 52, "toggle_alarm", a.id, hits, size=22)
+        _btn(surface, "刪除", 710, y, 100, 52, "delete_alarm", a.id, hits,
              size=22, fg=theme.C["warn"])
         y += 85
 

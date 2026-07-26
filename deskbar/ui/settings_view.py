@@ -26,10 +26,12 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
     _btn(surface, "旋轉螢幕", 1480, 20, 200, 52, "rotate", None, hits)
     _btn(surface, "完成", 1700, 20, 180, 52, "settings_done", None, hits)
     x = 40
+    shown = 0
     for email, acc in settings.accounts.items():
         if x + 430 > ACCOUNTS_MAX_RIGHT:
             # QR code 優先：帳號卡排不下就不畫，不與 QR 重疊。
             break
+        shown += 1
         main, dark = theme.account_color(acc.color)
         card = pygame.Rect(x, 96, 430, 330)
         pygame.draw.rect(surface, theme.C["card"], card, border_radius=10)
@@ -63,6 +65,11 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
     if x == 40:
         surface.blit(theme.font(24).render("尚無帳號——在 Mac 執行 make add-account",
                                            True, theme.C["muted"]), (40, 200))
+    hidden = len(settings.accounts) - shown
+    if hidden > 0:
+        surface.blit(theme.font(20).render(
+            f"＋{hidden} 個帳號未顯示（可用手機網頁或 SSH 管理）", True, theme.C["muted"]),
+            (40, 434))
     qr.draw_qr(surface, QR_X, QR_Y, QR_SIZE, qr.WEB_URL)
     surface.blit(theme.font(20).render("掃描設定鬧鐘", True, theme.C["text2"]),
                  (QR_X, QR_Y + QR_SIZE + 10))

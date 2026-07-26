@@ -72,7 +72,7 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None):
     dot = (93, 202, 165) if ok else theme.C["warn"]
     pygame.draw.circle(surface, dot, (52, 442), 5)
     _text(surface, msg, 20, theme.C["muted"], 66, 430)
-    hits.append(Hit(Rect(30, 30, 420, 150), "open_alarms", None))
+    hits.append(Hit(Rect(30, 30, 470, 150), "open_alarms", None))
     gear = Rect(396, 396, 72, 72)
     icons.draw_gear(surface, 432, 432, 20, theme.C["muted"])
     hits.append(Hit(gear, "open_settings", None))

@@ -1,4 +1,6 @@
 import os
+import sys
+import traceback
 
 import pygame
 
@@ -77,13 +79,18 @@ class App:
                         self.view = "dashboard"
                     elif a == "toggle_alarm":
                         if self.alarm_store is not None:
-                            current = next((al.enabled for al in self.alarm_store.list()
-                                             if al.id == h.data), None)
-                            if current is not None:
-                                self.alarm_store.set_enabled(h.data, not current)
+                            try:
+                                self.alarm_store.toggle(h.data)
+                            except OSError as e:
+                                print(f"[deskbar] alarm toggle write failed: {e}",
+                                      file=sys.stderr)
                     elif a == "delete_alarm":
                         if self.alarm_store is not None:
-                            self.alarm_store.remove(h.data)
+                            try:
+                                self.alarm_store.remove(h.data)
+                            except OSError as e:
+                                print(f"[deskbar] alarm delete write failed: {e}",
+                                      file=sys.stderr)
                     elif a == "draft_hour":
                         alarm_view.bump_draft(self.alarm_draft, "hour", h.data)
                     elif a == "draft_minute":
@@ -97,7 +104,11 @@ class App:
                             hh, mm = self.alarm_draft["hour"], self.alarm_draft["minute"]
                             days = sorted(self.alarm_draft["days"])
                             label = alarm_view.LABELS[self.alarm_draft["label_idx"]]
-                            self.alarm_store.add("%02d:%02d" % (hh, mm), days, label)
+                            try:
+                                self.alarm_store.add("%02d:%02d" % (hh, mm), days, label)
+                            except OSError as e:
+                                print(f"[deskbar] alarm add write failed: {e}",
+                                      file=sys.stderr)
                             self.alarm_draft["days"] = set()
                     elif a == "toggle_cal":
                         email, cal = h.data
@@ -167,45 +178,63 @@ class App:
         self._render()
         running = True
         while running:
-            for ev in pygame.event.get():
-                if ev.type == pygame.QUIT:
-                    running = False
-                elif ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_q):
-                    running = False
-                elif ev.type == pygame.FINGERDOWN:
-                    x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
-                    self._dispatch(x, y)
-                elif ev.type == pygame.MOUSEBUTTONDOWN:   # dev 模式滑鼠模擬觸控
-                    nx = ev.pos[0] / max(1, self.win[0] - 1)
-                    ny = ev.pos[1] / max(1, self.win[1] - 1)
-                    x, y = transform.touch_to_logical(nx, ny, self.settings.rotation)
-                    self._dispatch(x, y)
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
-            import time
-            now = datetime.now(ZoneInfo("Asia/Taipei"))
-            if self.alarm_store is not None:
-                due = self.alarm_store.due(self._last_alarm_check, now)
-                self._last_alarm_check = now
-                if due:
-                    self.firing.extend(due)
-                    self._last_seq = -1
-            if self.firing:
-                self._render()          # 閃爍需每圈重繪
-                clock.tick(10)
-                continue
-            if self._anim_start is None and now.minute != self._last_minute \
-                    and self._last_clock_text is not None:
-                self._clock_prev = self._last_clock_text
-                self._anim_start = time.monotonic()
-            if self._anim_start is not None:
-                progress = min(1.0, (time.monotonic() - self._anim_start) / 0.4)
-                self._render(clock_anim=(self._clock_prev, progress))
-                if progress >= 1.0:
-                    self._anim_start = None
-                clock.tick(30)
-            else:
-                if self.state.snapshot().seq != self._last_seq or now.minute != self._last_minute:
-                    self._render()
+            try:
+                running = self._run_iteration(clock, running)
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception:
+                # 單一畫格出錯不該弄死整個常駐程式（systemd 重啟＝鬧鐘頁永久壞掉）。
+                # 只記錄、降級這一格，下一圈繼續跑。
+                traceback.print_exc(file=sys.stderr)
                 clock.tick(10)
         pygame.quit()
+
+    def _run_iteration(self, clock, running: bool) -> bool:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                running = False
+            elif ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_q):
+                running = False
+            elif ev.type == pygame.FINGERDOWN:
+                x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
+                self._dispatch(x, y)
+            elif ev.type == pygame.MOUSEBUTTONDOWN:   # dev 模式滑鼠模擬觸控
+                nx = ev.pos[0] / max(1, self.win[0] - 1)
+                ny = ev.pos[1] / max(1, self.win[1] - 1)
+                x, y = transform.touch_to_logical(nx, ny, self.settings.rotation)
+                self._dispatch(x, y)
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        import time
+        now = datetime.now(ZoneInfo("Asia/Taipei"))
+        if self.alarm_store is not None:
+            due = self.alarm_store.due(self._last_alarm_check, now)
+            self._last_alarm_check = now
+            if due:
+                self.firing.extend(due)
+                self._last_seq = -1
+        if self.firing:
+            self._anim_start = None
+            self._render()          # 閃爍需每圈重繪
+            clock.tick(10)
+            return running
+        # 翻牌動畫（30fps 燒 400ms）只在 dashboard 頁才有意義；離開 dashboard 就不該
+        # 燒 CPU（1GHz 的 Pi Zero 2 W 上，設定/鬧鐘頁跑這個純屬浪費）。
+        animating = self.view == "dashboard" and not self.firing
+        if not animating and self._anim_start is not None:
+            self._anim_start = None
+        if animating and self._anim_start is None and now.minute != self._last_minute \
+                and self._last_clock_text is not None:
+            self._clock_prev = self._last_clock_text
+            self._anim_start = time.monotonic()
+        if animating and self._anim_start is not None:
+            progress = min(1.0, (time.monotonic() - self._anim_start) / 0.4)
+            self._render(clock_anim=(self._clock_prev, progress))
+            if progress >= 1.0:
+                self._anim_start = None
+            clock.tick(30)
+        else:
+            if self.state.snapshot().seq != self._last_seq or now.minute != self._last_minute:
+                self._render()
+            clock.tick(10)
+        return running
