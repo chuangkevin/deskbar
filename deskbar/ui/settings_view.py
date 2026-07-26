@@ -2,7 +2,12 @@ import pygame
 
 from deskbar.layout import Rect
 from deskbar.ui import Hit
+from deskbar.ui import qr
 from deskbar.ui import theme
+
+QR_X, QR_Y, QR_SIZE = 1500, 96, 200
+# 帳號卡最多排到這裡就要停手，留位置給 QR code（QR 優先，帳號卡超出者不畫）。
+ACCOUNTS_MAX_RIGHT = QR_X - 30
 
 
 def _btn(surface, label, x, y, w, h, action, data, hits, size=24, fg=None):
@@ -22,6 +27,9 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
     _btn(surface, "完成", 1700, 20, 180, 52, "settings_done", None, hits)
     x = 40
     for email, acc in settings.accounts.items():
+        if x + 430 > ACCOUNTS_MAX_RIGHT:
+            # QR code 優先：帳號卡排不下就不畫，不與 QR 重疊。
+            break
         main, dark = theme.account_color(acc.color)
         card = pygame.Rect(x, 96, 430, 330)
         pygame.draw.rect(surface, theme.C["card"], card, border_radius=10)
@@ -55,6 +63,11 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
     if x == 40:
         surface.blit(theme.font(24).render("尚無帳號——在 Mac 執行 make add-account",
                                            True, theme.C["muted"]), (40, 200))
+    qr.draw_qr(surface, QR_X, QR_Y, QR_SIZE, qr.WEB_URL)
+    surface.blit(theme.font(20).render("掃描設定鬧鐘", True, theme.C["text2"]),
+                 (QR_X, QR_Y + QR_SIZE + 10))
+    surface.blit(theme.font(22).render("desk.sisihome.org", True, theme.C["muted"]),
+                 (QR_X, QR_Y + QR_SIZE + 36))
     if confirm_remove:
         bar = pygame.Rect(0, 380, 1920, 100)
         pygame.draw.rect(surface, (40, 20, 20), bar)

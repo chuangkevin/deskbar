@@ -4,6 +4,7 @@ import pygame
 
 from deskbar.layout import Rect, layout_timeline, split_allday, time_to_x
 from deskbar.ui import Hit
+from deskbar.ui import icons
 from deskbar.ui import theme
 from deskbar.weather import code_text
 
@@ -72,7 +73,7 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None):
     pygame.draw.circle(surface, dot, (52, 442), 5)
     _text(surface, msg, 20, theme.C["muted"], 66, 430)
     gear = Rect(396, 396, 72, 72)
-    _text(surface, "⚙", 40, theme.C["muted"], 432, 432, "center")
+    icons.draw_gear(surface, 432, 432, 20, theme.C["muted"])
     hits.append(Hit(gear, "open_settings", None))
 
 
