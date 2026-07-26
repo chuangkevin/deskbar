@@ -138,7 +138,22 @@ deskbar/
 - **Pi 煙霧測試**：服務啟動、旋轉方向正確、觸控命中、斷網拔網線驗證快取路徑、重開機自啟。
 - **驗收清單**：交接手冊 Step 1–4 全數完成＋觸控互動與多帳號泳道如 mockup。
 
-## 10. 一次性人工步驟（使用者操作，我逐步指引）
+## 10. v2 追加功能（使用者決定併入本輪實作）
+
+### 10.1 鬧鐘系統
+- **儲存**：`~/.config/deskbar/alarms.json`，欄位 `{id, time:"HH:MM", days:[0-6]（Python weekday，空陣列＝一次性）, label, enabled}`；`AlarmStore` 類別持鎖，web 執行緒與 UI 執行緒共用。
+- **觸發**：UI 主迴圈每秒查 `due_alarms(last_check, now)`；到點→全螢幕閃爍覆疊（珊瑚色/深色 2Hz 交替）＋鬧鐘標籤＋時間；**點任意處關閉**；一次性鬧鐘觸發後自動停用並存檔，重複鬧鐘清除當次狀態。
+- **打卡情境**：週一到五重複鬧鐘（days=[0,1,2,3,4]）。
+
+### 10.2 Web 設定介面
+- Pi 起 Flask 執行緒（port 8080，`0.0.0.0`），任何 tailnet/區網裝置開 `http://rpi2w:8080` 即可管理鬧鐘（新增/啟停/刪除），單頁 HTML＋fetch API，無登入（tailnet 即信任邊界）。
+- API：`GET/POST /api/alarms`、`PATCH/DELETE /api/alarms/<id>`。
+- RAM 預算：Flask 執行緒 +15~20MB，總預算 <200MB 不變。
+
+### 10.3 翻頁時鐘動畫
+- 左面板大時鐘升級為翻頁卡片式：分鐘變化時播放約 400ms 的翻板動畫（動畫期間暫時提高重繪頻率，平時維持低頻省電）。
+
+## 11. 一次性人工步驟（使用者操作，我逐步指引）
 
 1. ✅ Raspberry Pi Imager：主機名/帳號/2.4G Wi-Fi/SSH 公鑰已設定燒錄。
 2. GCP Console：建專案 → 啟用 Google Calendar API → OAuth 同意畫面（External、加 `calendar.readonly` scope、**發布正式版**）→ 建「桌面應用程式」OAuth client → 下載 `client_secret.json` 交給專案。
