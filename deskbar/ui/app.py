@@ -43,6 +43,8 @@ class App:
         for h in reversed(self.hits):   # 上層優先
             if h.rect.contains(x, y):
                 a = h.action
+                if a == "noop":
+                    return
                 with self.lock:
                     if a == "open_settings":
                         self.view = "settings"
