@@ -17,6 +17,9 @@ ACCOUNT_COLORS = [
 _FONT_PATHS = [
     os.environ.get("DESKBAR_FONT", ""),
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
 ]
 _font_cache: dict = {}
 
