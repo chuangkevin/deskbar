@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+client_secret.json
+accounts/
+settings.json
+*.token.json
+.cache/
+.DS_Store
