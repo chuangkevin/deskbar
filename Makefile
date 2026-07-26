@@ -14,4 +14,4 @@ deploy:
 	ssh -i $(KEY) $(PI) "bash /home/kevin/deskbar/deploy/install.sh && sudo systemctl restart deskbar"
 
 add-account:
-	python3 tools/add_account.py
+	.venv/bin/python tools/add_account.py
