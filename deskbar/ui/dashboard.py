@@ -18,10 +18,10 @@ def _text(surface, s, size, color, x, y, anchor="topleft"):
     return r
 
 
-def render(surface, snap, settings, now: datetime) -> list[Hit]:
+def render(surface, snap, settings, now: datetime, clock_anim=None) -> list[Hit]:
     hits: list[Hit] = []
     day = now.date()
-    _render_panel(surface, snap, settings, now, hits)
+    _render_panel(surface, snap, settings, now, hits, clock_anim)
     pygame.draw.line(surface, theme.C["panel_line"], (PANEL_W, 0), (PANEL_W, 480))
     lane_emails = [e for e in settings.accounts if settings.accounts[e].calendars] \
         or list(snap.statuses)
@@ -48,8 +48,10 @@ def render(surface, snap, settings, now: datetime) -> list[Hit]:
     return hits
 
 
-def _render_panel(surface, snap, settings, now, hits):
-    _text(surface, now.strftime("%H:%M"), 130, theme.C["text"], 40, 40)
+def _render_panel(surface, snap, settings, now, hits, clock_anim=None):
+    anim = clock_anim if clock_anim else (now.strftime("%H:%M"), 1.0)
+    from deskbar.ui import flipclock
+    flipclock.draw(surface, 40, 40, now.strftime("%H:%M"), anim[0], anim[1])
     wd = "週" + "一二三四五六日"[now.weekday()]
     _text(surface, f"{now.month}月{now.day}日 {wd}", 28, theme.C["text2"], 44, 190)
     w = snap.weather

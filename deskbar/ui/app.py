@@ -20,6 +20,9 @@ class App:
         self.hits: list[Hit] = []
         self._last_seq = -1
         self._last_minute = None
+        self._last_clock_text = None
+        self._clock_prev = None
+        self._anim_start = None
 
     def _init_display(self) -> None:
         if os.environ.get("DESKBAR_DEV") != "1":
@@ -88,7 +91,7 @@ class App:
 
     confirm_remove = None
 
-    def _render(self) -> None:
+    def _render(self, clock_anim=None) -> None:
         from datetime import datetime
         from zoneinfo import ZoneInfo
         from deskbar.ui import dashboard, detail, settings_view
@@ -99,12 +102,13 @@ class App:
             self.hits = settings_view.render(self.logical, snap, self.settings,
                                              self.confirm_remove)
         else:
-            self.hits = dashboard.render(self.logical, snap, self.settings, now)
+            self.hits = dashboard.render(self.logical, snap, self.settings, now, clock_anim)
             if self.view == "detail" and self.detail_event is not None:
                 self.hits += detail.render(self.logical, self.detail_event)
         self._flip()
         self._last_seq = snap.seq
         self._last_minute = now.minute
+        self._last_clock_text = now.strftime("%H:%M")
 
     def run(self) -> None:
         self._init_display()
@@ -127,8 +131,20 @@ class App:
                     self._dispatch(x, y)
             from datetime import datetime
             from zoneinfo import ZoneInfo
+            import time
             now = datetime.now(ZoneInfo("Asia/Taipei"))
-            if self.state.snapshot().seq != self._last_seq or now.minute != self._last_minute:
-                self._render()
-            clock.tick(10)
+            if self._anim_start is None and now.minute != self._last_minute \
+                    and self._last_clock_text is not None:
+                self._clock_prev = self._last_clock_text
+                self._anim_start = time.monotonic()
+            if self._anim_start is not None:
+                progress = min(1.0, (time.monotonic() - self._anim_start) / 0.4)
+                self._render(clock_anim=(self._clock_prev, progress))
+                if progress >= 1.0:
+                    self._anim_start = None
+                clock.tick(30)
+            else:
+                if self.state.snapshot().seq != self._last_seq or now.minute != self._last_minute:
+                    self._render()
+                clock.tick(10)
         pygame.quit()
