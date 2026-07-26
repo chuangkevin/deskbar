@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_LAT, DEFAULT_LON, DEFAULT_LABEL = 25.046, 121.517, "台北"
+VALID_VIEW_SPANS = {"half", "day", "week", "month"}
+VALID_VIEW_MODES = {"lanes", "agenda"}
 
 
 def config_dir() -> Path:
@@ -40,6 +42,9 @@ class Settings:
     weather_label: str = DEFAULT_LABEL
     start_hour: int = 8
     end_hour: int = 24
+    sync_interval_min: int = 5
+    view_span: str = "day"
+    view_mode: str = "lanes"
     accounts: dict[str, AccountCfg] = field(default_factory=dict)
 
     def ensure_account(self, email: str) -> AccountCfg:
@@ -61,6 +66,16 @@ def load_settings() -> Settings:
             e: AccountCfg(a["lane_label"], a["color"], dict(a.get("calendars", {})))
             for e, a in raw.get("accounts", {}).items()
         }
+        view_span = raw.get("view_span", "day")
+        if view_span not in VALID_VIEW_SPANS:
+            view_span = "day"
+        view_mode = raw.get("view_mode", "lanes")
+        if view_mode not in VALID_VIEW_MODES:
+            view_mode = "lanes"
+        sync_interval_min = raw.get("sync_interval_min", 5)
+        if not isinstance(sync_interval_min, int) or isinstance(sync_interval_min, bool) \
+                or not (1 <= sync_interval_min <= 120):
+            sync_interval_min = 5
         return Settings(
             rotation=raw.get("rotation", 90),
             weather_lat=raw.get("weather_lat", DEFAULT_LAT),
@@ -68,6 +83,9 @@ def load_settings() -> Settings:
             weather_label=raw.get("weather_label", DEFAULT_LABEL),
             start_hour=raw.get("start_hour", 8),
             end_hour=raw.get("end_hour", 24),
+            sync_interval_min=sync_interval_min,
+            view_span=view_span,
+            view_mode=view_mode,
             accounts=accounts,
         )
     except (OSError, ValueError, KeyError, TypeError):
@@ -82,6 +100,9 @@ def save_settings(s: Settings) -> None:
         "weather_label": s.weather_label,
         "start_hour": s.start_hour,
         "end_hour": s.end_hour,
+        "sync_interval_min": s.sync_interval_min,
+        "view_span": s.view_span,
+        "view_mode": s.view_mode,
         "accounts": {
             e: {"lane_label": a.lane_label, "color": a.color, "calendars": a.calendars}
             for e, a in s.accounts.items()

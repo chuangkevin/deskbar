@@ -24,6 +24,7 @@ class Snapshot:
     weather: Weather | None
     statuses: dict[str, AccountStatus]
     seq: int
+    syncing: bool = False
 
 
 class AppState:
@@ -33,12 +34,19 @@ class AppState:
         self._weather: Weather | None = None
         self._statuses: dict[str, AccountStatus] = {}
         self._seq = 0
+        self._syncing = False
 
     def snapshot(self) -> Snapshot:
         with self._lock:
             events = [e for lst in self._events.values() for e in lst]
             events.sort(key=lambda e: (e.start, e.id))
-            return Snapshot(events, self._weather, dict(self._statuses), self._seq)
+            return Snapshot(events, self._weather, dict(self._statuses), self._seq,
+                            self._syncing)
+
+    def set_syncing(self, v: bool) -> None:
+        with self._lock:
+            self._syncing = v
+            self._seq += 1
 
     def set_events(self, email: str, events: list[Event], now: datetime) -> None:
         with self._lock:

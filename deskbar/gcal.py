@@ -12,12 +12,14 @@ class SyncError(Exception):
     pass
 
 
-def fetch_day_events(access_token: str, calendar_id: str, day: date, tz,
-                     http_get=requests.get) -> list[dict]:
-    t0 = datetime.combine(day, time(0), tzinfo=tz)
+def fetch_range_events(access_token: str, calendar_id: str, start_day: date,
+                       end_day_exclusive: date, tz,
+                       http_get=requests.get) -> list[dict]:
+    t0 = datetime.combine(start_day, time(0), tzinfo=tz)
+    t1 = datetime.combine(end_day_exclusive, time(0), tzinfo=tz)
     params = {
         "timeMin": t0.isoformat(),
-        "timeMax": (t0 + timedelta(days=1)).isoformat(),
+        "timeMax": t1.isoformat(),
         "singleEvents": "true",
         "orderBy": "startTime",
         "maxResults": "250",
@@ -37,3 +39,9 @@ def fetch_day_events(access_token: str, calendar_id: str, day: date, tz,
         if not nxt:
             return items
         params["pageToken"] = nxt
+
+
+def fetch_day_events(access_token: str, calendar_id: str, day: date, tz,
+                     http_get=requests.get) -> list[dict]:
+    return fetch_range_events(access_token, calendar_id, day,
+                              day + timedelta(days=1), tz, http_get=http_get)

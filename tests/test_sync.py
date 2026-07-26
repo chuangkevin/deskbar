@@ -21,7 +21,8 @@ def _deps(monkeypatch, tmp_path, fetch_result):
     monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("DESKBAR_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(sync, "_get_token", lambda acc, http_post: "tok")
-    monkeypatch.setattr(sync, "_fetch", lambda tok, cal, day, tz, http_get: fetch_result(cal))
+    monkeypatch.setattr(sync, "_fetch_range",
+                        lambda tok, cal, start, end, tz, http_get: fetch_result(cal))
     return sync.SyncDeps(today_fn=lambda: date(2026, 7, 27), now_fn=lambda: NOW,
                          http_get=None, http_post=None, tz=TZ)
 
@@ -44,11 +45,11 @@ def test_new_account_registered_and_synced(tmp_path, monkeypatch):
 def test_auth_error_marks_account(tmp_path, monkeypatch):
     from deskbar import config as cfg
 
-    def boom(tok, cal, day, tz, http_get):
+    def boom(tok, cal, start, end, tz, http_get):
         raise AuthError("bad")
 
     deps = _deps(monkeypatch, tmp_path, None)
-    monkeypatch.setattr(sync, "_fetch", boom)
+    monkeypatch.setattr(sync, "_fetch_range", boom)
     _acc_file(cfg.accounts_dir())
     state, settings = AppState(), Settings()
     sync.calendar_sync_once(state, settings, deps)
