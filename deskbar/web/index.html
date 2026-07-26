@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>deskbar 鬧鐘</title>
+<style>
+body{font-family:system-ui,-apple-system,"PingFang TC",sans-serif;background:#111;color:#eee;
+ max-width:480px;margin:0 auto;padding:20px}
+h1{font-size:20px;font-weight:600}
+.card{background:#1c1c1c;border:1px solid #333;border-radius:10px;padding:14px;margin:10px 0}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.time{font-size:28px;font-variant-numeric:tabular-nums}
+.days,.label{color:#9a9a9a;font-size:13px}
+button{background:#2a2a2a;color:#eee;border:1px solid #444;border-radius:8px;padding:8px 14px}
+button.del{color:#f09595}
+input,label.d{font-size:16px}
+input[type=time]{background:#2a2a2a;color:#eee;border:1px solid #444;border-radius:8px;padding:6px}
+input[type=text]{background:#2a2a2a;color:#eee;border:1px solid #444;border-radius:8px;padding:8px;width:100%;box-sizing:border-box}
+.wk{display:flex;gap:6px;margin:10px 0;flex-wrap:wrap}
+.wk label{background:#2a2a2a;border:1px solid #444;border-radius:8px;padding:6px 10px;font-size:14px}
+.wk input{margin-right:4px}
+.off{opacity:.45}
+</style></head><body>
+<h1>deskbar 鬧鐘</h1>
+<div id="list"></div>
+<div class="card">
+ <div class="row"><input type="time" id="t" value="09:00"><input type="text" id="lb" placeholder="標籤（例如：打卡）"></div>
+ <div class="wk" id="wk"></div>
+ <button onclick="add()">新增鬧鐘</button>
+</div>
+<script>
+const WD=["一","二","三","四","五","六","日"];
+const wk=document.getElementById("wk");
+WD.forEach((w,i)=>{wk.insertAdjacentHTML("beforeend",
+ `<label class="d"><input type="checkbox" value="${i}">${w}</label>`)});
+async function load(){
+ const as=await (await fetch("/api/alarms")).json();
+ document.getElementById("list").innerHTML=as.map(a=>`
+  <div class="card ${a.enabled?"":"off"}"><div class="row">
+   <div><div class="time">${a.time}</div>
+   <div class="label">${a.label}</div>
+   <div class="days">${a.days.length? a.days.map(d=>"週"+WD[d]).join(" "):"一次性"}</div></div>
+   <div><button onclick="tog('${a.id}',${!a.enabled})">${a.enabled?"停用":"啟用"}</button>
+   <button class="del" onclick="del('${a.id}')">刪除</button></div>
+  </div></div>`).join("")||'<div class="card">尚無鬧鐘</div>';
+}
+async function add(){
+ const days=[...wk.querySelectorAll("input:checked")].map(x=>+x.value);
+ const r=await fetch("/api/alarms",{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({time:document.getElementById("t").value,days,
+  label:document.getElementById("lb").value})});
+ if(!r.ok){alert("格式錯誤");return} document.getElementById("lb").value="";load();
+}
+async function tog(id,en){await fetch("/api/alarms/"+id,{method:"PATCH",
+ headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:en})});load()}
+async function del(id){await fetch("/api/alarms/"+id,{method:"DELETE"});load()}
+load();
+</script></body></html>
