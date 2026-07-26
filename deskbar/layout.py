@@ -82,7 +82,7 @@ def layout_timeline_range(timed: list[Event], lane_order: list[str],
             x1 = time_to_x_range(e.end, win_start, win_end, area.x, area.x + area.w)
             clip_l = e.start < win_start
             clip_r = e.end > win_end
-            w = max(6.0, x1 - x0)
+            w = max(10.0, x1 - x0)
             y = area.y + li * lane_h + si * sub_h
             placed.append(Placed(e, Rect(x0, y, w, sub_h), clip_l, clip_r))
     return placed, overflow

@@ -74,9 +74,13 @@ def _render_list(surface, store, hits) -> None:
         return
     y = 100
     for a in alarms:
-        _text(surface, a.time, 40, theme.C["text"], 40, y)
+        # 停用列整列都壓成 muted：時間／標籤／星期一致變暗，跟啟用列（亮字）
+        # 拉出明顯明暗差，一眼分得出哪些鬧鐘目前不會響。
+        time_color = theme.C["text"] if a.enabled else theme.C["muted"]
+        label_color = theme.C["text2"] if a.enabled else theme.C["muted"]
+        _text(surface, a.time, 40, time_color, 40, y)
         label = a.label if len(a.label) <= 12 else a.label[:12] + "…"
-        _text(surface, label, 22, theme.C["text2"], 190, y + 4)
+        _text(surface, label, 22, label_color, 190, y + 4)
         # 防呆：只渲染合法的星期索引（0..6），避免壞資料撐爆索引。
         valid_days = sorted(d for d in a.days if isinstance(d, int) and 0 <= d <= 6)
         days = ("每" + "".join(WEEKDAY_CHARS[d] for d in valid_days)

@@ -172,6 +172,30 @@ def render_syncing(state: AppState, settings: Settings, out_dir: Path) -> list[s
     return manifest
 
 
+def render_empty_states(out_dir: Path) -> list[str]:
+    """agenda／month 的空資料狀態：不靠 --events 檔，直接建一個有帳號、但完全
+    沒有事件的 AppState，驗證「接下來沒有行程」與月視圖無資料時不破版。"""
+    manifest: list[str] = []
+    settings = Settings()
+    settings.ensure_account("empty@example.com").calendars["c"] = True
+    state = AppState()
+    state.set_events("empty@example.com", [], NOW)
+    snap = state.snapshot()
+
+    settings.view_span = "day"
+    settings.view_mode = "agenda"
+    surf = _surface()
+    dashboard.render(surf, snap, settings, NOW)
+    _save(surf, out_dir, "agenda-empty", manifest)
+
+    settings.view_span = "month"
+    settings.view_mode = "lanes"
+    surf = _surface()
+    dashboard.render(surf, snap, settings, NOW)
+    _save(surf, out_dir, "month-empty", manifest)
+    return manifest
+
+
 def render_token_invalid(state: AppState, settings: Settings, out_dir: Path) -> list[str]:
     """帳號 token 失效狀態：設定頁該帳號卡片顯示實際錯誤訊息（st.error）。"""
     manifest: list[str] = []
@@ -205,6 +229,7 @@ def main() -> None:
     manifest += render_alarm_firing(args.out)
     manifest += render_syncing(state, settings, args.out)
     manifest += render_token_invalid(state, settings, args.out)
+    manifest += render_empty_states(args.out)
 
     print(f"共產出 {len(manifest)} 張 PNG：")
     for p in manifest:

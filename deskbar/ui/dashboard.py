@@ -113,8 +113,11 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                if e.account in lane_emails and e.end > win_start and e.start < win_end]
     allday, timed = split_allday(visible)
 
-    show_goto_now = anchor is not None
-    show_label = anchor is not None or span != "day"
+    # agenda 是「從現在起」的清單，跟 anchor／窗口無關——沒有「這是哪個窗口」的
+    # 概念，故窗口標籤與「回到今天」鈕在 agenda 模式下一律不畫（切回河道才有意義）。
+    is_agenda = settings.view_mode == "agenda"
+    show_goto_now = anchor is not None and not is_agenda
+    show_label = not is_agenda and (anchor is not None or span != "day")
     topbar = _layout_topbar(span, anchor_or_now, win_start, win_end, show_goto_now, show_label)
 
     _render_allday(surface, allday, settings, hits, topbar.chip_right_x)
@@ -125,7 +128,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         _text(surface, topbar.label_text, 22, theme.C["text2"],
              topbar.label_right_x, 22, "midright")
 
-    if settings.view_mode == "agenda":
+    if is_agenda:
         upcoming = [e for e in snap.events
                     if e.account in lane_emails and e.end > now]
         hits += agenda.render_agenda(surface, upcoming, settings, now,
@@ -146,12 +149,11 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
             if p.event.id in imminent_ids:
                 pygame.draw.rect(surface, _pulse_color(main, now), r, width=3, border_radius=6)
             label = ("◀ " if p.clip_l else "") + p.event.title + (" ▶" if p.clip_r else "")
-            if r.width > 40:                      # 塊夠寬就顯示標題；週檢視用小字
-                clipped = surface.subsurface(r.clip(surface.get_rect()))
-                if span == "week":
-                    _text(clipped, label, 18, main, 6, r.height // 2 - 12)
-                else:
-                    _text(clipped, label, 22, main, 8, r.height // 2 - 14)
+            size = 18 if span == "week" else 22
+            x_off, y_off = (6, 12) if span == "week" else (8, 14)
+            fitted = theme.truncate_to_width(label, theme.font(size), r.width - 12)
+            if fitted:                             # 量不出能放下的內容就乾脆不畫
+                _text(surface, fitted, size, main, r.x + x_off, r.y + r.height / 2 - y_off)
             hits.append(Hit(p.rect, "open_detail", p.event))
         if overflow:
             _text(surface, f"＋{len(overflow)} 更多", 20, theme.C["muted"], TL_X1, 44, "topright")

@@ -278,7 +278,12 @@ class App:
             self._dispatch(x, y)
 
     def _pan_view(self, dx_px: float, area_w: float) -> None:
-        """時間軸拖曳平移錨點：向右拖＝看過去。範圍 clamp 在資料窗口 [今天-7, 今天+30]。"""
+        """時間軸拖曳平移錨點：向右拖＝看過去。範圍 clamp 在資料窗口 [今天-7, 今天+30]。
+
+        agenda 模式是「從現在起」的清單，沒有可平移的窗口／錨點概念，拖曳直接
+        不生效（維持 view_anchor 原樣）。"""
+        if self.settings.view_mode == "agenda":
+            return
         from datetime import datetime
         from zoneinfo import ZoneInfo
         from deskbar.viewwin import clamp_anchor, view_window

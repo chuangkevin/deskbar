@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
-from deskbar.layout import Rect, layout_timeline, time_to_x, split_allday
+from deskbar.layout import Rect, layout_timeline, layout_timeline_range, time_to_x, split_allday
 from deskbar.models import Event
 
 TZ = ZoneInfo("Asia/Taipei")
@@ -49,6 +49,16 @@ def test_overflow_beyond_max_sublanes():
     evs = [ev(str(i), "A", 9, 0, 10, 0) for i in range(5)]
     placed, of = layout_timeline(evs, ["A"], DAY, 8, 24, AREA, max_sublanes=3)
     assert len(placed) == 3 and len(of) == 2
+
+
+def test_zero_duration_event_gets_min_width_10px():
+    """極短（甚至零長度）事件的色塊仍要有起碼的可觸控／可視寬度：
+    最小寬度從 6.0 調到 10.0px（配合量測式標題截斷，太窄乾脆不畫字）。"""
+    win_start = datetime(2026, 7, 27, 8, 0, tzinfo=TZ)
+    win_end = datetime(2026, 7, 28, 0, 0, tzinfo=TZ)
+    zero = ev("z", "A", 9, 0, 9, 0)
+    placed, _ = layout_timeline_range([zero], ["A"], win_start, win_end, AREA)
+    assert placed[0].rect.w == 10.0
 
 
 def test_split_allday():

@@ -8,6 +8,7 @@ from deskbar.config import Settings
 from deskbar.models import Event
 from deskbar.store import AppState
 from deskbar.ui import dashboard, theme
+from deskbar.viewwin import view_window
 
 TZ = ZoneInfo("Asia/Taipei")
 NOW = datetime(2026, 7, 27, 14, 37, tzinfo=TZ)   # 週一
@@ -161,6 +162,47 @@ def test_month_span_does_not_emit_goto_day_for_out_of_window_days():
     goto_day_dates = {h.data for h in hits if h.action == "goto_day"}
     assert date(2026, 7, 1) not in goto_day_dates
     assert date(2026, 7, 27) in goto_day_dates   # 今天本身一定在窗口內
+
+
+def test_agenda_mode_hides_goto_now_even_with_anchor():
+    """agenda 是「從現在起」的清單，跟 anchor／窗口無關——即使設了 anchor，
+    agenda 模式下也不該出現「回到今天」鈕（河道模式下同樣的 anchor 會出現）。"""
+    settings = _settings_with_account()
+    settings.view_mode = "agenda"
+    st = _state_with_event(NOW + timedelta(hours=2), NOW + timedelta(hours=3))
+    anchor = NOW - timedelta(days=1)
+    hits = dashboard.render(_surf(), st.snapshot(), settings, NOW, anchor=anchor)
+    actions = {h.action for h in hits}
+    assert "goto_now" not in actions
+
+    settings.view_mode = "lanes"
+    hits_lanes = dashboard.render(_surf(), st.snapshot(), settings, NOW, anchor=anchor)
+    assert "goto_now" in {h.action for h in hits_lanes}, "河道模式下同樣的 anchor 應該顯示回今天"
+
+
+def test_agenda_mode_hides_window_label():
+    """week 檔在河道模式下（anchor=None）一定顯示窗口標籤；agenda 模式下即使
+    span=week 也不該畫——比對兩者在標籤區域的像素應該不同。"""
+    settings = _settings_with_account()
+    settings.view_span = "week"
+    st = _state_with_event(NOW.replace(hour=10), NOW.replace(hour=11))
+
+    settings.view_mode = "lanes"
+    surf_lanes = _surf()
+    dashboard.render(surf_lanes, st.snapshot(), settings, NOW)
+
+    settings.view_mode = "agenda"
+    surf_agenda = _surf()
+    dashboard.render(surf_agenda, st.snapshot(), settings, NOW)
+
+    win_start, win_end = view_window("week", NOW, TZ)
+    topbar = dashboard._layout_topbar("week", NOW, win_start, win_end, False, True)
+    x0, x1 = int(topbar.label_right_x - 200), int(topbar.label_right_x)
+    diff = any(
+        surf_lanes.get_at((x, y))[:3] != surf_agenda.get_at((x, y))[:3]
+        for y in range(10, 34) for x in range(x0, x1)
+    )
+    assert diff, "agenda 模式不該畫窗口標籤，該區域像素應與河道模式不同"
 
 
 def test_agenda_mode_on_month_span_still_uses_agenda_not_month_grid():

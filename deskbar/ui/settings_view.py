@@ -49,7 +49,7 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
                                                theme.C["warn"]), (x + 44, 140))
         _btn(surface, f"泳道：{acc.lane_label}", x + 16, 170, 200, 44,
              "cycle_label", email, hits, size=22)
-        _btn(surface, "移除", x + 330, 170, 84, 44, "remove_account", email, hits,
+        _btn(surface, "移除", x + 330, 170, 84, 52, "remove_account", email, hits,
              size=22, fg=theme.C["warn"])
         cy = 230
         for cal_id, enabled in list(acc.calendars.items())[:4]:

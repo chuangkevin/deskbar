@@ -17,6 +17,16 @@ def test_settings_actions_present():
     assert "confirm_remove" in [h.action for h in hits2]
 
 
+def test_remove_account_button_meets_touch_target_height():
+    """觸控鈕高度規範 >= 48px；「移除」鈕原本只有 44px，補到 52px。"""
+    surf = pygame.Surface((1920, 480))
+    settings = Settings()
+    settings.ensure_account("a@x.com").calendars["c1"] = True
+    hits = settings_view.render(surf, AppState().snapshot(), settings, None)
+    remove_hit = next(h for h in hits if h.action == "remove_account")
+    assert remove_hit.rect.h >= 48
+
+
 def test_settings_sync_interval_button_present_and_labeled():
     surf = pygame.Surface((1920, 480))
     settings = Settings()

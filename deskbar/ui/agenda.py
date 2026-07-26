@@ -44,15 +44,24 @@ def render_agenda(surface, events, settings, win_start: datetime, win_end: datet
             prefix = f"{d1.month}/{d1.day} "
         when = prefix + ("整日" if e.all_day
                          else f"{e.start.strftime('%H:%M')}–{e.end.strftime('%H:%M')}")
-        title = e.title if len(e.title) <= 10 else e.title[:10] + "…"
         img = theme.font(20).render(when, True, theme.C["muted"])
         surface.blit(img, (card.x + 20, card.y + 20))
-        img = theme.font(26).render(title, True, theme.C["text"])
-        surface.blit(img, (card.x + 20, card.y + 56))
+        title_lines = theme.wrap_lines(e.title, theme.font(26), card.width - 40, 2)
+        ty = card.y + 56
+        for line in title_lines:
+            img = theme.font(26).render(line, True, theme.C["text"])
+            surface.blit(img, (card.x + 20, ty))
+            ty += 32
         hits.append(Hit(Rect(card.x, card.y, card.width, card.height), "open_detail", e))
         x += CARD_W
 
     if extra > 0:
-        img = theme.font(24).render(f"＋{extra}", True, theme.C["muted"])
-        surface.blit(img, (x + 10, area.y + area.h / 2 - 12))
+        label = f"＋{extra}"
+        img = theme.font(24).render(label, True, theme.C["muted"])
+        pill = pygame.Rect(0, 0, img.get_width() + 24, img.get_height() + 16)
+        pill.center = (int(x + 10 + pill.width / 2), int(area.y + area.h / 2))
+        # 「膠囊」樣式跟「＋N 整日」一致：theme.C["card"] 底＋panel_line 邊框。
+        pygame.draw.rect(surface, theme.C["card"], pill, border_radius=pill.height // 2)
+        pygame.draw.rect(surface, theme.C["panel_line"], pill, 1, border_radius=pill.height // 2)
+        surface.blit(img, img.get_rect(center=pill.center))
     return hits

@@ -71,7 +71,7 @@ def test_draw_frame_renders_allday_list_overlay_and_close_returns_to_dashboard(
     assert "noop" in actions
 
     # 卡片本身是 noop（點卡片內不關閉），點卡片「外側」的空白處才會命中 close；
-    # (10, 10) 在卡片 Rect(360, 40, 1200, 400) 之外，且 hits 反序命中，noop 蓋在
+    # (10, 10) 在卡片 Rect(560, 40, 1200, 400) 之外，且 hits 反序命中，noop 蓋在
     # close 上方也不會誤觸。
     app._dispatch(10, 10)
     assert app.view == "dashboard"

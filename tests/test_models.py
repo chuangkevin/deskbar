@@ -55,6 +55,40 @@ def test_description_and_location_truncated_at_ingestion():
     assert len(e.description) == 200 and e.description == "D" * 200
 
 
+def test_description_html_sanitized():
+    raw = {
+        "id": "e7", "summary": "H", "status": "confirmed",
+        "start": {"dateTime": "2026-07-27T02:00:00Z"},
+        "end": {"dateTime": "2026-07-27T03:00:00Z"},
+        "description": (
+            '看<a href="https://example.com">連結</a>來 A &amp; B<br>第二段'
+            "<p>第三段</p>"
+        ),
+    }
+    e = normalize_event(raw, "a@x.com", "cal1", TZ)
+    assert "<" not in e.description and ">" not in e.description
+    assert "&amp;" not in e.description
+    assert "A & B" in e.description          # 實體已還原
+    assert "連結" in e.description             # 標籤剝掉、內文保留
+    assert "href" not in e.description
+    assert "第二段" in e.description and "第三段" in e.description
+    # <br>/<p> 轉成的斷點最終被壓縮成單一空白，不留下多餘換行或連續空白
+    assert "\n" not in e.description
+    assert "  " not in e.description
+
+
+def test_location_html_sanitized():
+    raw = {
+        "id": "e8", "summary": "H", "status": "confirmed",
+        "start": {"dateTime": "2026-07-27T02:00:00Z"},
+        "end": {"dateTime": "2026-07-27T03:00:00Z"},
+        "location": '<b>會議室</b> A &amp; B 館',
+    }
+    e = normalize_event(raw, "a@x.com", "cal1", TZ)
+    assert "<" not in e.location and ">" not in e.location
+    assert e.location == "會議室 A & B 館"
+
+
 def test_json_roundtrip():
     raw = {"id": "e5", "summary": "T", "status": "confirmed",
            "start": {"dateTime": "2026-07-27T02:00:00Z"},

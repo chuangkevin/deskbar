@@ -64,3 +64,58 @@ def font(size: int) -> "pygame.font.Font":
 
 def account_color(idx: int):
     return ACCOUNT_COLORS[idx % len(ACCOUNT_COLORS)]
+
+
+def truncate_to_width(text: str, font: "pygame.font.Font", max_width: float) -> str:
+    """單行量測式截斷：整段放得下就原樣傳回；放不下就逐字縮短、尾端補「…」，
+    直到量出來的寬度 <= max_width 為止。連「一個字＋…」都放不下就回傳空字串
+    （呼叫端應該乾脆不畫，而不是硬塞一個看不清楚的省略號）。"""
+    if not text or max_width <= 0:
+        return ""
+    if font.size(text)[0] <= max_width:
+        return text
+    for i in range(len(text), 0, -1):
+        candidate = text[:i] + "…"
+        if font.size(candidate)[0] <= max_width:
+            return candidate
+    return ""
+
+
+def wrap_lines(text: str, font: "pygame.font.Font", max_width: float,
+              max_lines: int) -> list[str]:
+    """把 text 依 max_width 逐字元量測分行，最多 max_lines 行。
+
+    英文單字中間量測到超界時，會回退到該行最近的空白處斷行，避免把一個英文字
+    從中間切開；中文字之間沒有空白可回退，量到超界就直接斷（逐字累積）。
+    第 max_lines 行若還有放不下的內容，尾端縮到能放下再補「…」。
+    """
+    if not text or max_width <= 0 or max_lines <= 0:
+        return []
+    lines: list[str] = []
+    remaining = text.strip()
+    while remaining and len(lines) < max_lines:
+        if font.size(remaining)[0] <= max_width:
+            lines.append(remaining)
+            remaining = ""
+            break
+        cut = len(remaining)
+        for i in range(1, len(remaining) + 1):
+            if font.size(remaining[:i])[0] > max_width:
+                cut = max(1, i - 1)
+                break
+        line = remaining[:cut]
+        # 還沒斷在空白上、且這一截裡有空白可回退——回退到該空白處，
+        # 避免英文單字被硬生生切一半（CJK 逐字之間沒有空白，天然不受影響）。
+        if cut < len(remaining) and remaining[cut] != " " and " " in line:
+            back = line.rfind(" ")
+            if back > 0:
+                cut = back
+                line = remaining[:cut]
+        lines.append(line.rstrip())
+        remaining = remaining[cut:].lstrip()
+    if remaining:
+        last = lines[-1] if lines else ""
+        while last and font.size(last + "…")[0] > max_width:
+            last = last[:-1]
+        lines[-1] = (last + "…") if last else "…"
+    return lines

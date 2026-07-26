@@ -139,6 +139,17 @@ def test_small_movement_is_treated_as_click(tmp_path, monkeypatch):
     assert app.view == "settings"
 
 
+def test_drag_disabled_in_agenda_mode(tmp_path, monkeypatch):
+    """agenda 是「從現在起」的清單，沒有可平移的窗口／錨點概念——時間軸區的
+    拖曳在 agenda 模式下直接不生效，view_anchor 維持原樣。"""
+    app = _make_app(tmp_path, monkeypatch)
+    app.settings.view_mode = "agenda"
+    assert app.view_anchor is None
+    app._drag_start = (700, 200)
+    app._handle_touch_up(900, 200)   # 跟 test_drag_inside_timeline_pans_anchor_into_past 同樣的拖曳量
+    assert app.view_anchor is None
+
+
 def test_pan_result_clamped_to_data_window(tmp_path, monkeypatch):
     app = _make_app(tmp_path, monkeypatch)
     app.settings.view_span = "month"
