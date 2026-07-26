@@ -100,55 +100,41 @@ def test_agenda_mode_empty_window_still_returns_control_hits():
     assert "cycle_span" in actions and "force_sync" in actions
 
 
-def test_week_span_renders_long_event_without_crash():
-    """規格：週＝免標籤。先確保跨小時的事件在週檔渲染不會爆炸（基本煙霧測試），
-    標籤是否真的被壓下由下面的像素比對測試驗證。"""
+def test_week_span_lanes_mode_uses_weekgrid_goto_day_cells():
+    """v4.1（推翻本檔原有的「週檔連續軸細色條」假設，spec 第 11 節）：span=week
+    且 mode=lanes 時，河道週檔改用 weekgrid 的「帳號×日格子」——格子整格是
+    goto_day 觸控目標，不再對個別行程開 open_detail hit（那是行程模式的行為，
+    連續軸的舊有「事件塊」概念在週檔已經不存在了）。取代原本的
+    test_week_span_renders_long_event_without_crash。"""
     settings = _settings_with_account()
     settings.view_span = "week"
     start = NOW.replace(hour=10, minute=0)
     st = _state_with_event(start, start + timedelta(hours=6), title="很長很長的會議標題文字")
     hits = dashboard.render(_surf(), st.snapshot(), settings, NOW)
-    assert any(h.action == "open_detail" for h in hits)
+    goto_hits = [h for h in hits if h.action == "goto_day"]
+    assert len(goto_hits) == 7   # 1 帳號 × 7 天
+    assert not any(h.action == "open_detail" for h in hits)
 
 
-def test_week_span_shows_label_when_block_wide_enough():
-    """使用者要求（2026-07-26 推翻原規格）：週檢視的事件塊只要寬度夠
-    （>40px，約 4.8 小時以上）就要顯示標題（18px 小字），否則週視圖不可讀。
-
-    驗證方式：同一個 6 小時事件（週檔寬約 51px），分別在 day／week 檔渲染，
-    掃描色塊內文字帶的像素——兩檔都應該出現非底色像素（都畫了字）。
-    """
-    # 刻意避開 NOW（14:37）落在事件區間內：「現在」豎線會穿過色塊，
-    # 混進「這格有非底色像素」的判斷，干擾標籤有無的驗證。
+def test_week_span_lanes_mode_renders_event_title_inside_correct_cell():
+    """weekgrid 取代連續軸後，行程改成格內微列文字，不再是「塊寬度夠才顯示標題」
+    的連續色塊——這裡改驗證：事件所在那一天的格子內畫得出非底色像素（微列文字
+    有畫出來），取代原本的 test_week_span_shows_label_when_block_wide_enough。"""
+    settings = _settings_with_account()
+    settings.view_span = "week"
     start = NOW.replace(hour=18, minute=0)
-    end = start + timedelta(hours=6)
-    dark = theme.account_color(0)[1]      # a@x.com 預設 color=0 的色塊底色
-
-    def _render_span(span):
-        settings = _settings_with_account()
-        settings.view_span = span
-        st = _state_with_event(start, end, title="很長很長的會議標題文字")
-        surf = _surf()
-        hits = dashboard.render(surf, st.snapshot(), settings, NOW)
-        block = next(h for h in hits if h.action == "open_detail")
-        return surf, block.rect
-
-    def _has_non_bg_pixel(surf, rect, bg):
-        # 文字帶掃描範圍取兩種字級（day 22px 於 -14 起、week 18px 於 -12 起）的聯集，
-        # 避免只挑到抗鋸齒空白列。
-        y0 = int(rect.y) + int(rect.h) // 2 - 14
-        x0 = int(rect.x) + 6
-        for y in range(y0, y0 + 28):
-            for x in range(x0, x0 + min(int(rect.w) - 10, 80)):
-                if surf.get_at((x, y))[:3] != bg:
-                    return True
-        return False
-
-    surf_day, r_day = _render_span("day")
-    surf_week, r_week = _render_span("week")
-
-    assert _has_non_bg_pixel(surf_day, r_day, dark), "day 檔應該畫出事件標題文字"
-    assert _has_non_bg_pixel(surf_week, r_week, dark), "week 檔的寬事件塊也應該畫出標題"
+    st = _state_with_event(start, start + timedelta(hours=6), title="很長很長的會議標題文字")
+    surf = _surf()
+    surf.fill(theme.C["bg"])
+    hits = dashboard.render(surf, st.snapshot(), settings, NOW)
+    cell = next(h for h in hits if h.action == "goto_day" and h.data == NOW.date())
+    # 內縮 4px 避開今天欄的細框／格線邊緣像素，只看格內容才算數。
+    x0, x1 = int(cell.rect.x) + 4, int(cell.rect.x + cell.rect.w) - 4
+    y0, y1 = int(cell.rect.y) + 4, int(cell.rect.y + cell.rect.h) - 4
+    has_ink = any(
+        surf.get_at((x, y))[:3] != theme.C["bg"]
+        for y in range(y0, y1) for x in range(x0, x1))
+    assert has_ink, "週檔格子內應該畫出行程微列文字"
 
 
 def test_month_span_does_not_emit_goto_day_for_out_of_window_days():
@@ -164,45 +150,51 @@ def test_month_span_does_not_emit_goto_day_for_out_of_window_days():
     assert date(2026, 7, 27) in goto_day_dates   # 今天本身一定在窗口內
 
 
-def test_agenda_mode_hides_goto_now_even_with_anchor():
-    """agenda 是「從現在起」的清單，跟 anchor／窗口無關——即使設了 anchor，
-    agenda 模式下也不該出現「回到今天」鈕（河道模式下同樣的 anchor 會出現）。"""
+def test_agenda_mode_shows_goto_now_with_anchor():
+    """v4.1（推翻 fixwave2）：行程模式改回「視窗制」，恢復跟河道共用同一套
+    show_goto_now 判斷（anchor is not None 就顯示），不再有 is_agenda 特判——
+    取代原本斷言「agenda 隱藏 goto_now」的 test_agenda_mode_hides_goto_now_even_with_anchor
+    （見 spec 第 11 節 v4.1：「行程」也可左右滑動、離開今天顯示回到今天）。"""
     settings = _settings_with_account()
     settings.view_mode = "agenda"
     st = _state_with_event(NOW + timedelta(hours=2), NOW + timedelta(hours=3))
     anchor = NOW - timedelta(days=1)
     hits = dashboard.render(_surf(), st.snapshot(), settings, NOW, anchor=anchor)
     actions = {h.action for h in hits}
-    assert "goto_now" not in actions
+    assert "goto_now" in actions, "v4.1：行程模式設了 anchor 後應該顯示回到今天，跟河道模式一致"
 
     settings.view_mode = "lanes"
     hits_lanes = dashboard.render(_surf(), st.snapshot(), settings, NOW, anchor=anchor)
-    assert "goto_now" in {h.action for h in hits_lanes}, "河道模式下同樣的 anchor 應該顯示回今天"
+    assert "goto_now" in {h.action for h in hits_lanes}
 
 
-def test_agenda_mode_hides_window_label():
-    """week 檔在河道模式下（anchor=None）一定顯示窗口標籤；agenda 模式下即使
-    span=week 也不該畫——比對兩者在標籤區域的像素應該不同。"""
+def test_agenda_mode_shows_window_label_in_agenda_format():
+    """v4.1（推翻 fixwave2）：行程模式恢復顯示窗口標籤，但格式跟河道週標籤不同——
+    河道「7月27日–8月2日」（view_window，週一到週日 window_label 格式）；行程
+    「7/27–8/2」（agenda_window 對齊週一的 7 欄，緊湊斜線格式，見 dashboard._agenda_label），
+    刻意用不同格式避免使用者誤以為兩者是同一個窗口概念。取代原本斷言「agenda
+    隱藏窗口標籤」的 test_agenda_mode_hides_window_label。"""
     settings = _settings_with_account()
     settings.view_span = "week"
     st = _state_with_event(NOW.replace(hour=10), NOW.replace(hour=11))
 
-    settings.view_mode = "lanes"
-    surf_lanes = _surf()
-    dashboard.render(surf_lanes, st.snapshot(), settings, NOW)
+    assert dashboard._agenda_label(date(2026, 7, 27), 7) == "7/27–8/2"
 
     settings.view_mode = "agenda"
     surf_agenda = _surf()
-    dashboard.render(surf_agenda, st.snapshot(), settings, NOW)
+    surf_agenda.fill(theme.C["bg"])
+    hits = dashboard.render(surf_agenda, st.snapshot(), settings, NOW)
+    assert "cycle_span" in {h.action for h in hits}   # 基本煙霧：沒有因為改動而崩潰
 
     win_start, win_end = view_window("week", NOW, TZ)
-    topbar = dashboard._layout_topbar("week", NOW, win_start, win_end, False, True)
+    topbar = dashboard._layout_topbar("week", NOW, win_start, win_end, False, True,
+                                      dashboard._agenda_label(date(2026, 7, 27), 7))
+    assert topbar.label_text == "7/27–8/2"
     x0, x1 = int(topbar.label_right_x - 200), int(topbar.label_right_x)
-    diff = any(
-        surf_lanes.get_at((x, y))[:3] != surf_agenda.get_at((x, y))[:3]
-        for y in range(10, 34) for x in range(x0, x1)
-    )
-    assert diff, "agenda 模式不該畫窗口標籤，該區域像素應與河道模式不同"
+    has_ink = any(
+        surf_agenda.get_at((x, y))[:3] != theme.C["bg"]
+        for y in range(10, 34) for x in range(x0, x1))
+    assert has_ink, "v4.1：行程模式應該畫出窗口標籤，不再是 fixwave2 的隱藏行為"
 
 
 def test_agenda_mode_on_month_span_still_uses_agenda_not_month_grid():

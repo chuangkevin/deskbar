@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from deskbar.viewwin import clamp_anchor, next_span, view_window, window_label
+from deskbar.viewwin import agenda_window, clamp_anchor, next_span, view_window, window_label
 
 TZ = ZoneInfo("Asia/Taipei")
 
@@ -92,3 +92,35 @@ def test_window_label_formats():
     mstart = datetime(2026, 7, 1, 0, 0, tzinfo=TZ)
     mend = datetime(2026, 8, 1, 0, 0, tzinfo=TZ)
     assert window_label("month", mstart, mstart, mend) == "2026年7月"
+
+
+def test_agenda_window_day_and_half_return_anchor_date_single_column():
+    anchor = datetime(2026, 7, 27, 15, 30, tzinfo=TZ)
+    assert agenda_window("day", anchor, TZ) == (date(2026, 7, 27), 1)
+    assert agenda_window("half", anchor, TZ) == (date(2026, 7, 27), 1)
+
+
+def test_agenda_window_week_and_month_align_to_monday_seven_days():
+    # 2026-07-27 是週一（跟既有 week 測試同一天）
+    monday_anchor = datetime(2026, 7, 27, 9, 0, tzinfo=TZ)
+    assert agenda_window("week", monday_anchor, TZ) == (date(2026, 7, 27), 7)
+    assert agenda_window("month", monday_anchor, TZ) == (date(2026, 7, 27), 7)
+
+    # 週中任一天（週四）、週日都該對齊回同一個週一
+    thursday_anchor = datetime(2026, 7, 30, 22, 0, tzinfo=TZ)
+    assert agenda_window("week", thursday_anchor, TZ) == (date(2026, 7, 27), 7)
+    sunday_anchor = datetime(2026, 8, 2, 23, 59, tzinfo=TZ)
+    assert agenda_window("week", sunday_anchor, TZ) == (date(2026, 7, 27), 7)
+
+
+def test_agenda_window_week_crosses_month_and_year_boundary():
+    # 2027-01-01 是週五；對齊回去的週一落在前一年 12 月
+    anchor = datetime(2027, 1, 1, 12, 0, tzinfo=TZ)
+    assert agenda_window("week", anchor, TZ) == (date(2026, 12, 28), 7)
+
+
+def test_agenda_window_unknown_span_raises():
+    import pytest
+    anchor = datetime(2026, 7, 27, 12, 0, tzinfo=TZ)
+    with pytest.raises(ValueError):
+        agenda_window("banana", anchor, TZ)

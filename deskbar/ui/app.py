@@ -280,23 +280,32 @@ class App:
     def _pan_view(self, dx_px: float, area_w: float) -> None:
         """時間軸拖曳平移錨點：向右拖＝看過去。範圍 clamp 在資料窗口 [今天-7, 今天+30]。
 
-        agenda 模式是「從現在起」的清單，沒有可平移的窗口／錨點概念，拖曳直接
-        不生效（維持 view_anchor 原樣）。"""
-        if self.settings.view_mode == "agenda":
-            return
-        from datetime import datetime
+        v4.1：agenda 模式恢復可平移（fixwave2 曾整個關閉），但單位是「天」而非
+        連續時間比例——dx 除以欄寬換算成天數、四捨五入，非零位移至少平移 1 天
+        （欄寬本身可能遠大於 24px 拖曳判定門檻，四捨五入到 0 會讓拖曳看起來沒反應）。
+        lanes 模式維持原本按時間比例的連續平移，行為不變。"""
+        from datetime import datetime, timedelta
         from zoneinfo import ZoneInfo
-        from deskbar.viewwin import clamp_anchor, view_window
+        from deskbar.viewwin import agenda_window, clamp_anchor, view_window
         tz = ZoneInfo("Asia/Taipei")
         now = datetime.now(tz)
         with self.lock:
             anchor_or_now = self.view_anchor if self.view_anchor is not None else now
-            win_start, win_end = view_window(
-                self.settings.view_span, anchor_or_now, tz,
-                start_hour=self.settings.start_hour, end_hour=self.settings.end_hour)
-            window_len = win_end - win_start
-            shift = dx_px / area_w * window_len
-            new_anchor = anchor_or_now - shift
+            if self.settings.view_mode == "agenda":
+                _start, n_days = agenda_window(self.settings.view_span, anchor_or_now, tz)
+                col_w = area_w / max(1, n_days)
+                raw_days = dx_px / col_w if col_w else 0.0
+                days = round(raw_days)
+                if days == 0 and raw_days != 0:
+                    days = 1 if raw_days > 0 else -1
+                new_anchor = anchor_or_now - timedelta(days=days)
+            else:
+                win_start, win_end = view_window(
+                    self.settings.view_span, anchor_or_now, tz,
+                    start_hour=self.settings.start_hour, end_hour=self.settings.end_hour)
+                window_len = win_end - win_start
+                shift = dx_px / area_w * window_len
+                new_anchor = anchor_or_now - shift
             self.view_anchor = clamp_anchor(new_anchor, now, tz)
 
     def run(self) -> None:

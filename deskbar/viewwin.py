@@ -44,6 +44,23 @@ def view_window(span: str, anchor: datetime, tz: ZoneInfo, *,
     raise ValueError(f"未知的顯示寬度: {span!r}")
 
 
+def agenda_window(span: str, anchor_or_now: datetime, tz: ZoneInfo) -> tuple[_date, int]:
+    """行程模式（一天一塊直欄，v4.1）視窗：回傳 (start_date, n_days)。
+
+    - half/day：單欄＝錨點所在日，n_days=1。
+    - week/month：錨點所在週對齊週一起算（跟 view_window 的 week 分支同一套
+      對齊規則），n_days=7——月檔在行程模式下鋪的是「一週寬的 7 欄」，跟河道
+      month 檔的整月計數格網是不同的呈現（見 spec 第 11 節 v4.1）。
+    """
+    anchor_date = anchor_or_now.date()
+    if span in ("half", "day"):
+        return anchor_date, 1
+    if span in ("week", "month"):
+        monday = anchor_date - timedelta(days=anchor_or_now.weekday())
+        return monday, 7
+    raise ValueError(f"未知的顯示寬度: {span!r}")
+
+
 def next_span(span: str) -> str:
     """右上寬度鈕循環順序：half→day→week→month→half。未知值安全回退到 half。"""
     if span not in SPAN_ORDER:

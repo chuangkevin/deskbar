@@ -139,15 +139,21 @@ def test_small_movement_is_treated_as_click(tmp_path, monkeypatch):
     assert app.view == "settings"
 
 
-def test_drag_disabled_in_agenda_mode(tmp_path, monkeypatch):
-    """agenda 是「從現在起」的清單，沒有可平移的窗口／錨點概念——時間軸區的
-    拖曳在 agenda 模式下直接不生效，view_anchor 維持原樣。"""
+def test_drag_pans_by_day_in_agenda_mode(tmp_path, monkeypatch):
+    """v4.1（推翻 fixwave2）：行程模式恢復可平移，但單位是「天」而非連續時間比例
+    ——dx 除以欄寬換算天數、四捨五入，非零位移至少 1 天。取代原本斷言「agenda
+    拖曳不生效」的 test_drag_disabled_in_agenda_mode（見 spec 第 11 節 v4.1：
+    「所有視圖皆可左右滑動（含行程模式）」）。"""
     app = _make_app(tmp_path, monkeypatch)
     app.settings.view_mode = "agenda"
+    assert app.settings.view_span == "day"   # n_days=1 → 欄寬=1400（TL_X1-TL_X0）
     assert app.view_anchor is None
+    t0 = datetime.now(TZ)
     app._drag_start = (700, 200)
-    app._handle_touch_up(900, 200)   # 跟 test_drag_inside_timeline_pans_anchor_into_past 同樣的拖曳量
-    assert app.view_anchor is None
+    app._handle_touch_up(900, 200)   # dx=200，起點在時間軸區、往右拖=看過去
+    assert app.view_anchor is not None
+    expected = t0 - timedelta(days=1)   # 200/1400 四捨五入到 0，套「非零至少 1 天」規則
+    assert abs((app.view_anchor - expected).total_seconds()) < 3
 
 
 def test_pan_result_clamped_to_data_window(tmp_path, monkeypatch):

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time as _time, timedelta
 
 import pygame
 
 from deskbar.layout import Rect, layout_timeline_range, split_allday, time_to_x_range
 from deskbar.ui import Hit
-from deskbar.ui import agenda, icons, monthgrid, theme
-from deskbar.viewwin import data_window, view_window, window_label
+from deskbar.ui import agenda, icons, monthgrid, theme, weekgrid
+from deskbar.viewwin import agenda_window, data_window, view_window, window_label
 from deskbar.weather import code_text
 
 PANEL_W, TL_X0, TL_X1 = 480, 500, 1900
@@ -74,12 +74,18 @@ class TopbarLayout:
 
 
 def _layout_topbar(span, anchor_or_now, win_start, win_end,
-                   show_goto_now: bool, show_label: bool) -> TopbarLayout:
+                   show_goto_now: bool, show_label: bool,
+                   label_override: str | None = None) -> TopbarLayout:
     """純函數：只算幾何，不畫、不動 surface。回到今天鈕寬 110，緊貼寬度鈕左側
     （右邊界＝SPAN_BTN.x，中間不留縫）；窗口標籤右對齊到「回到今天鈕或寬度鈕，
     取較左者」的左側再減 16px 留白；整日 chips 的可用右界＝以上所有「這一幀有出現」
     的元素中最靠左的 x，再減 16px。任何資料量／任何標籤長度下，四者之間必定
-    保有 >=16px 間隔，不會互相重疊。"""
+    保有 >=16px 間隔，不會互相重疊。
+
+    label_override：非 None 時直接採用這段文字（行程模式用，見 _agenda_label），
+    不呼叫 window_label——行程模式的視窗是 agenda_window 算出的日期範圍，跟河道
+    的 view_window 不是同一組數字，標籤格式也不同（"7/27–8/2" vs "7月27日–8月2日"）。
+    """
     goto_now_rect = (Rect(SPAN_BTN.x - GOTO_NOW_W, 4, GOTO_NOW_W, GOTO_NOW_H)
                      if show_goto_now else None)
     leftmost = goto_now_rect.x if goto_now_rect is not None else SPAN_BTN.x
@@ -87,12 +93,24 @@ def _layout_topbar(span, anchor_or_now, win_start, win_end,
     label_text = ""
     label_right_x = leftmost - TOPBAR_GAP
     if show_label:
-        label_text = window_label(span, anchor_or_now, win_start, win_end)
+        label_text = (label_override if label_override is not None
+                     else window_label(span, anchor_or_now, win_start, win_end))
         label_w = theme.font(22).size(label_text)[0]
         leftmost = label_right_x - label_w
 
     chip_right_x = leftmost - TOPBAR_GAP
     return TopbarLayout(goto_now_rect, label_text, label_right_x, chip_right_x)
+
+
+def _agenda_label(start_date, n_days: int) -> str:
+    """行程模式窗口標籤：單欄「7月27日」；多欄（週/月，7 欄）「7/27–8/2」。
+    格式故意跟河道的 window_label 不同——這裡標的是 agenda_window 實際鋪出來的
+    日期範圍，用緊湊的斜線格式跟河道週標籤（「N月N日–N月N日」）區分開，避免使用者
+    誤以為兩者是同一個窗口概念。"""
+    if n_days <= 1:
+        return f"{start_date.month}月{start_date.day}日"
+    end_date = start_date + timedelta(days=n_days - 1)
+    return f"{start_date.month}/{start_date.day}–{end_date.month}/{end_date.day}"
 
 
 def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
@@ -113,12 +131,22 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                if e.account in lane_emails and e.end > win_start and e.start < win_end]
     allday, timed = split_allday(visible)
 
-    # agenda 是「從現在起」的清單，跟 anchor／窗口無關——沒有「這是哪個窗口」的
-    # 概念，故窗口標籤與「回到今天」鈕在 agenda 模式下一律不畫（切回河道才有意義）。
+    # v4.1：行程模式改回「視窗制」（跟河道共用 anchor／資料窗口概念），故窗口標籤
+    # 與「回到今天」鈕的顯示條件不再依 is_agenda 特判——回到 fixwave2 之前、
+    # is_agenda 尚未存在時的原始公式；label 文字本身在 agenda 模式另外覆寫成
+    # agenda_window 對應的格式（見下方 label_override）。
     is_agenda = settings.view_mode == "agenda"
-    show_goto_now = anchor is not None and not is_agenda
-    show_label = not is_agenda and (anchor is not None or span != "day")
-    topbar = _layout_topbar(span, anchor_or_now, win_start, win_end, show_goto_now, show_label)
+    show_goto_now = anchor is not None
+    show_label = anchor is not None or span != "day"
+
+    agenda_start = agenda_days = None
+    label_override = None
+    if is_agenda:
+        agenda_start, agenda_days = agenda_window(span, anchor_or_now, tz)
+        label_override = _agenda_label(agenda_start, agenda_days)
+
+    topbar = _layout_topbar(span, anchor_or_now, win_start, win_end, show_goto_now, show_label,
+                            label_override)
 
     _render_allday(surface, allday, settings, hits, topbar.chip_right_x)
     _render_span_mode_buttons(surface, settings, hits)
@@ -129,15 +157,21 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
              topbar.label_right_x, 22, "midright")
 
     if is_agenda:
-        upcoming = [e for e in snap.events
-                    if e.account in lane_emails and e.end > now]
-        hits += agenda.render_agenda(surface, upcoming, settings, now,
-                                     now + timedelta(days=31), now, TL_AREA)
+        a_win_start = datetime.combine(agenda_start, _time(0, 0), tzinfo=tz)
+        a_win_end = a_win_start + timedelta(days=agenda_days)
+        agenda_events = [e for e in snap.events
+                         if e.account in lane_emails and e.end > a_win_start
+                         and e.start < a_win_end]
+        hits += agenda.render_agenda(surface, agenda_events, settings, agenda_start,
+                                     agenda_days, now, tz, TL_AREA)
     elif span == "month":
         hits += monthgrid.render_month(surface, visible, lane_emails, settings, win_start,
                                        TL_AREA, now)
+    elif span == "week":
+        hits += weekgrid.render_week(surface, visible, lane_emails, settings, win_start.date(),
+                                     now, tz, TL_AREA)
     else:
-        _render_grid_range(surface, span, win_start, win_end)
+        _render_grid_range(surface, win_start, win_end)
         _render_data_window_overlay(surface, win_start, win_end, now, tz)
         placed, overflow = layout_timeline_range(timed, lane_emails, win_start, win_end, TL_AREA)
         _render_lanes(surface, lane_emails, settings)
@@ -149,11 +183,9 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
             if p.event.id in imminent_ids:
                 pygame.draw.rect(surface, _pulse_color(main, now), r, width=3, border_radius=6)
             label = ("◀ " if p.clip_l else "") + p.event.title + (" ▶" if p.clip_r else "")
-            size = 18 if span == "week" else 22
-            x_off, y_off = (6, 12) if span == "week" else (8, 14)
-            fitted = theme.truncate_to_width(label, theme.font(size), r.width - 12)
+            fitted = theme.truncate_to_width(label, theme.font(22), r.width - 12)
             if fitted:                             # 量不出能放下的內容就乾脆不畫
-                _text(surface, fitted, size, main, r.x + x_off, r.y + r.height / 2 - y_off)
+                _text(surface, fitted, 22, main, r.x + 8, r.y + r.height / 2 - 14)
             hits.append(Hit(p.rect, "open_detail", p.event))
         if overflow:
             _text(surface, f"＋{len(overflow)} 更多", 20, theme.C["muted"], TL_X1, 44, "topright")
@@ -274,25 +306,18 @@ def _render_span_mode_buttons(surface, settings, hits):
              MODE_BTN, "cycle_view_mode", hits)
 
 
-def _render_grid_range(surface, span, win_start, win_end):
-    if span == "week":
-        d = win_start
-        while d < win_end:
-            x = time_to_x_range(d, win_start, win_end, TL_X0, TL_X1)
-            pygame.draw.line(surface, theme.C["grid"], (x, 52), (x, 420), 2)
-            wd = "一二三四五六日"[d.weekday()]
-            _text(surface, wd, 20, theme.C["muted"], x + 6, 434)
-            d += timedelta(days=1)
-    else:                                   # half / day：每 2 小時整點一條淡格線
-        t = win_start.replace(minute=0, second=0, microsecond=0)
-        if t < win_start:
-            t += timedelta(hours=1)
-        while t <= win_end:
-            if t.hour % 2 == 0:
-                x = time_to_x_range(t, win_start, win_end, TL_X0, TL_X1)
-                pygame.draw.line(surface, theme.C["grid"], (x, 52), (x, 420))
-                _text(surface, f"{t.hour:02d}", 20, theme.C["muted"], x, 434, "midtop")
-            t += timedelta(hours=1)
+def _render_grid_range(surface, win_start, win_end):
+    """half / day 專用（v4.1 起 week 改走 weekgrid，不再共用這支）：每 2 小時
+    整點畫一條淡格線＋時刻標籤。"""
+    t = win_start.replace(minute=0, second=0, microsecond=0)
+    if t < win_start:
+        t += timedelta(hours=1)
+    while t <= win_end:
+        if t.hour % 2 == 0:
+            x = time_to_x_range(t, win_start, win_end, TL_X0, TL_X1)
+            pygame.draw.line(surface, theme.C["grid"], (x, 52), (x, 420))
+            _text(surface, f"{t.hour:02d}", 20, theme.C["muted"], x, 434, "midtop")
+        t += timedelta(hours=1)
 
 
 def _render_data_window_overlay(surface, win_start, win_end, now, tz) -> None:
