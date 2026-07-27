@@ -8,4 +8,13 @@ if [ ! -d .venv ]; then python3 -m venv --system-site-packages .venv; fi
 sudo cp deploy/deskbar.service /etc/systemd/system/deskbar.service
 sudo systemctl daemon-reload
 sudo systemctl enable deskbar
+# Pi Zero 2W 的 WiFi 晶片預設省電模式，閒置會打瞌睡掉線；Android 熱點看到
+# 「沒有裝置連線」又會自動關閉熱點——兩個疊加＝掉線後永遠連不回來。
+# 這裡把省電關掉並持久化（NetworkManager 層），立即生效那刀用 iw 補。
+if [ ! -f /etc/NetworkManager/conf.d/wifi-powersave-off.conf ]; then
+  printf '[connection]\n# 2 = 停用 wifi 省電（Pi Zero 2W 閒置斷線坑，2026-07-27）\nwifi.powersave = 2\n' \
+    | sudo tee /etc/NetworkManager/conf.d/wifi-powersave-off.conf >/dev/null
+  sudo nmcli general reload 2>/dev/null || true
+fi
+sudo iw dev wlan0 set power_save off 2>/dev/null || true
 echo "install.sh 完成"
