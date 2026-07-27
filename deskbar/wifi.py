@@ -26,6 +26,7 @@ class WifiNet:
     secured: bool
     active: bool
     known: bool             # NetworkManager 已存過的連線（不用再輸入密碼）
+    security: str = ""      # nmcli SECURITY 原文（如 "WPA2"/"WPA3"），連線時選 key-mgmt 用
 
 
 def _run(args: list, timeout: int) -> "tuple[int, str]":
@@ -87,7 +88,8 @@ def parse_wifi_list(text: str, known: set) -> list:
         net = WifiNet(
             ssid=f[1], signal=max(0, min(100, signal)),
             secured=f[3].strip() not in ("", "--"),
-            active=f[0] == "yes", known=f[1] in known)
+            active=f[0] == "yes", known=f[1] in known,
+            security=f[3].strip())
         old = best.get(net.ssid)
         if old is None or net.active or (not old.active and net.signal > old.signal):
             if old is not None and old.active and not net.active:
@@ -137,21 +139,37 @@ def active_info() -> "tuple[str, str] | None":
     return (ssid, ip)
 
 
-def connect(ssid: str, password: "str | None" = None) -> "tuple[bool, str]":
-    """連線。有給密碼＝視為（重）設定這個網路：先刪同名舊 profile 再連，
-    避免上次打錯密碼留下的殘缺 profile 讓 nmcli 回「connection exists」。
-    沒給密碼＝開放網路或已儲存的網路，直接用既有 profile 連。
-    回 (成功?, 給人看的短訊息——絕不含密碼)。"""
+def connect(ssid: str, password: "str | None" = None,
+            security: str = "") -> "tuple[bool, str]":
+    """連線。回 (成功?, 給人看的短訊息——絕不含密碼)。
+
+    有給密碼＝（重）設定這個網路：先刪同名舊 profile，再「顯式建 profile→
+    帶起」。不用 `dev wifi connect`——那條路要靠 nmcli 的掃描快取推斷 AP 加密
+    方式，AP 剛好不在快取（掃描剛失效/radio 剛重啟）就回
+    「802-11-wireless-security.key-mgmt: property is missing」（實機 Kevin_2.4
+    踩到）。key-mgmt 由掃描結果的 SECURITY 欄自選：WPA3-only → sae，
+    其餘 → wpa-psk（WPA2/WPA3 過渡模式用 wpa-psk 可連）。
+
+    沒給密碼＝開放網路或已儲存的網路：先 `connection up`（用既有 profile，
+    同樣不依賴掃描快取），沒有 profile 再退回 `dev wifi connect`（開放網路）。
+    """
     if password:
         _run(["connection", "delete", "id", ssid], 10)   # rc 忽略：本來就可能不存在
-        rc, out = _run(["dev", "wifi", "connect", ssid, "password", password],
-                       _TIMEOUT_CONNECT)
+        key_mgmt = "sae" if ("WPA3" in security and "WPA2" not in security) \
+            else "wpa-psk"
+        rc, out = _run(["connection", "add", "type", "wifi", "ifname", WLAN_DEV,
+                        "con-name", ssid, "ssid", ssid,
+                        "wifi-sec.key-mgmt", key_mgmt, "wifi-sec.psk", password], 15)
+        if rc == 0:
+            rc, out = _run(["connection", "up", "id", ssid], _TIMEOUT_CONNECT)
         if rc != 0:
-            # 失敗也要把 nmcli 剛替這次嘗試建立的壞 profile 清掉——留著的話，
-            # 這個網路下次掃描會被當成「已儲存」、點了直接用壞密碼重連，
-            # 鍵盤永遠不再出現（實機回報：打錯密碼的 WiFi 改不了密碼）。
+            # 失敗也要把剛建立的壞 profile 清掉——留著的話，這個網路下次掃描
+            # 會被當成「已儲存」、點了直接用壞密碼重連，鍵盤永遠不再出現
+            # （實機回報：打錯密碼的 WiFi 改不了密碼）。
             _run(["connection", "delete", "id", ssid], 10)
     else:
-        rc, out = _run(["dev", "wifi", "connect", ssid], _TIMEOUT_CONNECT)
+        rc, out = _run(["connection", "up", "id", ssid], _TIMEOUT_CONNECT)
+        if rc != 0:
+            rc, out = _run(["dev", "wifi", "connect", ssid], _TIMEOUT_CONNECT)
     msg = " ".join(out.split())[:140]      # 壓成單行截短；nmcli 輸出不含密碼原文
     return rc == 0, msg

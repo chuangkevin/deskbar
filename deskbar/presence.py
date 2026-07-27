@@ -99,6 +99,8 @@ def start_presence_thread(state: "AppState", settings: "Settings",
                 threshold = settings.presence_rssi_threshold
                 grace = settings.presence_grace_sec
                 enabled_now = settings.presence_enabled
+                # 每輪重讀：設定頁「感應速度」改了間隔要立刻生效，不用重開機
+                interval_now = getattr(settings, "presence_interval_sec", interval)
             if enabled_now and mac_now:
                 present_probe, rssi = probe_once(mac_now)
                 prev = state.snapshot().presence
@@ -108,7 +110,7 @@ def start_presence_thread(state: "AppState", settings: "Settings",
             else:
                 prev = state.snapshot().presence
                 state.set_presence(replace(prev, enabled=False))
-            _time.sleep(interval)
+            _time.sleep(interval_now)
 
     threading.Thread(target=loop, daemon=True).start()
     return True

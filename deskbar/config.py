@@ -53,6 +53,7 @@ class Settings:
     presence_rssi_threshold: int = -75
     presence_hide_accounts: list[str] = field(default_factory=list)
     presence_grace_sec: int = 150
+    presence_interval_sec: int = 45     # 藍牙探測間隔；設定頁「感應速度」快/中/慢連動
 
     def ensure_account(self, email: str) -> AccountCfg:
         if email not in self.accounts:
@@ -104,6 +105,11 @@ def load_settings() -> Settings:
         if not isinstance(presence_grace_sec, int) or isinstance(presence_grace_sec, bool) \
                 or presence_grace_sec < 0:
             presence_grace_sec = 150
+        presence_interval_sec = raw.get("presence_interval_sec", 45)
+        if not isinstance(presence_interval_sec, int) \
+                or isinstance(presence_interval_sec, bool) \
+                or not (5 <= presence_interval_sec <= 600):
+            presence_interval_sec = 45
         return Settings(
             rotation=raw.get("rotation", 90),
             weather_lat=raw.get("weather_lat", DEFAULT_LAT),
@@ -121,6 +127,7 @@ def load_settings() -> Settings:
             presence_rssi_threshold=presence_rssi_threshold,
             presence_hide_accounts=presence_hide_accounts,
             presence_grace_sec=presence_grace_sec,
+            presence_interval_sec=presence_interval_sec,
         )
     except (OSError, ValueError, KeyError, TypeError):
         return Settings()
@@ -143,6 +150,7 @@ def save_settings(s: Settings) -> None:
         "presence_rssi_threshold": s.presence_rssi_threshold,
         "presence_hide_accounts": s.presence_hide_accounts,
         "presence_grace_sec": s.presence_grace_sec,
+        "presence_interval_sec": s.presence_interval_sec,
         "accounts": {
             e: {"lane_label": a.lane_label, "color": a.color, "calendars": a.calendars}
             for e, a in s.accounts.items()

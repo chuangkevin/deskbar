@@ -36,8 +36,8 @@ PW_MAX = 63                     # WPA-PSK 上限
 
 def new_state() -> dict:
     return {"phase": "list", "nets": [], "busy": None, "selected": "",
-            "selected_secured": False, "pw": "", "shift": False, "sym": False,
-            "show_pw": False, "msg": "", "active": None}
+            "selected_secured": False, "selected_security": "", "pw": "",
+            "shift": False, "sym": False, "show_pw": False, "msg": "", "active": None}
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft"):

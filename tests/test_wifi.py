@@ -35,7 +35,10 @@ def test_parse_wifi_list_dedupes_and_sorts():
     assert cafe.secured is False and cafe.known is False
 
 
-def test_connect_with_password_deletes_stale_profile_first(monkeypatch):
+def test_connect_with_password_builds_explicit_profile(monkeypatch):
+    """有密碼＝刪舊 profile → 顯式 connection add（自帶 key-mgmt）→ up。
+    不走 dev wifi connect——那條路依賴掃描快取推斷加密，AP 不在快取就報
+    key-mgmt property is missing（實機 Kevin_2.4 踩到）。"""
     calls = []
 
     def fake_run(args, capture_output, text, timeout):
@@ -43,15 +46,16 @@ def test_connect_with_password_deletes_stale_profile_first(monkeypatch):
         return subprocess.CompletedProcess(args, 0, stdout="successfully activated", stderr="")
 
     monkeypatch.setattr(wifi.subprocess, "run", fake_run)
-    ok, msg = wifi.connect("Office", "s3cret!pw")
+    ok, msg = wifi.connect("Office", "s3cret!pw", security="WPA2")
     assert ok
     assert calls[0][:4] == ["nmcli", "connection", "delete", "id"]
-    assert calls[1][:4] == ["nmcli", "dev", "wifi", "connect"]
-    assert "password" in calls[1]
+    assert calls[1][:3] == ["nmcli", "connection", "add"]
+    assert "wpa-psk" in calls[1] and "wifi-sec.psk" in calls[1]
+    assert calls[2][:3] == ["nmcli", "connection", "up"]
     assert "s3cret!pw" not in msg, "訊息不得含密碼"
 
 
-def test_connect_without_password_uses_saved_profile(monkeypatch):
+def test_connect_key_mgmt_follows_scanned_security(monkeypatch):
     calls = []
 
     def fake_run(args, capture_output, text, timeout):
@@ -59,9 +63,27 @@ def test_connect_without_password_uses_saved_profile(monkeypatch):
         return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(wifi.subprocess, "run", fake_run)
-    ok, _ = wifi.connect("Home5G")
+    wifi.connect("Pure3", "pw", security="WPA3")
+    assert "sae" in calls[1], "WPA3-only 要用 sae"
+    calls.clear()
+    wifi.connect("Mixed", "pw", security="WPA2 WPA3")
+    assert "wpa-psk" in calls[1], "WPA2/WPA3 過渡模式用 wpa-psk"
+
+
+def test_connect_without_password_prefers_saved_profile_then_falls_back(monkeypatch):
+    calls = []
+
+    def fake_run(args, capture_output, text, timeout):
+        calls.append(args)
+        rc = 10 if args[:3] == ["nmcli", "connection", "up"] else 0
+        return subprocess.CompletedProcess(args, rc, stdout="ok", stderr="")
+
+    monkeypatch.setattr(wifi.subprocess, "run", fake_run)
+    ok, _ = wifi.connect("OpenCafe")
     assert ok
-    assert len(calls) == 1 and "password" not in calls[0]
+    assert calls[0][:3] == ["nmcli", "connection", "up"], "先試既有 profile"
+    assert calls[1][:4] == ["nmcli", "dev", "wifi", "connect"], "沒 profile 退回開放網路路徑"
+    assert all("password" not in c for c in calls)
 
 
 def test_connect_failure_returns_false_with_short_message(monkeypatch):
@@ -73,7 +95,7 @@ def test_connect_failure_returns_false_with_short_message(monkeypatch):
             args, 4, stdout="", stderr="Error: Connection activation failed: " + "x" * 500)
 
     monkeypatch.setattr(wifi.subprocess, "run", fake_run)
-    ok, msg = wifi.connect("Office", "pw")
+    ok, msg = wifi.connect("Office", "pw", security="WPA2")
     assert ok is False
     assert len(msg) <= 140
     # 失敗後必須把 nmcli 剛建立的壞 profile 清掉——留著會讓這個網路變成

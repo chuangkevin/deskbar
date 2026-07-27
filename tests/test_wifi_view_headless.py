@@ -130,7 +130,7 @@ def test_full_flow_scan_pick_type_connect(tmp_path, monkeypatch):
     monkeypatch.setattr(wifi_mod, "scan", lambda: list(NETS))
     monkeypatch.setattr(wifi_mod, "active_info", lambda: ("Hotspot", "1.2.3.4"))
     monkeypatch.setattr(wifi_mod, "connect",
-                        lambda ssid, pw=None: (connect_calls.append((ssid, pw))
+                        lambda ssid, pw=None, sec="": (connect_calls.append((ssid, pw))
                                                or (True, "activated")))
     app = _make_app(tmp_path, monkeypatch)
     app.view = "settings"
@@ -168,7 +168,7 @@ def test_open_or_known_network_connects_without_keyboard(tmp_path, monkeypatch):
     monkeypatch.setattr(wifi_mod, "scan", lambda: list(NETS))
     monkeypatch.setattr(wifi_mod, "active_info", lambda: None)
     monkeypatch.setattr(wifi_mod, "connect",
-                        lambda ssid, pw=None: (calls.append((ssid, pw)) or (True, "ok")))
+                        lambda ssid, pw=None, sec="": (calls.append((ssid, pw)) or (True, "ok")))
     app = _make_app(tmp_path, monkeypatch)
     app.view = "wifi"
     app.wifi_ui["nets"] = list(NETS)
@@ -182,7 +182,7 @@ def test_open_or_known_network_connects_without_keyboard(tmp_path, monkeypatch):
 def test_connect_failure_keeps_password_phase_with_message(tmp_path, monkeypatch):
     monkeypatch.setattr(wifi_mod, "scan", lambda: list(NETS))
     monkeypatch.setattr(wifi_mod, "active_info", lambda: None)
-    monkeypatch.setattr(wifi_mod, "connect", lambda ssid, pw=None: (False, "bad key"))
+    monkeypatch.setattr(wifi_mod, "connect", lambda ssid, pw=None, sec="": (False, "bad key"))
     app = _make_app(tmp_path, monkeypatch)
     app.view = "wifi"
     app.wifi_ui.update(phase="password", selected="OfficeWifi", pw="wrong")

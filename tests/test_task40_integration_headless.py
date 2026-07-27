@@ -328,6 +328,20 @@ def test_flip_and_ambient_frames_share_live_weather_t(tmp_path, monkeypatch):
     assert ts == sorted(ts), "兩條路徑必須共用同一個單調時間基準"
 
 
+def test_cycle_presence_speed_cycles_presets_and_saves(tmp_path, monkeypatch):
+    """感應速度鈕：快(15/45)→中(30/90)→慢(45/150) 循環，間隔與緩衝連動並持久化。"""
+    app = _make_app(tmp_path, monkeypatch)
+    app.hits = settings_view.render(_surf(), app.state.snapshot(), app.settings, None)
+    hit = next(h for h in app.hits if h.action == "cycle_presence_speed")
+    assert (app.settings.presence_interval_sec, app.settings.presence_grace_sec) == (45, 150)
+    seen = []
+    for _ in range(3):
+        app._dispatch(hit.rect.x + 2, hit.rect.y + 2)
+        seen.append((app.settings.presence_interval_sec, app.settings.presence_grace_sec))
+    assert seen == [(15, 45), (30, 90), (45, 150)]
+    assert app._saved, "感應速度變更應呼叫 on_save 持久化"
+
+
 def test_lanes_mode_renders_allday_events_as_tappable_pills():
     """河道模式整日事件回歸鎖：2026-07-27 頂欄膠囊移除後河道曾對整日事件
     全盲——個人日曆常以整日行程為主，看起來就像沒同步/整欄空白（實機當晚

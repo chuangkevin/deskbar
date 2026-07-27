@@ -137,10 +137,12 @@ class App:
                             self.wifi_ui["msg"] = f"已連線 {net.ssid}"
                         elif net.secured and not net.known:
                             self.wifi_ui.update(phase="password", selected=net.ssid,
-                                                selected_secured=True, pw="", msg="",
+                                                selected_secured=True,
+                                                selected_security=net.security,
+                                                pw="", msg="",
                                                 shift=False, sym=False, show_pw=False)
                         else:
-                            self._wifi_connect(net.ssid, None)
+                            self._wifi_connect(net.ssid, None, net.security)
                     elif a == "wifi_key":
                         from deskbar.ui import wifi_view
                         if len(self.wifi_ui["pw"]) < wifi_view.PW_MAX:
@@ -158,7 +160,8 @@ class App:
                     elif a == "wifi_connect":
                         if self.wifi_ui["pw"]:
                             self._wifi_connect(self.wifi_ui["selected"],
-                                               self.wifi_ui["pw"])
+                                               self.wifi_ui["pw"],
+                                               self.wifi_ui.get("selected_security", ""))
                     elif a == "open_detail":
                         self.view, self.detail_event = "detail", h.data
                     elif a in ("close", "settings_done"):
@@ -213,6 +216,17 @@ class App:
                         self.on_save(self.settings)
                     elif a == "toggle_presence":
                         self.settings.presence_enabled = not self.settings.presence_enabled
+                        self.on_save(self.settings)
+                    elif a == "cycle_presence_speed":
+                        # 快=15s 探測/45s 緩衝、中=30/90、慢=45/150（預設）。
+                        # 離場感知延遲 ≈ 間隔 + 緩衝，回場 ≈ 一個間隔。
+                        presets = [(15, 45), (30, 90), (45, 150)]
+                        cur = (self.settings.presence_interval_sec,
+                               self.settings.presence_grace_sec)
+                        idx = presets.index(cur) if cur in presets else -1
+                        nxt = presets[(idx + 1) % len(presets)]
+                        self.settings.presence_interval_sec = nxt[0]
+                        self.settings.presence_grace_sec = nxt[1]
                         self.on_save(self.settings)
                     elif a == "cycle_theme":
                         self.settings.theme = "light" if self.settings.theme == "dark" else "dark"
@@ -312,19 +326,20 @@ class App:
 
         threading.Thread(target=work, daemon=True, name="wifi-scan").start()
 
-    def _wifi_connect(self, ssid: str, password) -> None:
-        """背景連線（nmcli 最長 45 秒）。成功→清密碼、回列表、重掃；
+    def _wifi_connect(self, ssid: str, password, security: str = "") -> None:
+        """背景連線（nmcli 最長 60 秒）。成功→清密碼、回列表、重掃；
         失敗→留在原畫面顯示原因讓使用者改密碼重試。"""
         ui = self.wifi_ui
         if ui["busy"]:
             return
         ui["busy"] = "connect"
+        ui["selected"] = ssid
         ui["msg"] = ""
         import threading
         from deskbar import wifi
 
         def work():
-            ok, msg = wifi.connect(ssid, password)
+            ok, msg = wifi.connect(ssid, password, security)
             if ok:
                 ui.update(phase="list", pw="", msg=f"已連線 {ssid}")
                 ui["nets"] = wifi.scan()
