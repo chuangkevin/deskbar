@@ -20,9 +20,13 @@ def _digit_card(ch: str, w: int, h: int) -> "pygame.Surface":
     s = _cache.get(key)
     if s is None:
         s = pygame.Surface((w, h), pygame.SRCALPHA)
-        pygame.draw.rect(s, theme.C["clock_card"], pygame.Rect(0, 0, w, h),
+        # 上半亮、下半暗的翻頁卡雙折面（烤進快取，零逐幀成本）——單一平色
+        # 是「紙板道具感」的來源之一。
+        pygame.draw.rect(s, theme.C["clock_card_bottom"], pygame.Rect(0, 0, w, h),
                          border_radius=RADIUS)
-        img = theme.font(int(h * 0.78), bold=True).render(ch, True, theme.C["text"])
+        pygame.draw.rect(s, theme.C["clock_card_top"], pygame.Rect(0, 0, w, h // 2),
+                         border_top_left_radius=RADIUS, border_top_right_radius=RADIUS)
+        img = theme.font(int(h * 0.80), weight="light").render(ch, True, theme.C["text"])
         s.blit(img, img.get_rect(center=(w // 2, h // 2)))
         pygame.draw.line(s, theme.C["clock_split"], (2, h // 2), (w - 2, h // 2), 2)
         pygame.draw.rect(s, theme.C["panel_line"], pygame.Rect(0, 0, w, h), 1,

@@ -15,6 +15,7 @@ _PALETTES_RAW = {
         "warn": (255, 105, 105), "ok": (60, 220, 170),
         # flipclock 數字卡底色／分隔線（原 flipclock.py 模組級 CARD/SPLIT 常量）。
         "clock_card": (34, 34, 34), "clock_split": (12, 12, 12),
+        "clock_card_top": (44, 44, 47), "clock_card_bottom": (26, 26, 29),
         # monthgrid 窗口外日期數字（原 OUT_OF_WINDOW_DATE_COLOR 常量）。
         "date_dim": (150, 150, 150),
         # settings_view 移除帳號二次確認底條（原 theme.col((40, 20, 20)) 字面值）。
@@ -30,6 +31,7 @@ _PALETTES_RAW = {
         "muted": (122, 120, 114), "now": (200, 88, 56), "now_text": (255, 255, 255),
         "warn": (178, 44, 44), "ok": (20, 140, 110),
         "clock_card": (255, 255, 255), "clock_split": (214, 210, 202),
+        "clock_card_top": (255, 255, 255), "clock_card_bottom": (241, 238, 232),
         "date_dim": (168, 164, 156),
         "danger_bg": (250, 218, 210),
         "dim_band": (206, 202, 194),
@@ -135,30 +137,42 @@ _FONT_PATHS = [
     "/System/Library/Fonts/STHeiti Medium.ttc",
     "/System/Library/Fonts/STHeiti Light.ttc",
 ]
-# 字重系統（2026-07-28）：Apple 質感的七成是字型排印——標題/數字用粗體、
-# 內文用 Regular，單一字重全畫面就是「工程師味」的主因。Pi 的 fonts-noto-cjk
-# 內建 Bold；Mac 開發機沒有單檔粗體 CJK，用 STHeiti Medium 近似（僅供預覽）。
-_FONT_PATHS_BOLD = [
-    os.environ.get("DESKBAR_FONT_BOLD", ""),
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-    "/System/Library/Fonts/STHeiti Medium.ttc",
-]
+# 字重系統（2026-07-28 二修）：Apple 質感的七成是字型排印。首版拿 Bold 當
+# 標題被打槍「字體好醜」——CJK Bold 在低解析面板筆畫糊成一坨，Apple 標題
+# 用的是 Medium/Semibold、大時鐘用細體。三檔字重：
+#   regular＝內文；medium＝標題/強調（bold= 參數是它的別名）；
+#   light＝超大數字（時鐘）——大字細體才是 iOS 鎖屏的優雅。
+# Pi 需要 fonts-noto-cjk-extra（install.sh 會裝）；Mac 開發機以 STHeiti 近似。
+_FONT_PATHS_BY_WEIGHT = {
+    "regular": _FONT_PATHS,
+    "medium": [
+        os.environ.get("DESKBAR_FONT_MEDIUM", ""),
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+    ],
+    "light": [
+        os.environ.get("DESKBAR_FONT_LIGHT", ""),
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-DemiLight.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+    ],
+}
 _font_cache: dict = {}
 
 
-def font(size: int, bold: bool = False) -> "pygame.font.Font":
+def font(size: int, bold: bool = False, weight: "str | None" = None) -> "pygame.font.Font":
     if not pygame.font.get_init():
         pygame.font.init()
         _font_cache.clear()
-    key = (size, bold)
+    w = weight or ("medium" if bold else "regular")
+    key = (size, w)
     if key not in _font_cache:
         f = None
-        for p in (_FONT_PATHS_BOLD if bold else _FONT_PATHS):
+        for p in _FONT_PATHS_BY_WEIGHT.get(w, _FONT_PATHS):
             if p and os.path.exists(p):
                 f = pygame.font.Font(p, size)
                 break
-        if f is None and bold:
-            f = font(size)                 # 粗體字檔缺席就退回 Regular，不炸
+        if f is None and w != "regular":
+            f = font(size)                 # 該字重字檔缺席就退回 Regular，不炸
         if f is None:
             name = pygame.font.match_font("pingfangtc,pingfang,helvetica,arial") or None
             f = pygame.font.Font(name, size)

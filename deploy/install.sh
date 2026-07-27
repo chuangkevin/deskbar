@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 sudo apt-get update -qq
-sudo apt-get install -y -qq python3-pygame python3-venv python3-requests python3-flask fonts-noto-cjk bluez
+sudo apt-get install -y -qq python3-pygame python3-venv python3-requests python3-flask fonts-noto-cjk fonts-noto-cjk-extra bluez
 # l2ping 需要 raw socket（藍牙在場感應的探測指令）；服務跑非 root，給 capability。
 L2PING=$(command -v l2ping || echo /usr/bin/l2ping)
 [ -x "$L2PING" ] && sudo setcap cap_net_raw+eip "$L2PING" || true
