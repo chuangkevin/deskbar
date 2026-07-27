@@ -64,3 +64,63 @@ def test_zero_duration_event_gets_min_width_10px():
 def test_split_allday():
     ad, timed = split_allday([ev("a", "A", 9, 0, 10, 0), ev("b", "A", 0, 0, 0, 0, all_day=True)])
     assert [e.id for e in ad] == ["b"] and [e.id for e in timed] == ["a"]
+
+
+# ---------------------------------------------------------------- v2：叢集分高＋整日列
+
+def _mk(idx, acc, h1, m1, h2, m2):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo("Asia/Taipei")
+    return Event(f"e{idx}", acc, "c", f"事件{idx}",
+                 datetime(2026, 7, 28, h1, m1, tzinfo=tz),
+                 datetime(2026, 7, 28, h2, m2, tzinfo=tz), False, None, None)
+
+
+def _win():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo("Asia/Taipei")
+    return (datetime(2026, 7, 28, 8, 0, tzinfo=tz),
+            datetime(2026, 7, 29, 0, 0, tzinfo=tz))
+
+
+def test_overlapping_events_never_share_pixels_and_standalone_stays_full_height():
+    """v2 回歸鎖（實機回報「多個行程會重疊」＋「沒有正確顯示」）：
+    重疊事件必須分子列（矩形兩兩不相交）；叢集外的單獨事件維持整泳道高。"""
+    ws, we = _win()
+    area = Rect(420, 52, 1100, 368)
+    evs = [_mk(1, "a@x", 9, 0, 10, 0),          # 單獨
+           _mk(2, "a@x", 11, 0, 12, 30),        # 與 3 重疊
+           _mk(3, "a@x", 11, 30, 12, 0),
+           _mk(4, "a@x", 15, 0, 16, 0)]         # 單獨
+    placed, overflow = layout_timeline_range(evs, ["a@x"], ws, we, area)
+    assert not overflow
+    rects = {p.event.id: p.rect for p in placed}
+    lane_h = area.h
+    assert abs(rects["e1"].h - lane_h) < 1, "叢集外單獨事件維持整泳道高"
+    assert abs(rects["e4"].h - lane_h) < 1
+    assert abs(rects["e2"].h - lane_h / 2) < 1, "重疊叢集內部平分高度"
+    for a in placed:
+        for b in placed:
+            if a.event.id >= b.event.id:
+                continue
+            ax, bx = a.rect, b.rect
+            overlap = not (ax.x + ax.w <= bx.x or bx.x + bx.w <= ax.x
+                           or ax.y + ax.h <= bx.y or bx.y + bx.h <= ax.y)
+            assert not overlap, f"{a.event.id} 與 {b.event.id} 矩形重疊"
+
+
+def test_allday_strip_reserves_top_of_lane():
+    from deskbar.layout import ALLDAY_STRIP_H
+    ws, we = _win()
+    area = Rect(420, 52, 1100, 368)
+    evs = [_mk(1, "a@x", 9, 0, 10, 0)]
+    placed, _ = layout_timeline_range(evs, ["a@x", "b@x"], ws, we, area,
+                                      allday_accounts={"a@x"})
+    r = placed[0].rect
+    lane_h = area.h / 2
+    assert abs(r.y - (area.y + ALLDAY_STRIP_H)) < 1, "計時卡從整日列之下開始"
+    assert abs(r.h - (lane_h - ALLDAY_STRIP_H)) < 1
+    placed2, _ = layout_timeline_range(evs, ["a@x", "b@x"], ws, we, area)
+    assert abs(placed2[0].rect.y - area.y) < 1, "沒有整日事件的帳號不預留"

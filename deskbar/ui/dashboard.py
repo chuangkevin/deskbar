@@ -163,7 +163,10 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     else:
         _render_grid_range(surface, win_start, win_end)
         _render_data_window_overlay(surface, win_start, win_end, now, tz)
-        placed, overflow = layout_timeline_range(timed, lane_emails, win_start, win_end, TL_AREA)
+        allday_accounts = {e.account for e in allday}
+        placed, overflow = layout_timeline_range(timed, lane_emails, win_start,
+                                                 win_end, TL_AREA,
+                                                 allday_accounts=allday_accounts)
         _render_lanes(surface, lane_emails, settings)
         imminent_evt_ids = transitions.imminent_ids(timed, now)
         for p in placed:
@@ -314,14 +317,13 @@ def _render_lanes(surface, lane_emails, settings):
 
 
 def _render_allday_pills(surface, allday, lane_emails, settings, hits) -> None:
-    """河道（half/day 連續軸）模式的整日事件：各帳號泳道頂部一排小膠囊。
-
-    2026-07-27 頂欄整日膠囊移除後，河道曾對整日事件「全盲」——個人日曆常以
-    整日行程為主，看起來就像同步壞了、整欄空白（實機當晚回報）。agenda/週/月
-    都有各自的整日呈現，河道用泳道內膠囊補齊；放泳道頂部、泳道標籤右側，
+    """河道（half/day 連續軸）模式的整日事件：各帳號泳道「頂部整日列」內的
+    小膠囊——這條列由 layout_timeline_range 的 ALLDAY_STRIP_H 預留，計時卡
+    從其下開始，膠囊與卡片物理上不共域（v1 膠囊浮在卡上，實機回報重疊）。
     最多 3 顆＋「+N」，可點開詳情。"""
     if not allday:
         return
+    from deskbar.layout import ALLDAY_STRIP_H
     n = max(1, len(lane_emails))
     lane_h = TL_AREA.h / n
     for i, email in enumerate(lane_emails):
@@ -330,8 +332,11 @@ def _render_allday_pills(surface, allday, lane_emails, settings, hits) -> None:
             continue
         acc = settings.accounts.get(email)
         main, _dark = theme.account_color(acc.color if acc else 0)
-        y = TL_AREA.y + i * lane_h + 4
-        x = TL_X0 + 150
+        y = TL_AREA.y + i * lane_h + (ALLDAY_STRIP_H - 28) / 2
+        # 起點讓開泳道標籤（自訂標籤可能很長，如完整帳號前綴）
+        label_text = acc.lane_label if acc else email
+        label_w = theme.font(20).size(label_text)[0]
+        x = TL_X0 + max(150, label_w + 40)
         shown = 0
         for e in evs[:3]:
             label = f"整日 {e.title}"   # 全形中點會豆腐（字型老坑）

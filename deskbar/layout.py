@@ -50,41 +50,68 @@ def split_allday(events: list[Event]) -> tuple[list[Event], list[Event]]:
     return ad, timed
 
 
+ALLDAY_STRIP_H = 34     # 泳道頂部整日列高度（該帳號有整日事件時才保留）
+
+
 def layout_timeline_range(timed: list[Event], lane_order: list[str],
                          win_start: datetime, win_end: datetime, area: Rect,
-                         max_sublanes: int = 3) -> tuple[list[Placed], list[Event]]:
-    """任意 datetime 窗口版泳道佈局：邏輯同 layout_timeline，以 [win_start, win_end)
-    取代 day+start_hour/end_hour，供半天/日/週等連續軸視圖共用。"""
+                         max_sublanes: int = 3,
+                         allday_accounts: "set | None" = None
+                         ) -> tuple[list[Placed], list[Event]]:
+    """任意 datetime 窗口版泳道佈局（2026-07-28 v2）：
+
+    - 整日列預留：allday_accounts 內的帳號，泳道頂部保留 ALLDAY_STRIP_H 給
+      整日膠囊，計時卡從其下開始——v1 讓膠囊浮在卡上（實機回報「會重疊」）。
+    - 叢集局部分高：只有「彼此重疊的事件叢集」內部才分割高度，叢集外的
+      單獨事件維持整條泳道高——v1 是全泳道統一分高，窗口內任何一處重疊
+      就把所有卡砍半（實機回報「沒有正確顯示」）。
+    """
     placed: list[Placed] = []
     overflow: list[Event] = []
     n = max(1, len(lane_order))
     lane_h = area.h / n
+    allday_accounts = allday_accounts or set()
     for li, email in enumerate(lane_order):
-        evs = sorted((e for e in timed if e.account == email), key=lambda e: (e.start, e.end))
-        sub_end: list[datetime] = []          # 每條子車道目前的最後結束時間
-        assign: list[tuple[Event, int]] = []
+        strip = ALLDAY_STRIP_H if email in allday_accounts else 0
+        lane_y = area.y + li * lane_h + strip
+        usable_h = max(24.0, lane_h - strip)
+        evs = sorted((e for e in timed if e.account == email),
+                     key=lambda e: (e.start, e.end))
+        # 先切「重疊叢集」：依開始時間掃描，start < 叢集目前最大結束 ⇒ 同叢集。
+        clusters: list[list[Event]] = []
+        cluster_max_end = None
         for e in evs:
-            for si, endt in enumerate(sub_end):
-                if endt <= e.start:
-                    sub_end[si] = e.end
-                    assign.append((e, si))
-                    break
+            if cluster_max_end is not None and e.start < cluster_max_end:
+                clusters[-1].append(e)
+                cluster_max_end = max(cluster_max_end, e.end)
             else:
-                if len(sub_end) < max_sublanes:
-                    sub_end.append(e.end)
-                    assign.append((e, len(sub_end) - 1))
+                clusters.append([e])
+                cluster_max_end = e.end
+        for cluster in clusters:
+            sub_end: list[datetime] = []      # 叢集內每條子列目前的最後結束時間
+            assign: list[tuple[Event, int]] = []
+            for e in cluster:
+                for si, endt in enumerate(sub_end):
+                    if endt <= e.start:
+                        sub_end[si] = e.end
+                        assign.append((e, si))
+                        break
                 else:
-                    overflow.append(e)
-        used = max((si for _, si in assign), default=0) + 1
-        sub_h = lane_h / used
-        for e, si in assign:
-            x0 = time_to_x_range(e.start, win_start, win_end, area.x, area.x + area.w)
-            x1 = time_to_x_range(e.end, win_start, win_end, area.x, area.x + area.w)
-            clip_l = e.start < win_start
-            clip_r = e.end > win_end
-            w = max(10.0, x1 - x0)
-            y = area.y + li * lane_h + si * sub_h
-            placed.append(Placed(e, Rect(x0, y, w, sub_h), clip_l, clip_r))
+                    if len(sub_end) < max_sublanes:
+                        sub_end.append(e.end)
+                        assign.append((e, len(sub_end) - 1))
+                    else:
+                        overflow.append(e)
+            used = max((si for _, si in assign), default=0) + 1
+            sub_h = usable_h / used
+            for e, si in assign:
+                x0 = time_to_x_range(e.start, win_start, win_end, area.x, area.x + area.w)
+                x1 = time_to_x_range(e.end, win_start, win_end, area.x, area.x + area.w)
+                clip_l = e.start < win_start
+                clip_r = e.end > win_end
+                w = max(10.0, x1 - x0)
+                y = lane_y + si * sub_h
+                placed.append(Placed(e, Rect(x0, y, w, sub_h), clip_l, clip_r))
     return placed, overflow
 
 
