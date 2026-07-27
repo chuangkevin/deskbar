@@ -131,7 +131,11 @@ class App:
                         self._wifi_rescan()
                     elif a == "wifi_pick":
                         net = h.data
-                        if net.secured and not net.known:
+                        if net.active:
+                            # 點目前連線中的網路＝無事可做；真的去 connect 會讓
+                            # nmcli 重新關聯、整台瞬斷（實機首日踩到）。
+                            self.wifi_ui["msg"] = f"已連線 {net.ssid}"
+                        elif net.secured and not net.known:
                             self.wifi_ui.update(phase="password", selected=net.ssid,
                                                 selected_secured=True, pw="", msg="",
                                                 shift=False, sym=False, show_pw=False)

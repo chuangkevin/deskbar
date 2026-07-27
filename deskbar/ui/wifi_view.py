@@ -78,6 +78,18 @@ def render(surface, ui: dict, now) -> list:
         _render_password(surface, ui, hits, now)
     else:
         _render_list(surface, ui, hits)
+    if ui["busy"] == "connect":
+        # 連線遮罩必須在「兩個 phase」都畫：nmcli 連線最長 45 秒，清單頁
+        # 點開放/已存網路直接連線時若沒有遮罩，畫面靜止＋點擊沒反應，
+        # 使用者會以為當機（實機首日就被回報「點下去直接卡死」）。
+        veil = pygame.Surface((1920, 480), pygame.SRCALPHA)
+        veil.fill((0, 0, 0, 150))
+        surface.blit(veil, (0, 0))
+        dots = "…" * (1 + now.second % 3)
+        _text(surface, f"連線到 {ui['selected']}{dots}", 34, theme.C["text"],
+              960, 226, "center")
+        _text(surface, "最長需要約一分鐘", 22, theme.C["muted"], 960, 274, "center")
+        hits.clear()               # 連線期間鎖操作，避免連點/重入
     return hits
 
 
@@ -181,10 +193,3 @@ def _render_password(surface, ui: dict, hits: list, now) -> None:
 
     if ui["msg"]:
         _text(surface, ui["msg"], 22, theme.C["warn"], 40, 446)
-    if ui["busy"] == "connect":
-        veil = pygame.Surface((1920, 480), pygame.SRCALPHA)
-        veil.fill((0, 0, 0, 150))
-        surface.blit(veil, (0, 0))
-        dots = "…" [: 1] * (1 + now.second % 3)
-        _text(surface, f"連線中{dots}", 34, theme.C["text"], 960, 240, "center")
-        hits.clear()               # 連線期間鎖操作，避免連點/重入

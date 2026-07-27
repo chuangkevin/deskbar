@@ -1,20 +1,24 @@
 #!/bin/bash
-# deskbar 連線看門狗：default gateway ping 不通就把 WiFi radio 關開一輪，
-# 逼 NetworkManager 對所有 autoconnect 網路完整重連。
+# deskbar 連線看門狗 v2：以 NetworkManager 的裝置狀態判斷，「wlan0 已連線」
+# 就絕對不碰它。v1 用 ping gateway 判斷是錯的——很多 Android 熱點不回 ICMP，
+# 會變成每分鐘把好好的 WiFi 關開一輪、自己製造無限斷線。
 #
-# 為什麼需要：實測 Pi Zero 2W 掉線後（省電模式打瞌睡、或熱點短暫消失）
-# 常卡在「熱點明明在、就是不重連」的殭屍狀態，只能人手重開機。由
-# systemd timer 每分鐘跑一次本腳本＝裝置自救，符合「只要開機就要自動
-# 恢復」的專案鐵則。
-#
-# 注意：走 USB 網路共享（usb0）時 default route 在 usb0，ping 得通就
-# 直接 exit 0，完全不會碰 WiFi。
+# 邏輯：wlan0 或任何 usb*/eth* 介面 state=connected → 一切安好，退出並清除
+# 失敗計數。都沒有 → 記一次失敗；「連續第二次」失敗才踢 radio 重連（單次
+# 失敗可能只是正在重連中，別打斷它）。
+# 由 systemd timer 每分鐘跑一次＝掉線最慢約 2-3 分鐘自救。
 set -u
-GW=$(ip -4 route show default | awk '{print $3; exit}')
-if [ -n "${GW:-}" ] && ping -c 1 -W 3 "$GW" >/dev/null 2>&1; then
+STATES=$(nmcli -t -f DEVICE,STATE dev 2>/dev/null)
+if echo "$STATES" | grep -qE '^(wlan0|usb[0-9]*|eth[0-9]*):connected$'; then
+  rm -f /run/deskbar-watchdog.fail
   exit 0
 fi
-logger -t deskbar-watchdog "gateway 不通（GW=${GW:-無}），重啟 WiFi radio"
+if [ ! -f /run/deskbar-watchdog.fail ]; then
+  touch /run/deskbar-watchdog.fail      # 第一次失敗：先觀察一輪
+  exit 0
+fi
+rm -f /run/deskbar-watchdog.fail
+logger -t deskbar-watchdog "連續兩輪無任何連線介面，重啟 WiFi radio"
 nmcli radio wifi off 2>/dev/null || true
 sleep 3
 nmcli radio wifi on 2>/dev/null || true

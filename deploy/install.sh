@@ -17,6 +17,19 @@ if [ ! -f /etc/NetworkManager/conf.d/wifi-powersave-off.conf ]; then
   sudo nmcli general reload 2>/dev/null || true
 fi
 sudo iw dev wlan0 set power_save off 2>/dev/null || true
+# deskbar 服務內的 nmcli 連線權限：服務跑在 systemd（非 logind 活動 session），
+# polkit 預設拒絕 NetworkManager 的修改類動作（實機錯誤：Insufficient
+# privileges；SSH 互動 session 測掃描會過，所以開發期沒炸）。放行 kevin。
+if [ ! -f /etc/polkit-1/rules.d/50-deskbar-nm.rules ]; then
+  sudo tee /etc/polkit-1/rules.d/50-deskbar-nm.rules >/dev/null <<'PKEOF'
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
+        subject.user === "kevin") {
+        return polkit.Result.YES;
+    }
+});
+PKEOF
+fi
 # 連線看門狗：掉線後 WiFi 常卡殭屍態不重連，每分鐘 gateway 探活、不通就
 # 踢 radio 重連（見 deploy/net-watchdog.sh 檔頭）。
 sudo install -m 755 deploy/net-watchdog.sh /usr/local/bin/deskbar-net-watchdog.sh
