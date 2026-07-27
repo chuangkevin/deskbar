@@ -11,7 +11,7 @@
 | 檔案 | 職責 |
 |---|---|
 | `__main__.py` | 進入點：載入 settings、建立 `AppState`、啟動同步/web/在場感應等背景執行緒、組出 `App` 並 `run()`（Claude usage 沒有背景執行緒，改由 `webserver.py` 的 `/api/usage` 被動接收 Mac agent 推送） |
-| `config.py` | `Settings`/`AccountCfg` dataclass 與 `settings.json` 載入/儲存（原子寫入）；`config_dir()`/`cache_dir()`/`accounts_dir()` 路徑解析（吃 `DESKBAR_CONFIG_DIR`/`DESKBAR_CACHE_DIR` 環境變數，供測試隔離） |
+| `config.py` | `Settings`/`AccountCfg` dataclass（含 `theme:str="dark"`，載入時驗證非 `dark`/`light` 回退 `dark`）與 `settings.json` 載入/儲存（原子寫入）；`config_dir()`/`cache_dir()`/`accounts_dir()` 路徑解析（吃 `DESKBAR_CONFIG_DIR`/`DESKBAR_CACHE_DIR` 環境變數，供測試隔離） |
 | `store.py` | `AppState`：執行緒安全的應用狀態（事件、天氣、帳號同步狀態、在場狀態、Claude usage），`snapshot()` 給 UI 讀、依 `seq` 做零成本快取；`save_cache()`/`load_cache()` 落地事件快取（原子寫入） |
 | `alarms.py` | `AlarmStore`：鬧鐘 CRUD、`due()` 到點判斷（一次性自動停用）、`alarms.json` 原子讀寫 |
 | `sync.py` | 兩條背景同步的實作：`calendar_sync_once`（三階段：鎖內快照設定→鎖外網路 I/O→寫回 state）、`weather_sync_once`；`start_threads()` 起 `cal_loop`/`wx_loop`，`request_sync()` 觸發強制同步 |
@@ -32,13 +32,13 @@
 |---|---|
 | `app.py` | `App` 主迴圈：初始化顯示（KMSDRM/視窗）、事件迴圈、觸控座標轉換與拖曳判定、`_dispatch()` 動作分派、旋轉輸出 `_flip()`、切換過場動畫、翻頁時鐘節奏控制 |
 | `__init__.py` | `Hit` dataclass（觸控命中矩形＋動作名＋附帶資料），各渲染模組回傳的 hit 清單共用型別 |
-| `theme.py` | 顏色/字型/量測常數；`col()` 支援 `DESKBAR_BGR=1` 面板色序反轉；`font()`/`truncate_to_width()`/`wrap_lines()` |
+| `theme.py` | 雙主題色板系統：`PALETTES={"dark","light"}`、`set_theme()`/`current_theme()` 切換（`C`/`ACCOUNT_COLORS` 模組級容器 in-place 更新，`from-import` 舊引用不受影響）、`register_cache_clear()` 供其他模組登記主題切換時要清空的顏色快取；`col()` 支援 `DESKBAR_BGR=1` 面板色序反轉（在 `set_theme()` 內套用）；`font()`/`truncate_to_width()`/`wrap_lines()` |
 | `dashboard.py` | 主畫面組裝：左面板（時鐘/天氣/同步狀態）＋右側時間軸，依 `settings.view_mode` 分派到河道（`_render_lanes`/`weekgrid`/`monthgrid`）或行程（`agenda`）渲染，頂欄寬度切換與窗口標籤 |
 | `weekgrid.py` | 河道模式的週檔：帳號×日格子，每格微列事件 |
 | `monthgrid.py` | 河道模式的月檔：每日表頭＋每帳號件數膠囊，點格跳日視圖 |
 | `agenda.py` | 行程模式：一天一塊直欄（day/half 單欄、week/month 七欄並排） |
 | `detail.py` | 行程詳情浮層、整日事件清單浮層 |
-| `settings_view.py` | 設定頁：帳號卡（日曆開關/泳道標籤/移除帳號）、旋轉按鈕、QR code、同步頻率 |
+| `settings_view.py` | 設定頁：帳號卡（日曆開關/泳道標籤/移除帳號）、旋轉按鈕、主題切換鈕（深色/淺色）、QR code、同步頻率 |
 | `alarm_view.py` | 裝置端鬧鐘管理頁（清單＋新增面板） |
 | `alarm_overlay.py` | 鬧鐘觸發時的全螢幕閃爍覆疊 |
 | `flipclock.py` | 翻頁式時鐘卡片渲染與動畫 |
@@ -52,7 +52,7 @@
 | 檔案 | 職責 |
 |---|---|
 | `add_account.py` | Google OAuth 桌面流程精靈：本機開瀏覽器授權，完成後把 token JSON 部署到 Pi 帳號目錄 |
-| `render_matrix.py` | 渲染驗證矩陣：載入真實/假資料，把顯示寬度×模式×錨點全排列存成 PNG，供人眼核對版面 |
+| `render_matrix.py` | 渲染驗證矩陣：載入真實/假資料，把顯示寬度×模式×錨點全排列存成 PNG，供人眼核對版面；`--theme dark\|light\|both` 切換輸出色板（`both` 額外對 6 張代表圖各補一張 `_light` 版本） |
 | `usage_push_snippet.py` | 可直接複製貼進既有 usage agent（例如 claude-usage-cube/agent/cube_agent.py）的 `push_to_deskbar()` 函數，把讀好的 usage POST 給 `/api/usage` |
 | `usage_push_demo.py` | 獨立小工具：讀本機 Keychain 的 Claude Code 憑證、打官方 usage API、POST 到 deskbar，不想改既有 agent 時單獨用 |
 
