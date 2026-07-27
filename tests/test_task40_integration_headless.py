@@ -388,3 +388,27 @@ def test_play_splash_skips_cleanly_when_no_splash_env_set(tmp_path, monkeypatch)
     lock = threading.Lock()
     app = App(state, settings, lock, on_save=lambda s: None, alarm_store=None)
     app._play_splash()
+
+
+def test_narrow_lane_cards_show_vertical_title():
+    """河道窄卡（30 分鐘行程 ≈45px 寬）直排標題回歸鎖：太窄看不到字被
+    實機點名，窄而高的卡必須有直書文字；窄又矮的卡維持純色塊。"""
+    import pygame as _pg
+    from deskbar.ui import eventcard
+    tall_with = _surf()
+    eventcard.draw_card(tall_with, _pg.Rect(600, 60, 44, 170),
+                        theme.ACCOUNT_COLORS[0][0], "站立會議",
+                        "09:30 – 10:00")
+    tall_blank = _surf()
+    eventcard.draw_card(tall_blank, _pg.Rect(600, 60, 44, 170),
+                        theme.ACCOUNT_COLORS[0][0], "", None)
+    assert _pg.image.tobytes(tall_with, "RGB") != _pg.image.tobytes(tall_blank, "RGB"), \
+        "窄而高的卡應該畫出直排標題"
+    short_with = _surf()
+    eventcard.draw_card(short_with, _pg.Rect(600, 60, 44, 36),
+                        theme.ACCOUNT_COLORS[0][0], "站立會議", None)
+    short_blank = _surf()
+    eventcard.draw_card(short_blank, _pg.Rect(600, 60, 44, 36),
+                        theme.ACCOUNT_COLORS[0][0], "", None)
+    assert _pg.image.tobytes(short_with, "RGB") == _pg.image.tobytes(short_blank, "RGB"), \
+        "窄又矮（<44px 高）維持純色塊"

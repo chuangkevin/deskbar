@@ -55,6 +55,9 @@ def draw_card(surface, rect: "pygame.Rect", main, title: str,
     pygame.draw.rect(surface, pulse_color or border_color(main), rect,
                      width=2 if pulse_color else 1, border_radius=RADIUS)
     if rect.w < 64:
+        # 窄卡（河道 30 分鐘行程 ≈45px 寬）改「直排標題」——橫排放不下字，
+        # 但卡是高的：中文直書天生合理，一張卡直下來能讀 7~8 個字。
+        _draw_vertical_title(surface, rect, title)
         return
     bar = pygame.Rect(rect.x + 4, rect.y + 4, ACCENT_W, max(2, rect.h - 8))
     pygame.draw.rect(surface, main, bar, border_radius=ACCENT_W // 2)
@@ -74,6 +77,24 @@ def draw_card(surface, rect: "pygame.Rect", main, title: str,
         surface.blit(t_img, (text_x, base + 3))
     else:
         surface.blit(img, (text_x, rect.y + rect.h / 2 - img.get_height() / 2))
+
+
+def _draw_vertical_title(surface, rect: "pygame.Rect", title: str) -> None:
+    """窄卡直排：逐字直落、置中，放不下最後一格換省略號。剝掉跨窗裁切
+    記號（◀▶）——窄卡沒空間給它們，直排裡也讀不出方向語意。"""
+    text = title.strip("◀▶ ").strip()
+    if not text or rect.w < 26 or rect.h < 44:
+        return
+    size = min(20, rect.w - 10)
+    f = theme.font(size, bold=True)
+    step = size + 3
+    max_chars = max(1, int((rect.h - 14) // step))
+    shown = text[:max_chars] if len(text) <= max_chars else text[:max_chars - 1] + "…"
+    y = rect.y + 8
+    for ch in shown:
+        img = f.render(ch, True, theme.C["text"])
+        surface.blit(img, img.get_rect(midtop=(rect.centerx, y)))
+        y += step
 
 
 def draw_pill(surface, rect: "pygame.Rect", main, label: str,
