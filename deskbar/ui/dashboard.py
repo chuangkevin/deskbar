@@ -100,7 +100,7 @@ def _agenda_label(start_date, n_days: int) -> str:
 
 
 def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
-          weather_tick=0) -> list[Hit]:
+          weather_t=0.0) -> list[Hit]:
     hits: list[Hit] = []
     tz = now.tzinfo
     span = settings.view_span
@@ -108,7 +108,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     win_start, win_end = view_window(span, anchor_or_now, tz,
                                      start_hour=settings.start_hour, end_hour=settings.end_hour)
 
-    _render_panel(surface, snap, settings, now, hits, clock_anim, weather_tick)
+    _render_panel(surface, snap, settings, now, hits, clock_anim, weather_t)
     pygame.draw.line(surface, theme.C["panel_line"], (PANEL_W, 0), (PANEL_W, 480))
     pygame.draw.line(surface, theme.C["panel_line"], (TL_X1, 0), (TL_X1, 480))
 
@@ -203,14 +203,25 @@ def _render_presence_lock(surface, hiding: bool) -> None:
     pygame.draw.arc(surface, color, pygame.Rect(cx - 7, cy - 16, 14, 18), 0, math.pi, 3)
 
 
-def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_tick=0):
+def render_panel_only(surface, snap, settings, now, weather_t=0.0) -> None:
+    """氛圍幀專用（app._render_ambient）：只重畫左欄矩形（0..PANEL_W），中欄/右欄
+    的像素一概不碰——資料沒變時天氣場景逐幀動起來，不需要重算整面行事曆。
+    hits 丟棄：左欄可點區塊（時鐘/同步/齒輪）的位置是常量，沿用上次全量重繪
+    的結果即可。PANEL_W 分隔線畫在 x=PANEL_W、fill 只蓋到 x=PANEL_W-1，不會擦掉。"""
+    surface.fill(theme.C["bg"], pygame.Rect(0, 0, PANEL_W, 480))
+    _render_panel(surface, snap, settings, now, [], None, weather_t)
+
+
+def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_t=0.0):
     """左欄（0..PANEL_W=400）：時鐘/日期/天氣/同步狀態。三欄重構把這欄從 480 縮到
     400px，時鐘改用 digit_h=96（4 卡+冒號實測總寬 342px，遠低於 360 的安全上限），
     其餘文字/圖示座標跟著往內收，確保沒有任何元素畫出 PANEL_W 之外。"""
     w = snap.weather
     if w is not None:
         from deskbar.ui import weatherfx
-        weatherfx.draw(surface, w.code, weather_tick, w=PANEL_W)   # 背景層：畫在時鐘/文字之前
+        night = not (6 <= now.hour < 19)   # 19:00–05:59 視為夜間：晴/多雲改月亮星空
+        weatherfx.draw(surface, w.code, weather_t, w=PANEL_W,
+                       night=night)        # 背景層：畫在時鐘/文字之前
     anim = clock_anim if clock_anim else (now.strftime("%H:%M"), 1.0)
     from deskbar.ui import flipclock
     flipclock.draw(surface, 24, 34, now.strftime("%H:%M"), anim[0], anim[1],
@@ -242,6 +253,11 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_t
     gear = Rect(320, 396, 72, 72)
     icons.draw_gear(surface, 352, 432, 18, theme.C["muted"])
     hits.append(Hit(gear, "open_settings", None))
+    if w is not None:
+        from deskbar.ui import weatherfx
+        # 玻璃前景：蓋在左欄「全部內容」之上（含時鐘）——HTC Sense 的螢幕就是
+        # 一片擋風玻璃，雨滴黏在玻璃上、雨刷從時鐘前面刷過去。
+        weatherfx.draw_glass(surface, w.code, weather_t, w=PANEL_W)
 
 
 def _render_span_mode_buttons(surface, settings, hits):

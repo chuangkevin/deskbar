@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import traceback
 
 import pygame
@@ -13,6 +14,9 @@ from deskbar.ui.transitions import SlideTransition
 LOGICAL_W, LOGICAL_H = 1920, 480
 DRAG_THRESHOLD = 24                     # px，觸控拖曳判定門檻
 SYNC_INTERVALS = [1, 3, 5, 10, 30]       # 設定頁「同步頻率」鈕的循環清單（分鐘）
+# 氛圍幀率不是常數：由 weatherfx.ambient_fps(code) 分級（雨/雷 15、雪 12、
+# 晴/雲/霧 8）——實務上 open-meteo 的每個 code 都有動態場景，氛圍模式是 24/7
+# 常態，分級幀率才是 Pi Zero 2W 上真正的省電槓桿。
 
 
 class App:
@@ -39,8 +43,7 @@ class App:
         self._transition_start = None   # time.monotonic()，None＝沒在跑過場
         self._last_imminent_check = None  # 迫近行程：上次檢查時間（每秒檢查一次即可）
         self._imminent_active = False     # 迫近行程：本秒是否有迫近中的行程
-        self._weather_tick = 0            # 天氣微動態節奏：每秒 +1，重開機歸零無妨
-        self._last_tick_second = None     # 天氣微動態節奏：上次 tick 遞增所在的整數秒
+        self._weather_epoch = time.monotonic()   # 天氣場景時間基準：t＝距開機浮點秒數
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -244,9 +247,38 @@ class App:
             else:
                 self.hits = dashboard.render(self.logical, snap, self.settings, now, clock_anim,
                                              anchor=self.view_anchor,
-                                             weather_tick=self._weather_tick)
+                                             weather_t=self._weather_t())
                 if self.view == "detail" and self.detail_event is not None:
                     self.hits += detail.render(self.logical, self.detail_event)
+
+    def _weather_t(self) -> float:
+        """天氣場景的浮點秒數（單調時鐘，不受對時跳動影響）。weatherfx 全部速度
+        以 px/秒 定義，重繪頻率快慢只影響流暢度、不影響移動速率。"""
+        return time.monotonic() - self._weather_epoch
+
+    def _ambient_active(self, snap) -> bool:
+        """天氣場景是否需要逐幀重繪：只在 dashboard 本頁（detail/settings/alarms
+        都不跑——modal 開著就讓背景靜止，跟過場/翻牌互斥的既有邏輯一致）、沒有
+        鬧鐘在響、且有天氣資料時成立。ANIMATED_CODES 是對「未知 code」的防禦
+        閘門而非省電機制——open-meteo 正常會回的 code 全在裡面，氛圍模式實務上
+        是 24/7 常態；真正的省電槓桿是 weatherfx.ambient_fps() 的分級幀率。"""
+        if self.view != "dashboard" or self.firing:
+            return False
+        if snap.weather is None:
+            return False
+        from deskbar.ui import weatherfx
+        return snap.weather.code in weatherfx.ANIMATED_CODES
+
+    def _render_ambient(self, snap, now) -> None:
+        """氛圍幀：資料/分鐘都沒變時，只重畫左欄（時鐘/天氣場景）再合成輸出，
+        不重算中欄行事曆與右欄油表——Pi Zero 2W 燒不起整面 15fps 全量重繪。
+        不動 hits、不動 _last_* 記帳：這一幀對「什麼時候需要全量重繪」的判斷
+        完全透明。"""
+        with self.lock:
+            from deskbar.ui import dashboard
+            dashboard.render_panel_only(self.logical, snap, self.settings, now,
+                                        self._weather_t())
+        self._flip()
 
     def _render(self, clock_anim=None) -> None:
         from datetime import datetime
@@ -406,12 +438,7 @@ class App:
                 self._handle_touch_up(x, y)
         from datetime import datetime
         from zoneinfo import ZoneInfo
-        import time
         now = datetime.now(ZoneInfo("Asia/Taipei"))
-        current_second = int(now.timestamp())
-        if self._last_tick_second is None or current_second != self._last_tick_second:
-            self._weather_tick += 1        # 天氣微動態節奏：每秒 +1，不跟著畫格數走
-            self._last_tick_second = current_second
         if self.alarm_store is not None:
             due = self.alarm_store.due(self._last_alarm_check, now)
             self._last_alarm_check = now
@@ -443,7 +470,17 @@ class App:
                 self._anim_start = None
             clock.tick(30)
         else:
-            if self.state.snapshot().seq != self._last_seq or now.minute != self._last_minute:
+            snap = self.state.snapshot()
+            if snap.seq != self._last_seq or now.minute != self._last_minute:
                 self._render()
-            clock.tick(10)
+                clock.tick(10)
+            elif self._ambient_active(snap):
+                # 資料/分鐘都沒變，但天氣場景要動：左欄局部重繪，幀率按場景分級。
+                # 歷史教訓（2026-07-27「根本看不到動畫」）：這裡以前只有上面那條
+                # 全量重繪，天氣 tick 每秒都在加、畫面卻一分鐘才畫一次。
+                self._render_ambient(snap, now)
+                from deskbar.ui import weatherfx
+                clock.tick(weatherfx.ambient_fps(snap.weather.code))
+            else:
+                clock.tick(10)
         return running

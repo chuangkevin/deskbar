@@ -4,13 +4,13 @@ dashboard.py／app.py／settings_view.py 的實際掛載點是否生效。
 個別模組自身的行為細節已由各自的測試檔覆蓋（test_weatherfx_headless.py／
 test_presence.py／test_transitions_headless.py），這裡只驗證「掛載本身有沒有接對」：
 presence 過濾＋鎖頭圖示、settings_view 開關鈕、app.py toggle_presence dispatch、
-切換過場 SlideTransition 生命週期、weather_tick 每秒遞增一次、開機 splash 可跳過。
+切換過場 SlideTransition 生命週期、天氣氛圍幀的重繪分支、開機 splash 可跳過。
 """
 from __future__ import annotations
 
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pygame
@@ -208,40 +208,144 @@ def test_start_transition_noop_without_logical_surface(tmp_path, monkeypatch):
     assert app._transition_start is None
 
 
-# ---------------------------------------------------------------- weather_tick 節奏
+# ---------------------------------------------------------------- 天氣氛圍幀
 
 
-def test_run_iteration_increments_weather_tick_once_per_second(tmp_path, monkeypatch):
-    """凍結 datetime.datetime.now，不依賴真實掛鐘秒數邊界——直接呼叫
-    _run_iteration() 會用真的 datetime.now()，若不凍結，測試在剛好跨過整數秒的
-    瞬間會變成 flaky（曾實際觀察到）。凍結後可以精確控制「同一秒 vs 下一秒」。
-    """
+def _freeze_now(monkeypatch) -> None:
+    """凍結 datetime.datetime.now 在 NOW——氛圍測試靠「seq/minute 都沒變」走進
+    idle 分支，不凍結的話測試恰好跨過整分鐘會誤觸全量重繪、變 flaky
+    （weather_tick 時代就實際觀察過同型問題）。"""
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW.astimezone(tz) if tz is not None else NOW
+
+    monkeypatch.setattr("datetime.datetime", _Frozen)
+
+
+def _make_idle_dashboard_app(tmp_path, monkeypatch, weather_code=61) -> App:
+    """dashboard 頁、seq/minute 記帳已對齊（idle 狀態）、可選天氣資料的 App，
+    _flip 換成計數器（app._flips），走到任何重繪分支都會留下痕跡。"""
     # 防禦性重新初始化：pygame.event.get() 需要 video 子系統已初始化，若同一個
     # pytest session 裡有其他測試檔呼叫過 pygame.quit()（例如
     # test_alarm_overlay_headless.py）會把它關掉，這裡確保與執行順序無關。
     pygame.init()
+    _freeze_now(monkeypatch)
     app = _make_dashboard_app(tmp_path, monkeypatch)
+    if weather_code is not None:
+        from deskbar.weather import Weather
+        app.state.set_weather(Weather(temp=31.0, code=weather_code, tmax=33.0,
+                                      tmin=27.0, label="南港", fetched_at=NOW))
+    app._last_seq = app.state.snapshot().seq
+    app._last_minute = NOW.minute
+    app._flips = []
+    app._flip = lambda: app._flips.append(1)
+    return app
+
+
+def test_idle_dashboard_with_animated_weather_renders_ambient_frames(tmp_path, monkeypatch):
+    app = _make_idle_dashboard_app(tmp_path, monkeypatch, weather_code=61)
     clock = pygame.time.Clock()
-
-    class _Frozen(datetime):
-        current = NOW.replace(microsecond=0)
-
-        @classmethod
-        def now(cls, tz=None):
-            return cls.current.astimezone(tz) if tz is not None else cls.current
-
-    monkeypatch.setattr("datetime.datetime", _Frozen)
-
-    assert app._weather_tick == 0
     app._run_iteration(clock, True)
-    assert app._weather_tick == 1
+    app._run_iteration(clock, True)
+    assert len(app._flips) == 2, "資料/分鐘沒變也要逐幀重繪天氣場景（氛圍幀）"
 
-    app._run_iteration(clock, True)      # 時間沒動：仍是同一秒
-    assert app._weather_tick == 1, "同一秒內第二次呼叫不該再 +1"
 
-    _Frozen.current = _Frozen.current + timedelta(seconds=1)
-    app._run_iteration(clock, True)      # 推進 1 秒
-    assert app._weather_tick == 2, "跨過下一秒應該再 +1"
+def test_ambient_frame_only_touches_left_panel_pixels(tmp_path, monkeypatch):
+    from deskbar.ui.dashboard import PANEL_W
+    app = _make_idle_dashboard_app(tmp_path, monkeypatch, weather_code=61)
+    sentinel = (7, 13, 29)
+    app.logical.fill(sentinel)
+    app._run_iteration(pygame.time.Clock(), True)
+    assert app.logical.get_at((PANEL_W + 200, 240))[:3] == sentinel, \
+        "氛圍幀不得重畫中欄行事曆"
+    assert app.logical.get_at((1700, 240))[:3] == sentinel, "氛圍幀不得重畫右欄油表"
+    changed = any(app.logical.get_at((x, 300))[:3] != sentinel
+                  for x in range(0, PANEL_W, 8))
+    assert changed, "左欄應該真的被重畫"
+
+
+def test_no_ambient_render_without_weather_data(tmp_path, monkeypatch):
+    app = _make_idle_dashboard_app(tmp_path, monkeypatch, weather_code=None)
+    app._run_iteration(pygame.time.Clock(), True)
+    assert app._flips == [], "沒有天氣資料就維持省電閒置，不該重繪"
+
+
+def test_no_ambient_render_on_non_dashboard_views(tmp_path, monkeypatch):
+    app = _make_idle_dashboard_app(tmp_path, monkeypatch, weather_code=61)
+    app.view = "settings"
+    app._run_iteration(pygame.time.Clock(), True)
+    assert app._flips == [], "settings/alarms/detail 頁不跑氛圍幀"
+
+
+def test_no_ambient_render_for_unanimated_weather_code(tmp_path, monkeypatch):
+    """ANIMATED_CODES 防禦閘門的行為鎖：不明 code（open-meteo 契約外）維持
+    tick(10) 省電閒置——突變實驗證實少了這條，把閘門改成恆真測試照樣全綠。"""
+    app = _make_idle_dashboard_app(tmp_path, monkeypatch, weather_code=100)
+    app._run_iteration(pygame.time.Clock(), True)
+    assert app._flips == []
+
+
+def test_no_ambient_render_on_detail_modal(tmp_path, monkeypatch):
+    """detail 是疊在 dashboard 上的 modal（跟 settings 走完全不同的 render
+    路徑）：氛圍幀若在 detail 頁跑，會逐幀重畫左欄、擦掉與左欄重疊的 modal
+    暗幕。必須靜止。"""
+    app = _make_idle_dashboard_app(tmp_path, monkeypatch, weather_code=61)
+    app.view = "detail"
+    app._run_iteration(pygame.time.Clock(), True)
+    assert app._flips == []
+
+
+def test_ambient_inactive_while_alarm_firing(tmp_path, monkeypatch):
+    app = _make_idle_dashboard_app(tmp_path, monkeypatch, weather_code=61)
+    app.firing = ["a"]
+    assert app._ambient_active(app.state.snapshot()) is False
+
+
+def test_flip_and_ambient_frames_share_live_weather_t(tmp_path, monkeypatch):
+    """weather_t 的兩條接線（翻牌/全量重繪 → dashboard.render、氛圍幀 →
+    render_panel_only）都必須吃活的單調秒數——突變實驗證實：把 _draw_frame 的
+    weather_t=self._weather_t() 拿掉（回到預設 0.0），舊測試照樣全綠，但實機
+    每逢整分翻牌天氣場景會跳回 t=0 再跳回 uptime，每分鐘閃一次。"""
+    import time as _time
+    app = _make_idle_dashboard_app(tmp_path, monkeypatch, weather_code=61)
+    seen = []
+    monkeypatch.setattr(dashboard, "render",
+                        lambda *a, **k: seen.append(("full", k.get("weather_t", 0.0))) or [])
+    monkeypatch.setattr(dashboard, "render_panel_only",
+                        lambda surface, snap, settings, now, weather_t=0.0:
+                        seen.append(("ambient", weather_t)))
+    app._anim_start = _time.monotonic()
+    app._clock_prev = "13:59"
+    app._run_iteration(pygame.time.Clock(), True)      # 翻牌幀（全量重繪路徑）
+    app._anim_start = None
+    app._run_iteration(pygame.time.Clock(), True)      # 氛圍幀
+    kinds = [k for k, _ in seen]
+    assert "full" in kinds and "ambient" in kinds
+    ts = [t for _, t in seen]
+    assert all(t > 0.0 for t in ts), "兩條路徑都要傳活的 weather_t，不得回落到預設 0.0"
+    assert ts == sorted(ts), "兩條路徑必須共用同一個單調時間基準"
+
+
+def test_glass_rain_layer_renders_on_top_of_clock_cards():
+    """HTC Sense 玻璃比喻的掛載驗證：雨天時 dashboard 左欄的時鐘卡區域，
+    在「水滴積聚期」與「刷完乾淨期」要長得不一樣——證明水滴真的畫在時鐘
+    之上（背景雨絲畫在卡片之前，蓋不到卡片，只有玻璃層蓋得到）。"""
+    from deskbar.ui.weatherfx import WIPE_PERIOD_S
+    from deskbar.weather import Weather
+    settings = Settings()
+    st = AppState()
+    st.set_weather(Weather(temp=30.0, code=61, tmax=33.0, tmin=27.0,
+                           label="南港", fetched_at=NOW))
+    snap = st.snapshot()
+    clock_zone = pygame.Rect(24, 34, 342, 96)     # flipclock 卡片帶
+    surfs = []
+    for t in (9.5, WIPE_PERIOD_S - 0.5):          # 積滿 vs 剛刷完
+        s = _surf()
+        dashboard.render_panel_only(s, snap, settings, NOW, t)
+        surfs.append(pygame.image.tobytes(s.subsurface(clock_zone), "RGB"))
+    assert surfs[0] != surfs[1], "水滴應該蓋在時鐘卡上（玻璃層）"
 
 
 # ---------------------------------------------------------------- 開機 splash
