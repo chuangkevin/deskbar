@@ -73,16 +73,12 @@ def _bar_fill_pixel(surf, group_index=0):
     return surf.get_at((bar_x + 5, bar_y + usagewidget.BAR_H // 2))[:3]
 
 
-def test_bar_color_low_tier_under_60_percent():
-    surf = _surf()
-    usagewidget.render(surf, _usage(session_pct=50.0), NOW, 1540, 360)
-    assert _bar_fill_pixel(surf) == theme.col((93, 202, 165))
-
-
-def test_bar_color_mid_tier_60_to_85_percent():
-    surf = _surf()
-    usagewidget.render(surf, _usage(session_pct=70.0), NOW, 1540, 360)
-    assert _bar_fill_pixel(surf) == theme.col((239, 169, 72))
+def test_bar_color_normal_use_is_claude_orange():
+    # 正常用量（含 50%、75%）一律 Claude 珊瑚橘，不再分綠/黃段
+    for pct in (50.0, 75.0, 85.0):
+        surf = _surf()
+        usagewidget.render(surf, _usage(session_pct=pct), NOW, 1540, 360)
+        assert _bar_fill_pixel(surf) == theme.col((217, 119, 87))
 
 
 def test_bar_color_warn_tier_above_85_percent():

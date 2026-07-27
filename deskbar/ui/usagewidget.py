@@ -31,9 +31,8 @@ BAR_MARGIN = 20              # 橫條左右各留白，寬度＝欄寬-2*BAR_MAR
 STALE_AFTER_S = 300          # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
 VERY_STALE_AFTER_S = 3600    # 超過這麼久，整組轉 muted 灰（agent 可能已經停了）
 
-_LOW_COLOR = (93, 202, 165)      # <60%
-_MID_COLOR = (239, 169, 72)      # 60~85%
-                                  # >85% 用 theme.C["warn"]
+# Claude 招牌珊瑚橘（clay）：正常用量一律這色；只有爆量（>85%）才轉紅示警
+_CLAUDE_ORANGE = (217, 119, 87)
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft"):
@@ -49,11 +48,10 @@ def _center_text(surface, s, size, color, x0, w, cy):
 
 
 def _level_color(pct: float):
-    if pct < 60:
-        return theme.col(_LOW_COLOR)
-    if pct <= 85:
-        return theme.col(_MID_COLOR)
-    return theme.C["warn"]
+    # 正常用量一律 Claude 珊瑚橘；只有爆量（>85%）轉紅示警。
+    if pct > 85:
+        return theme.C["warn"]
+    return theme.col(_CLAUDE_ORANGE)
 
 
 def _draw_group(surface, x0: float, w: float, y: float, label: str,
