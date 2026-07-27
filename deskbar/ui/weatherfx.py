@@ -1,4 +1,5 @@
-"""左面板天氣場景層——HTC Sense 風格的動態天氣（2026-07-27 全面重寫）。
+"""左面板天氣場景層——HTC Sense 風格的動態天氣（2026-07-27 全面重寫，
+同日寫實化二版：見「寫實化鐵則」）。
 
 兩層結構，忠於 HTC Sense 的玻璃比喻（雨刷/雪花貼螢幕是它的招牌）：
 - draw()：背景場景，畫在時鐘/文字「之前」——太陽光芒旋轉＋光暈呼吸、夜晚
@@ -11,18 +12,28 @@
 算錯也畫不出這個矩形。
 
 節奏鐵則：t 是「浮點秒數」，由呼叫端用單調時鐘算好傳入（app._weather_t()）；
-本模組是 (code, t, night) 的純函式，不得讀 pygame.time / time.time() 自己計時
-——同一組參數永遠畫出同一張圖，測試與 filmstrip 工具都靠這個性質。速度單位
-全部是「px/秒」，呼叫端跑 30fps 或 5fps 只影響流暢度、不影響移動速率。
+本模組是 (code, t, night) 的純函式，不得讀 pygame.time / time.time() 自行
+計時——同一組參數永遠畫出同一張圖，測試與 filmstrip 工具都靠這個性質。
+速度單位全部是「px/秒」，呼叫端跑 15fps 或 8fps 只影響流暢度、不影響速率。
+
+寫實化鐵則（一版「有點假」的檢討，逐條對應）：
+- 位置/大小/相位一律走 _h() 黃金比例雜湊，不用 (i*質數)%w——線性同餘會排出
+  肉眼可辨的等距斜格，是「電子花車感」的最大來源。
+- 雨絲每落完一輪重抽 x（雜湊 (i, layer, cycle)），不能永遠落在同幾條直線上。
+- 雲 puff 用三層同心圓做軟邊＋底部壓暗一條，剪影式均勻 alpha 看起來像貼紙。
+- 玻璃水滴橢圓化（高>寬）、尺寸取偏斜分佈（小滴多大滴少）、大滴會下滑並拖
+  出細水痕；雨刷膠條後緣帶一條淡濕痕。
+- 閃電每輪雜湊出 6 段鋸齒主幹＋一條分枝，畫三層寬度做輝光。
+- 太陽光芒「寬淡線＋窄亮線」疊出錐形，長度逐道微變；光暈三圈漸層。
 
 透明度手法：雨絲/星星/雪花/光芒這類「畫在純色背景上」的元素，不開 SRCALPHA
 逐幀合成（400×480 的 RGBA 清空在 Pi Zero 2W 上燒不起），改用 _mix() 把顏色
 預先朝背景色 lerp——在平坦背景上數學結果跟 alpha 合成完全一致，成本只剩一次
 tuple 運算。真正會互相疊加的（雲朵、光暈、月亮、閃電白幕）才用 SRCALPHA。
 
-快取鐵則：只有雲朵 puff 底圖需要預繪，存在 _sprites dict——key 是
-(名稱, 主題名) 的固定組合（2 種尺寸 × 當前主題），物理上最多同時存在 4 張，
-不是會無限長大的容器；主題切換時透過 theme.register_cache_clear 整組清掉。
+快取鐵則：預繪 sprite 存在 _sprites dict——key 全部來自固定組合（雲 2 尺寸
+×2 alpha、水滴 6 個量化尺寸、雪花 1 種，各 × 主題），物理上封頂，不是會
+無限長大的容器；主題切換時透過 theme.register_cache_clear 整組清掉。
 """
 
 from __future__ import annotations
@@ -55,6 +66,7 @@ def ambient_fps(code: int) -> int:
         return 12
     return 8      # 晴/雲/霧：慢場景，8fps 已無可見差異
 
+
 _HEAVY_RAIN_CODES = {63, 65, 66, 67, 81, 82} | THUNDER_CODES
 _DRIZZLE_CODES = set(range(51, 58))
 GLASS_CODES = RAIN_CODES | THUNDER_CODES | SNOW_CODES   # 有玻璃前景層的族群
@@ -70,9 +82,9 @@ _WIPE_SWEEP_S = 1.2           # 雨刷單程秒數（去程＋回程共兩倍）
 # 任何掃角看起來都是「斜掃過擋風玻璃」的經典構圖。
 _WIPE_FROM_DEG = -100.0       # 停放角：臂貼在面板底緣之下（畫面外）
 _WIPE_TO_DEG = -2.0           # 掃到頂：蓋過面板內所有水滴的角度（右上角 φ≈-4.3°）
-_DROP_N = 22                  # 玻璃水滴數量上限（一個循環內全部生出來）
+_DROP_N = 26                  # 玻璃水滴數量上限（一個循環內全部生出來）
 
-# 雲朵 puff 底圖快取：key=(名稱, 主題名)，固定 4 種組合封頂（見模組 docstring）。
+# sprite 快取：key 全部來自固定組合（見模組 docstring 的快取鐵則）。
 _sprites: dict = {}
 build_count = 0
 
@@ -84,12 +96,23 @@ def _clear_cache() -> None:
 theme.register_cache_clear(_clear_cache)
 
 
+def _h(*args) -> float:
+    """確定性偽隨機（黃金比例整數雜湊 → [0,1)）：位置/大小/相位全走這裡，
+    避免線性同餘的等距格狀分佈（寫實化鐵則第一條）。"""
+    x = 0x9E3779B9
+    for a in args:
+        x = (x ^ (int(a) & 0xFFFFFFFF)) * 2654435761 & 0xFFFFFFFF
+        x ^= x >> 15
+    return ((x * 2246822519 & 0xFFFFFFFF) >> 8) / float(1 << 24)
+
+
 def _pal() -> dict:
     """依當前主題回傳場景配色（已過 theme.col() 的 BGR 校正）。淺色主題的雲/雨
     /雪改用偏深的灰藍——原本深色主題的亮色系在米白背景上會直接隱形。"""
     if theme.current_theme() == "light":
         return {
             "rain": theme.col((96, 122, 168)), "cloud": theme.col((151, 156, 168)),
+            "cloud_hi": theme.col((186, 190, 200)),
             "sun": theme.col((238, 152, 42)), "ray": theme.col((240, 168, 66)),
             "glow": theme.col((242, 186, 96)), "star": theme.col((112, 116, 142)),
             "moon": theme.col((146, 150, 170)), "snow": theme.col((132, 142, 164)),
@@ -100,6 +123,7 @@ def _pal() -> dict:
         }
     return {
         "rain": theme.col((120, 150, 190)), "cloud": theme.col((214, 219, 229)),
+        "cloud_hi": theme.col((246, 249, 255)),
         "sun": theme.col((255, 191, 82)), "ray": theme.col((255, 172, 64)),
         "glow": theme.col((255, 208, 126)), "star": theme.col((235, 238, 248)),
         "moon": theme.col((226, 228, 216)), "snow": theme.col((234, 240, 250)),
@@ -188,16 +212,21 @@ def _draw_sun(panel, t: float, w: int, pal: dict, minor: bool = False) -> None:
     scale = 0.72 if minor else 1.0
     # 光芒（12 道，慢速旋轉）：畫在光暈之前，讓光暈的 SRCALPHA 疊上來柔化根部。
     # 光芒要「長」——時鐘卡會蓋掉太陽本體的下半，靠伸出卡片邊緣的長光芒才看得出
-    # 後面有顆太陽在轉（2026-07-27 首版光芒只到 52px，整顆太陽幾乎被時鐘吃掉）。
-    r1, r2 = 30 * scale, (88 + math.sin(t * 1.1) * 4) * scale
+    # 後面有顆太陽在轉（首版光芒只到 52px，整顆太陽幾乎被時鐘吃掉）。
+    # 寬淡線＋窄亮線疊出錐形；長度逐道 ±12% 微變，去掉「機械齒輪」感。
+    base = 150 if not minor else 105
+    r1 = 30 * scale
     for k in range(12):
         a = math.radians(t * _SUN_RAY_DEG_PER_S + k * 30)
         ca, sa = math.cos(a), math.sin(a)
-        pygame.draw.line(panel, _mix(pal["ray"], 150 if not minor else 105),
-                         (cx + ca * r1, cy + sa * r1), (cx + ca * r2, cy + sa * r2), 3)
-    # 呼吸光暈（兩圈 SRCALPHA，半徑 ±5px 慢速呼吸）
+        r2 = (88 + math.sin(t * 1.1) * 4) * scale * (0.88 + 0.24 * _h(k, 5))
+        p1 = (cx + ca * r1, cy + sa * r1)
+        p2 = (cx + ca * r2, cy + sa * r2)
+        pygame.draw.line(panel, _mix(pal["ray"], int(base * 0.45)), p1, p2, 5)
+        pygame.draw.line(panel, _mix(pal["ray"], base), p1, p2, 2)
+    # 呼吸光暈（三圈 SRCALPHA 漸層，半徑 ±5px 慢速呼吸）
     breathe = math.sin(t * 0.55) * 5
-    for base_r, alpha in ((76, 26), (44, 48)):
+    for base_r, alpha in ((92, 14), (64, 30), (42, 52)):
         r = max(1, int(round(base_r * scale + breathe)))
         glow = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
         pygame.draw.circle(glow, (*pal["glow"], alpha), (r, r), r)
@@ -217,6 +246,9 @@ def _draw_moon(panel, w: int, pal: dict) -> None:
         pygame.draw.circle(glow, (*pal["moon"], alpha), (r, r), r)
         panel.blit(glow, (cx - r, cy - r))
     pygame.draw.circle(panel, _mix(pal["moon"], 215), (cx, cy), 14)
+    # 亮面上撒兩三個隕石坑（比月面暗一階的小圓），不然是張平光圓片。
+    for k, (dx, dy, r) in enumerate(((3, 4, 3), (7, -1, 2), (1, 9, 2))):
+        pygame.draw.circle(panel, _mix(pal["moon"], 150), (cx + dx, cy + dy), r)
     # 用背景色圓偏移蓋出弦月缺口——這層畫在場景最底、下面必定是純背景色，
     # 拿 bg 實色「挖洞」不會蓋掉任何東西（會蓋掉一點月暈，正好是弦月的暗面）。
     pygame.draw.circle(panel, theme.C["bg"], (cx - 6, cy - 4), 12)
@@ -224,15 +256,16 @@ def _draw_moon(panel, w: int, pal: dict) -> None:
 
 def _draw_stars(panel, t: float, w: int, h: int, pal: dict, n: int) -> None:
     for i in range(n):
-        x = (i * 89 + 23) % w
-        y = (i * 53 + 17) % int(h * 0.52)
-        tw = math.sin(t * 1.7 + i * 2.1)
-        alpha = int(120 + 100 * tw)
+        x = int(_h(i, 11) * (w - 8)) + 4
+        y = int(_h(i, 12) * h * 0.52)
+        speed = 0.8 + _h(i, 13) * 1.6          # 每顆星自己的閃爍節奏
+        tw = math.sin(t * speed + _h(i, 14) * 6.28)
+        alpha = int((70 + 110 * _h(i, 15)) + 90 * tw)
         if alpha <= 12:
-            continue                       # 閃到最暗的那幾顆這一幀乾脆熄滅
-        r = 2 if i % 4 == 0 else 1
+            continue                           # 閃到最暗的那幾顆這一幀乾脆熄滅
+        r = 2 if _h(i, 16) > 0.72 else 1
         pygame.draw.circle(panel, _mix(pal["star"], alpha), (x, y), r)
-        if i % 5 == 0 and tw > 0.6:        # 少數亮星在最亮時刻加十字光芒
+        if r == 2 and tw > 0.6:                # 亮星在最亮時刻加十字光芒
             c = _mix(pal["star"], alpha // 2)
             pygame.draw.line(panel, c, (x - 5, y), (x + 5, y))
             pygame.draw.line(panel, c, (x, y - 5), (x, y + 5))
@@ -240,7 +273,7 @@ def _draw_stars(panel, t: float, w: int, h: int, pal: dict, n: int) -> None:
 
 # ---------------------------------------------------------------- 雲/霧
 
-def _puff(name: str, pw: int, ph: int, color, alpha: int) -> "pygame.Surface":
+def _puff(name: str, pw: int, ph: int, pal: dict, alpha: int) -> "pygame.Surface":
     global build_count
     # alpha 一定要進 key：陰天(84)與多雲(66)共用同兩種 puff 尺寸，key 少了 alpha
     # 會讓「開機後誰先畫」決定所有雲的厚度、破壞純函式契約（審查實測：code 2
@@ -250,13 +283,40 @@ def _puff(name: str, pw: int, ph: int, color, alpha: int) -> "pygame.Surface":
     s = _sprites.get(key)
     if s is None:
         build_count += 1
-        s = pygame.Surface((pw, ph), pygame.SRCALPHA)
-        c = (*color, alpha)
-        pygame.draw.ellipse(s, c, pygame.Rect(0, ph // 3, pw, ph - ph // 3))
-        pygame.draw.circle(s, c, (int(pw * 0.32), int(ph * 0.44)), int(ph * 0.30))
-        pygame.draw.circle(s, c, (int(pw * 0.55), int(ph * 0.32)), int(ph * 0.38))
-        pygame.draw.circle(s, c, (int(pw * 0.75), int(ph * 0.48)), int(ph * 0.26))
+        s = _build_puff(pw, ph, pal, alpha)
         _sprites[key] = s
+    return s
+
+
+def _build_puff(pw: int, ph: int, pal: dict, alpha: int) -> "pygame.Surface":
+    """軟邊雲朵。剪影規則（飛碟事故的教訓）：底座必須「內縮」、bump 必須撐滿
+    寬度——底座比 bump 群寬會伸出兩側屋簷，整朵直接變飛碟。四顆圓取
+    小-大-大-小的經典雲形，底座是圓角矩形（平底、圓端）。
+
+    軟邊：三層同心 pass（大而淡→小而實）；SRCALPHA 上 draw 是「覆寫」不是
+    疊加，所以每層要把全部形狀畫完再進下一層，且陰影/受光只能動色調、不能動
+    alpha（動 alpha 會在雲身上開出透明度斷層——首版的飛碟黑洞就是這樣來的）。"""
+    s = pygame.Surface((pw, ph), pygame.SRCALPHA)
+    bumps = [(0.18, 0.60, 0.19), (0.41, 0.44, 0.27),
+             (0.61, 0.42, 0.25), (0.82, 0.58, 0.17)]
+    base = pygame.Rect(int(pw * 0.06), int(ph * 0.52),
+                       int(pw * 0.88), int(ph * 0.40))
+    for ring_scale, ring_alpha in ((1.14, 0.28), (1.06, 0.60), (1.0, 1.0)):
+        a = int(alpha * ring_alpha)
+        for fx, fy, fr in bumps:
+            pygame.draw.circle(s, (*pal["cloud"], a),
+                               (int(pw * fx), int(ph * fy)),
+                               int(ph * fr * ring_scale))
+        grow = int(ph * (ring_scale - 1) * 1.5)
+        rect = base.inflate(grow, grow)
+        pygame.draw.rect(s, (*pal["cloud"], a), rect,
+                         border_radius=max(1, rect.height // 2))
+    # 頂部受光：兩顆大 bump 的上緣畫亮一階色調的弧（同 alpha，安全）。
+    for fx, fy, fr in bumps[1:3]:
+        r = int(ph * fr)
+        rect = pygame.Rect(int(pw * fx) - r, int(ph * fy) - r, r * 2, r * 2)
+        pygame.draw.arc(s, (*pal["cloud_hi"], alpha), rect,
+                        math.radians(35), math.radians(145), 3)
     return s
 
 
@@ -271,21 +331,22 @@ def _draw_clouds(panel, code: int, t: float, w: int, h: int, pal: dict) -> None:
     for i in range(n):
         frac, speed, size = _CLOUD_LANES[i]
         pw, ph = (190, 76) if size == "l" else (140, 58)
-        blob = _puff(f"puff_{size}", pw, ph, pal["cloud"], alpha)
+        blob = _puff(f"puff_{size}", pw, ph, pal, alpha)
         span = w + pw + 60                 # 進出場都要完整走完整個 puff 寬
-        cx = (t * speed + i * 150) % span - pw
-        panel.blit(blob, (round(cx), round(h * frac - ph / 2)))
+        cx = (t * speed + _h(i, 21) * span) % span - pw
+        cy = h * frac + math.sin(t * 0.1 + i * 2.2) * 3   # 極慢的上下漂
+        panel.blit(blob, (round(cx), round(cy - ph / 2)))
 
 
 def _draw_fog(panel, t: float, w: int, h: int, pal: dict) -> None:
     # 霧帶必須窄於面板寬，圓頭端點才會進畫面——等寬霧帶橫移時可視區全是均勻
-    # 中段，數學上有動、視覺上完全靜止（首版實際踩過，測試也抓不出「看起來
-    # 沒動」以外的差異）。窄帶＋端點可見＋濃度呼吸三者一起才有霧的流動感。
+    # 中段，數學上有動、視覺上完全靜止（首版實際踩過）。窄帶＋端點可見＋濃度
+    # 呼吸三者一起才有霧的流動感。
     band_h = 26
     for i in range(3):
-        bw = int(w * 0.78) - i * 24
+        bw = int(w * (0.70 + 0.16 * _h(i, 31))) - i * 24
         y = int(h * 0.58) + i * 46
-        x = (w - bw) / 2 + math.sin(t * 0.22 + i * 1.9) * 52
+        x = (w - bw) / 2 + math.sin(t * 0.22 + _h(i, 32) * 6.28) * 52
         alpha = int(34 + 8 * math.sin(t * 0.5 + i * 2.3))
         band = pygame.Surface((bw, band_h), pygame.SRCALPHA)
         pygame.draw.rect(band, (*pal["mist"], alpha), band.get_rect(),
@@ -307,20 +368,31 @@ def _rain_layers(code: int):
 def _draw_rain(panel, t: float, w: int, h: int, pal: dict, code: int) -> None:
     splash_y = h - 48
     for li, (n, speed, slen, alpha, width) in enumerate(_rain_layers(code)):
-        color = _mix(pal["rain"], alpha)
         span = splash_y + slen * 2
         for i in range(n):
-            x = (i * 53 + li * 29 + 11) % w
-            pos = (t * speed + i * 97 + li * 31) % span
+            # 每落完一輪重抽 x 與亮度（寫實化鐵則：雨不能永遠落在同幾條直線上）
+            prog = t * speed + _h(i, li, 41) * span * 7
+            cycle = int(prog // span)
+            pos = prog % span
+            x = _h(i, li, cycle) * w
             y = pos - slen
+            a = int(alpha * (0.75 + 0.5 * _h(i, li, cycle, 42)))
+            color = _mix(pal["rain"], a)
             pygame.draw.line(panel, color, (x, y), (x - 4, y + slen), width)
-            # 近層雨滴落地：在基準線位置畫一圈由小放大、邊放大邊淡出的濺落橢圓。
+            # 近層雨滴落地：濺落圈由小放大淡出＋兩顆彈起的小水珠。
             if li == 2 and pos > span - 30:
                 s = (pos - (span - 30)) / 30
                 rw, rh = int(5 + 15 * s), int(2 + 4 * s)
                 c = _mix(pal["splash"], int(130 * (1 - s)))
+                lx = x - 4
                 pygame.draw.ellipse(panel, c,
-                                    pygame.Rect(x - 4 - rw, splash_y - rh, rw * 2, rh * 2), 1)
+                                    pygame.Rect(round(lx - rw), splash_y - rh,
+                                                rw * 2, rh * 2), 1)
+                bounce_y = splash_y - 14 * s * (1 - s) * 4
+                for side in (-1, 1):
+                    pygame.draw.circle(panel, c,
+                                       (round(lx + side * (3 + 9 * s)),
+                                        round(bounce_y)), 1)
 
 
 def _draw_lightning(panel, t: float, w: int, h: int, pal: dict) -> None:
@@ -333,12 +405,27 @@ def _draw_lightning(panel, t: float, w: int, h: int, pal: dict) -> None:
     if strobe <= 0.0:
         return
     cycle = int(t // FLASH_PERIOD_S)
-    xb = 60 + (cycle * 137) % max(1, w - 130)
-    pts = [(xb, int(h * 0.28)), (xb - 14, int(h * 0.47)), (xb + 8, int(h * 0.49)),
-           (xb - 8, int(h * 0.68))]
-    pygame.draw.lines(panel, _mix(pal["bolt"], int(235 * strobe)), False, pts, 3)
-    pygame.draw.line(panel, _mix(pal["bolt"], int(150 * strobe)),
-                     pts[1], (xb + 26, int(h * 0.58)), 2)
+    # 每輪雜湊一條 6 段鋸齒主幹＋一條 2 段分枝；三層線寬畫出輝光。
+    x = 40 + _h(cycle, 51) * (w - 120)
+    y = h * 0.20
+    pts = [(x, y)]
+    for k in range(6):
+        x += (_h(cycle, 52, k) - 0.5) * 52
+        y += h * (0.07 + 0.04 * _h(cycle, 53, k))
+        pts.append((x, y))
+    branch_root = pts[2]
+    bx, by = branch_root
+    branch = [branch_root]
+    for k in range(2):
+        bx += (0.3 + _h(cycle, 54, k)) * 34
+        by += h * (0.05 + 0.05 * _h(cycle, 55, k))
+        branch.append((bx, by))
+    for pts_, base_w in ((pts, 7), (pts, 4), (pts, 2)):
+        a = {7: 60, 4: 120, 2: 235}[base_w]
+        pygame.draw.lines(panel, _mix(pal["bolt"], int(a * strobe)), False,
+                          pts_, base_w)
+    pygame.draw.lines(panel, _mix(pal["bolt"], int(140 * strobe)), False,
+                      branch, 2)
     # 整片白幕（SRCALPHA，會壓過已畫好的雨絲，這是要的效果）
     flash = pygame.Surface((w, h), pygame.SRCALPHA)
     flash.fill((255, 255, 255, int(46 * strobe)))
@@ -347,12 +434,14 @@ def _draw_lightning(panel, t: float, w: int, h: int, pal: dict) -> None:
 
 def _draw_snow(panel, t: float, w: int, h: int, pal: dict) -> None:
     for i in range(16):
-        speed = 26 + (i % 3) * 16
-        x = ((i * 67 + 13) % w) + math.sin(t * 0.9 + i * 1.3) * 16
-        y = (t * speed + i * 83) % (h + 8) - 4
-        r = 1 + i % 3
-        alpha = 130 + (i % 3) * 45
-        pygame.draw.circle(panel, _mix(pal["snow"], alpha), (round(x), round(y)), r)
+        speed = 24 + _h(i, 61) * 34
+        sway = 10 + _h(i, 62) * 14
+        x = (_h(i, 63) * w) + math.sin(t * (0.7 + _h(i, 64) * 0.5) + i) * sway
+        y = (t * speed + _h(i, 65) * (h + 8)) % (h + 8) - 4
+        r = 1 + int(_h(i, 66) * 2.6)
+        alpha = 120 + int(_h(i, 67) * 110)
+        pygame.draw.circle(panel, _mix(pal["snow"], alpha),
+                           (round(x) % w, round(y)), r)
 
 
 # ---------------------------------------------------------------- 玻璃前景：水滴/雨刷/黏雪
@@ -380,20 +469,26 @@ def _wiper_angle_deg(tc: float) -> "float | None":
     return _WIPE_TO_DEG - span * _ease_io(p - 1.0)
 
 
-def _drop_sprite(k: int, pal: dict) -> "pygame.Surface":
+def _drop_sprite(r: int, pal: dict) -> "pygame.Surface":
+    """玻璃水滴：橢圓（高>寬，貼在玻璃上被重力拉長）＋暗滴緣＋偏心高光。
+    r 由呼叫端量化到 3..8 的整數，key 組合封頂 6 個 × 主題。"""
     global build_count
-    key = (f"drop_{k}", theme.current_theme())
+    key = (f"drop_{r}", theme.current_theme())
     s = _sprites.get(key)
     if s is None:
         build_count += 1
-        r = (4, 5, 7)[k]
-        s = pygame.Surface((2 * r + 4, 2 * r + 6), pygame.SRCALPHA)
-        c = (r + 2, r + 3)
-        pygame.draw.circle(s, (*pal["drop"], 92), c, r)
-        pygame.draw.circle(s, (*pal["drop_rim"], 150), c, r, 1)
+        rw, rh = r, int(r * 1.3)
+        s = pygame.Surface((rw * 2 + 4, rh * 2 + 4), pygame.SRCALPHA)
+        c = (rw + 2, rh + 2)
+        body = pygame.Rect(c[0] - rw, c[1] - rh, rw * 2, rh * 2)
+        pygame.draw.ellipse(s, (*pal["drop"], 88), body)
+        pygame.draw.ellipse(s, (*pal["drop_rim"], 150), body, 1)
+        # 底緣加深一彎（透鏡聚光的暗邊），高光偏左上。
+        pygame.draw.arc(s, (*pal["drop_rim"], 190), body,
+                        math.radians(215), math.radians(325), 2)
         pygame.draw.circle(s, (255, 255, 255, 150),
-                           (c[0] - max(1, r // 2), c[1] - max(1, r // 2)),
-                           max(1, r // 3))
+                           (c[0] - max(1, rw // 2), c[1] - max(1, rh // 2)),
+                           max(1, rw // 3))
         _sprites[key] = s
     return s
 
@@ -407,40 +502,55 @@ def _draw_glass_rain(panel, t: float, w: int, h: int, pal: dict) -> None:
             * _ease_io((tc - _WIPE_START) / _WIPE_SWEEP_S)
     cx, py = _wiper_pivot(w, h)
     for i in range(_DROP_N):
-        born = (i * 0.47) % (_WIPE_START - 0.8)
+        born = _h(i, 71) * (_WIPE_START - 0.8)
         if tc < born:
             continue
-        x = (i * 71 + 9) % (w - 16) + 8
-        y = (i * 103 + 31) % (h - 70) + 24
+        x = _h(i, 72) * (w - 16) + 8
+        y = _h(i, 73) * (h - 70) + 24
         phi = math.degrees(math.atan2(x - cx, py - y))
         if phi <= wiped_to:
             continue
-        y += min(14.0, (tc - born) * 1.8)      # 水滴貼玻璃慢慢下滑一小段
-        spr = _drop_sprite(i % 3, pal)
-        spr.set_alpha(int(255 * min(1.0, (tc - born) / 0.25)))
+        # 尺寸取偏斜分佈：小滴多、大滴少；只有大滴（r>=6）重到會下滑，
+        # 滑動略帶加速並拖出細水痕。
+        r = 3 + int(_h(i, 74) ** 2 * 6)
+        age = tc - born
+        slide = min(16.0, age ** 1.25 * 1.1) if r >= 6 else min(5.0, age * 0.5)
+        spr = _drop_sprite(r, pal)
+        spr.set_alpha(int(255 * min(1.0, age / 0.25)))
+        if r >= 6 and slide > 3:
+            pygame.draw.line(panel, _mix(pal["drop"], 46),
+                             (round(x), round(y - 2)),
+                             (round(x), round(y + slide - 2)), 1)
         panel.blit(spr, (round(x - spr.get_width() / 2),
-                         round(y - spr.get_height() / 2)))
+                         round(y + slide - spr.get_height() / 2)))
     ang = _wiper_angle_deg(tc)
     if ang is not None:
-        _draw_wiper_arm(panel, ang, w, h, pal)
+        _draw_wiper_arm(panel, ang, w, h, pal, tc)
 
 
-def _draw_wiper_arm(panel, ang_deg: float, w: int, h: int, pal: dict) -> None:
+def _draw_wiper_arm(panel, ang_deg: float, w: int, h: int, pal: dict,
+                    tc: float) -> None:
     """真車構型：臂根細、膠條粗、亮邊一條，全部沿臂徑向從右下角支點伸出。
     臂照樣掃過時鐘——水滴就積在時鐘玻璃上，不掃過去擦不掉，這正是 HTC 玻璃
     比喻的因果；角落支點保證任何掃角都是斜線構圖，不會出現貫穿全高的垂直
-    直桿（見 _WIPE_FROM_DEG 註解的兩版失敗史）。"""
+    直桿（見 _WIPE_FROM_DEG 註解的兩版失敗史）。膠條後緣帶一條淡濕痕，
+    「正在把水推走」的因果才讀得出來。"""
     cx, py = _wiper_pivot(w, h)
-    a = math.radians(ang_deg)
-    sa, ca = math.sin(a), math.cos(a)
 
-    def pt(r: float) -> tuple:
-        return (cx + sa * r, py - ca * r)
+    def pt(ang: float, r: float) -> tuple:
+        a = math.radians(ang)
+        return (cx + math.sin(a) * r, py - math.cos(a) * r)
 
-    pygame.draw.line(panel, pal["wiper"], pt(0), pt(150), 6)          # 臂根
-    pygame.draw.line(panel, pal["wiper"], pt(140), pt(690), 10)       # 膠條（徑向）
-    pygame.draw.line(panel, pal["wiper_edge"], pt(160), pt(680), 2)   # 金屬亮邊
-    end = pt(690)
+    # 濕痕畫在膠條「來的方向」後面 2.5 度：去程在膠條下方、回程在上方。
+    p = (tc - _WIPE_START) / _WIPE_SWEEP_S
+    trail_side = -1.0 if p <= 1.0 else 1.0
+    trail_ang = ang_deg + trail_side * 2.5
+    pygame.draw.line(panel, _mix(pal["drop"], 30),
+                     pt(trail_ang, 150), pt(trail_ang, 690), 12)
+    pygame.draw.line(panel, pal["wiper"], pt(ang_deg, 0), pt(ang_deg, 150), 6)
+    pygame.draw.line(panel, pal["wiper"], pt(ang_deg, 140), pt(ang_deg, 690), 10)
+    pygame.draw.line(panel, pal["wiper_edge"], pt(ang_deg, 160), pt(ang_deg, 680), 2)
+    end = pt(ang_deg, 690)
     pygame.draw.circle(panel, pal["wiper"], (round(end[0]), round(end[1])), 5)
 
 
@@ -448,13 +558,13 @@ def _draw_glass_snow(panel, t: float, w: int, h: int, pal: dict) -> None:
     """雪花黏附玻璃：各自淡入→停留→漸融，位置固定（黏住就不動了）。"""
     period, life = 9.0, 5.0
     for i in range(10):
-        born = (i * 0.83) % period
+        born = _h(i, 81) * period
         age = (t % period - born) % period
         if age > life:
             continue
         fade = min(age / 0.4, (life - age) / 1.2, 1.0)
-        x = (i * 97 + 15) % (w - 20) + 10
-        y = (i * 59 + 41) % (h - 60) + 20
+        x = int(_h(i, 82) * (w - 20)) + 10
+        y = int(_h(i, 83) * (h - 60)) + 20
         spr = _flake_sprite(pal)
         spr.set_alpha(int(210 * fade))
         panel.blit(spr, (x - spr.get_width() // 2, y - spr.get_height() // 2))
