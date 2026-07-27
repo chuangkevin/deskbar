@@ -1,0 +1,7 @@
+[Unit]
+Description=deskbar 連線看門狗（gateway 不通就踢 WiFi 重連）
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/deskbar-net-watchdog.sh

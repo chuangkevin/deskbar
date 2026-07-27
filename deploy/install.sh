@@ -17,4 +17,10 @@ if [ ! -f /etc/NetworkManager/conf.d/wifi-powersave-off.conf ]; then
   sudo nmcli general reload 2>/dev/null || true
 fi
 sudo iw dev wlan0 set power_save off 2>/dev/null || true
+# 連線看門狗：掉線後 WiFi 常卡殭屍態不重連，每分鐘 gateway 探活、不通就
+# 踢 radio 重連（見 deploy/net-watchdog.sh 檔頭）。
+sudo install -m 755 deploy/net-watchdog.sh /usr/local/bin/deskbar-net-watchdog.sh
+sudo cp deploy/deskbar-net-watchdog.service deploy/deskbar-net-watchdog.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now deskbar-net-watchdog.timer
 echo "install.sh 完成"

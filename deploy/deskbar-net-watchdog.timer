@@ -1,0 +1,9 @@
+[Unit]
+Description=deskbar 連線看門狗排程（每分鐘）
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=60s
+
+[Install]
+WantedBy=timers.target
