@@ -1,6 +1,6 @@
 """deskbar.ui.weatherfx（HTC Sense 場景版）契約測試：各場景有畫東西且會動、
 純函式可重現、未知 code 不畫、粒子不越界、日夜切換有差、雷雨閃電週期、
-puff 快取單槽不長大＋主題切換清空。"""
+烘焙素材存在、sprite 快取封頂不長大＋主題切換清空。"""
 from __future__ import annotations
 
 import pygame
@@ -186,20 +186,34 @@ def test_glass_layer_never_draws_outside_panel_rect():
             assert s.get_at((x, y))[:3] == bg, f"玻璃層 ({x},{y}) 畫出面板矩形之外"
 
 
-# ---------------------------------------------------------------- puff 快取
+# ---------------------------------------------------------------- 素材與快取
 
-def test_cloud_puff_cache_is_bounded_and_reused():
+def test_all_baked_assets_exist_and_load():
+    for name in weatherfx.ASSET_NAMES:
+        path = weatherfx._ASSET_DIR / f"{name}.png"
+        assert path.exists(), f"缺烘焙素材 {name}.png（跑 tools/gen_weather_assets.py）"
+        s = weatherfx._raw(name)
+        assert s.get_width() > 0 and s.get_height() > 0
+
+
+def test_sprite_cache_is_bounded_and_reused():
     weatherfx._clear_cache()
     weatherfx.build_count = 0
-    for t in (0.0, 0.5, 1.0, 7.7, 42.0):
-        _draw(3, t)
-    assert weatherfx.build_count <= 2, "puff 只有兩種尺寸，同 code 重複畫不得重建"
-    assert len(weatherfx._sprites) <= 2
-    # 固定 key 組合（2 尺寸 × 2 alpha × 主題）：無論畫多少幀，容器物理上不會長大
-    for t in range(50):
-        _draw(2, float(t))
-    assert len(weatherfx._sprites) <= 4
-    assert weatherfx.build_count <= 4
+    for code in (2, 3, 0, 61, 73):       # 暖機：把會用到的染色×尺寸變體都建一次
+        _draw(code, 0.0)
+        _draw(code, 0.0, night=True)
+        s = _surf()
+        weatherfx.draw_glass(s, code, 9.0, w=W, h=H)
+    warm_builds = weatherfx.build_count
+    warm_keys = len(weatherfx._sprites)
+    for t in range(40):                  # 之後無論畫多少幀都不得再建、不得長大
+        _draw(2, t * 0.7)
+        _draw(3, t * 0.9)
+        _draw(0, t * 1.1, night=True)
+        s = _surf()
+        weatherfx.draw_glass(s, 61, t * 0.37, w=W, h=H)
+    assert weatherfx.build_count == warm_builds, "重複畫不得重建 sprite"
+    assert len(weatherfx._sprites) == warm_keys, "key 組合固定，容器物理上不會長大"
 
 
 def test_cloud_opacity_independent_of_draw_order():
