@@ -25,7 +25,7 @@ class App:
         self.settings = settings
         self.lock = settings_lock
         self.on_save = on_save          # callable：settings 變更後持久化
-        self.view = "dashboard"         # dashboard | settings | detail | alarms
+        self.view = "dashboard"         # dashboard | settings | detail | alarms | wifi
         self.detail_event = None
         self.hits: list[Hit] = []
         self._last_seq = -1
@@ -44,6 +44,8 @@ class App:
         self._last_imminent_check = None  # 迫近行程：上次檢查時間（每秒檢查一次即可）
         self._imminent_active = False     # 迫近行程：本秒是否有迫近中的行程
         self._weather_epoch = time.monotonic()   # 天氣場景時間基準：t＝距開機浮點秒數
+        from deskbar.ui import wifi_view
+        self.wifi_ui = wifi_view.new_state()     # Wi-Fi 設定頁狀態（背景執行緒共寫）
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -119,6 +121,40 @@ class App:
                         self.view = "settings"
                     elif a == "open_alarms":
                         self.view = "alarms"
+                    elif a == "open_wifi":
+                        self.view = "wifi"
+                        self._wifi_rescan()
+                    elif a == "wifi_back":
+                        self.view = "settings"
+                        self.wifi_ui["msg"] = ""
+                    elif a == "wifi_rescan":
+                        self._wifi_rescan()
+                    elif a == "wifi_pick":
+                        net = h.data
+                        if net.secured and not net.known:
+                            self.wifi_ui.update(phase="password", selected=net.ssid,
+                                                selected_secured=True, pw="", msg="",
+                                                shift=False, sym=False, show_pw=False)
+                        else:
+                            self._wifi_connect(net.ssid, None)
+                    elif a == "wifi_key":
+                        from deskbar.ui import wifi_view
+                        if len(self.wifi_ui["pw"]) < wifi_view.PW_MAX:
+                            self.wifi_ui["pw"] += h.data
+                    elif a == "wifi_backspace":
+                        self.wifi_ui["pw"] = self.wifi_ui["pw"][:-1]
+                    elif a == "wifi_shift":
+                        self.wifi_ui["shift"] = not self.wifi_ui["shift"]
+                    elif a == "wifi_sym":
+                        self.wifi_ui["sym"] = not self.wifi_ui["sym"]
+                    elif a == "wifi_show":
+                        self.wifi_ui["show_pw"] = not self.wifi_ui["show_pw"]
+                    elif a == "wifi_cancel":
+                        self.wifi_ui.update(phase="list", pw="", msg="")
+                    elif a == "wifi_connect":
+                        if self.wifi_ui["pw"]:
+                            self._wifi_connect(self.wifi_ui["selected"],
+                                               self.wifi_ui["pw"])
                     elif a == "open_detail":
                         self.view, self.detail_event = "detail", h.data
                     elif a in ("close", "settings_done"):
@@ -241,6 +277,9 @@ class App:
             if self.view == "settings":
                 self.hits = settings_view.render(self.logical, snap, self.settings,
                                                  self.confirm_remove)
+            elif self.view == "wifi":
+                from deskbar.ui import wifi_view
+                self.hits = wifi_view.render(self.logical, self.wifi_ui, now)
             elif self.view == "alarms":
                 self.hits = alarm_view.render(self.logical, self.alarm_store,
                                               self.alarm_draft, now)
@@ -250,6 +289,47 @@ class App:
                                              weather_t=self._weather_t())
                 if self.view == "detail" and self.detail_event is not None:
                     self.hits += detail.render(self.logical, self.detail_event)
+
+    def _wifi_rescan(self) -> None:
+        """背景掃描：nmcli 最長可跑 20 秒，不能擋 render loop。單寫者模式：
+        busy 旗標保證同時只有一條 Wi-Fi 執行緒在寫 wifi_ui。"""
+        ui = self.wifi_ui
+        if ui["busy"]:
+            return
+        ui["busy"] = "scan"
+        import threading
+        from deskbar import wifi
+
+        def work():
+            nets = wifi.scan()
+            ui["nets"] = nets
+            ui["active"] = wifi.active_info()
+            ui["busy"] = None
+
+        threading.Thread(target=work, daemon=True, name="wifi-scan").start()
+
+    def _wifi_connect(self, ssid: str, password) -> None:
+        """背景連線（nmcli 最長 45 秒）。成功→清密碼、回列表、重掃；
+        失敗→留在原畫面顯示原因讓使用者改密碼重試。"""
+        ui = self.wifi_ui
+        if ui["busy"]:
+            return
+        ui["busy"] = "connect"
+        ui["msg"] = ""
+        import threading
+        from deskbar import wifi
+
+        def work():
+            ok, msg = wifi.connect(ssid, password)
+            if ok:
+                ui.update(phase="list", pw="", msg=f"已連線 {ssid}")
+                ui["nets"] = wifi.scan()
+                ui["active"] = wifi.active_info()
+            else:
+                ui["msg"] = f"連線失敗：{msg}"
+            ui["busy"] = None
+
+        threading.Thread(target=work, daemon=True, name="wifi-connect").start()
 
     def _weather_t(self) -> float:
         """天氣場景的浮點秒數（單調時鐘，不受對時跳動影響）。weatherfx 全部速度
@@ -471,7 +551,12 @@ class App:
             clock.tick(30)
         else:
             snap = self.state.snapshot()
-            if snap.seq != self._last_seq or now.minute != self._last_minute:
+            if self.view == "wifi":
+                # Wi-Fi 頁固定 5fps 重繪：掃描/連線結束由背景執行緒改 wifi_ui，
+                # 沒有 seq 可觸發，低頻輪詢重繪畫面自然跟上（含連線中的動態點點）。
+                self._render()
+                clock.tick(5)
+            elif snap.seq != self._last_seq or now.minute != self._last_minute:
                 self._render()
                 clock.tick(10)
             elif self._ambient_active(snap):

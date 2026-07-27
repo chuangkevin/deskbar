@@ -25,6 +25,7 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
     surface.blit(img, (40, 24))
     _btn(surface, f"在場感應：{'開' if settings.presence_enabled else '關'}",
          220, 20, 260, 52, "toggle_presence", None, hits, size=22)
+    _btn(surface, "Wi-Fi 設定", 500, 20, 200, 52, "open_wifi", None, hits, size=22)
     _btn(surface, f"主題：{'深色' if settings.theme == 'dark' else '淺色'}",
          940, 20, 220, 52, "cycle_theme", None, hits, size=22)
     _btn(surface, f"同步頻率：{settings.sync_interval_min} 分鐘", 1180, 20, 280, 52,
