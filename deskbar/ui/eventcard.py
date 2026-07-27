@@ -61,10 +61,10 @@ def draw_card(surface, rect: "pygame.Rect", main, title: str,
 
     text_x = rect.x + 4 + ACCENT_W + 8
     max_w = rect.w - (text_x - rect.x) - 8
-    fitted = theme.truncate_to_width(title, theme.font(title_size), max_w)
+    fitted = theme.truncate_to_width(title, theme.font(title_size, bold=True), max_w)
     if not fitted:
         return
-    img = theme.font(title_size).render(fitted, True, theme.C["text"])
+    img = theme.font(title_size, bold=True).render(fitted, True, theme.C["text"])
     time_fits = (time_text and rect.h >= TWO_LINE_MIN_H
                  and theme.font(16).size(time_text)[0] <= max_w)
     if time_fits:

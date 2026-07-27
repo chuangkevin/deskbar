@@ -135,24 +135,35 @@ _FONT_PATHS = [
     "/System/Library/Fonts/STHeiti Medium.ttc",
     "/System/Library/Fonts/STHeiti Light.ttc",
 ]
+# 字重系統（2026-07-28）：Apple 質感的七成是字型排印——標題/數字用粗體、
+# 內文用 Regular，單一字重全畫面就是「工程師味」的主因。Pi 的 fonts-noto-cjk
+# 內建 Bold；Mac 開發機沒有單檔粗體 CJK，用 STHeiti Medium 近似（僅供預覽）。
+_FONT_PATHS_BOLD = [
+    os.environ.get("DESKBAR_FONT_BOLD", ""),
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+]
 _font_cache: dict = {}
 
 
-def font(size: int) -> "pygame.font.Font":
+def font(size: int, bold: bool = False) -> "pygame.font.Font":
     if not pygame.font.get_init():
         pygame.font.init()
         _font_cache.clear()
-    if size not in _font_cache:
+    key = (size, bold)
+    if key not in _font_cache:
         f = None
-        for p in _FONT_PATHS:
+        for p in (_FONT_PATHS_BOLD if bold else _FONT_PATHS):
             if p and os.path.exists(p):
                 f = pygame.font.Font(p, size)
                 break
+        if f is None and bold:
+            f = font(size)                 # 粗體字檔缺席就退回 Regular，不炸
         if f is None:
             name = pygame.font.match_font("pingfangtc,pingfang,helvetica,arial") or None
             f = pygame.font.Font(name, size)
-        _font_cache[size] = f
-    return _font_cache[size]
+        _font_cache[key] = f
+    return _font_cache[key]
 
 
 def account_color(idx: int):

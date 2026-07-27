@@ -213,7 +213,9 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_t
     flipclock.draw(surface, 24, 34, now.strftime("%H:%M"), anim[0], anim[1],
                    digit_h=96)    # 4 卡+冒號實測總寬 342px，PANEL_W=400 內綽綽有餘
     wd = "週" + "一二三四五六日"[now.weekday()]
-    _text(surface, f"{now.month}月{now.day}日 {wd}", 24, theme.C["text2"], 24, 150)
+    img = theme.font(24, bold=True).render(f"{now.month}月{now.day}日 {wd}", True,
+                                           theme.C["text2"])
+    surface.blit(img, (24, 150))
     if w is not None:
         age = (now - w.fetched_at).total_seconds()
         stale = "（舊）" if age > 7200 else ""

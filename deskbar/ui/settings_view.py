@@ -24,7 +24,7 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
     x40..1886 精確填滿），下層帳號卡＋QR。首日版把鈕硬塞進標題列擠成一團
     被打槍「很醜」——控制鈕自成一列、等寬等距，才有秩序感。"""
     hits: list[Hit] = []
-    img = theme.font(32).render("設定", True, theme.C["text"])
+    img = theme.font(32, bold=True).render("設定", True, theme.C["text"])
     surface.blit(img, (40, 24))
     hidden_note_x = 180
     _btn(surface, "完成", 1700, 16, 180, 56, "settings_done", None, hits)

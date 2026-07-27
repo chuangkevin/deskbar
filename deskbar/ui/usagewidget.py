@@ -33,8 +33,8 @@ VERY_STALE_AFTER_S = 3600    # 超過這麼久，整組轉 muted 灰（agent 可
 
 
 
-def _text(surface, s, size, color, x, y, anchor="topleft"):
-    img = theme.font(size).render(s, True, color)
+def _text(surface, s, size, color, x, y, anchor="topleft", bold=False):
+    img = theme.font(size, bold=bold).render(s, True, color)
     r = img.get_rect(**{anchor: (x, y)})
     surface.blit(img, r)
     return r
@@ -59,7 +59,7 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
     pct_color = theme.C["muted"] if muted else theme.C["text"]
     _text(surface, label, 18, label_color, x0, y)
     pct_label = f"{round(pct)}%" if pct is not None else "—"
-    _text(surface, pct_label, 20, pct_color, x0 + w - 8, y - 2, "topright")
+    _text(surface, pct_label, 22, pct_color, x0 + w - 8, y - 4, "topright", bold=True)
 
     bar_x = x0 + BAR_MARGIN
     bar_w = w - 2 * BAR_MARGIN

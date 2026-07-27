@@ -20,6 +20,13 @@ def new_state() -> dict:
     return {"devices": [], "busy": None, "msg": ""}
 
 
+def _text_bold(surface, s, size, color, x, y, anchor="topleft"):
+    img = theme.font(size, bold=True).render(s, True, color)
+    r = img.get_rect(**{anchor: (x, y)})
+    surface.blit(img, r)
+    return r
+
+
 def _text(surface, s, size, color, x, y, anchor="topleft"):
     img = theme.font(size).render(s, True, color)
     r = img.get_rect(**{anchor: (x, y)})
@@ -37,7 +44,7 @@ def _btn(surface, label, rect, action, data, hits, size=22, fg=None):
 
 def render(surface, ui: dict, settings, now) -> list:
     hits: list = []
-    _text(surface, "藍牙配對", 32, theme.C["text"], 40, 24)
+    _text_bold(surface, "藍牙配對", 32, theme.C["text"], 40, 24)
     target = settings.presence_mac
     if target:
         _text(surface, f"在場感應目標：{target}", 22, theme.C["ok"], 280, 34)

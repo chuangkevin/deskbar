@@ -22,6 +22,13 @@ FIELDS = [
 _CARD_W, _CARD_H, _CARD_Y = 430, 220, 96
 
 
+def _text_bold(surface, s, size, color, x, y, anchor="topleft"):
+    img = theme.font(size, bold=True).render(s, True, color)
+    r = img.get_rect(**{anchor: (x, y)})
+    surface.blit(img, r)
+    return r
+
+
 def _text(surface, s, size, color, x, y, anchor="topleft"):
     img = theme.font(size).render(s, True, color)
     r = img.get_rect(**{anchor: (x, y)})
@@ -39,7 +46,7 @@ def _btn(surface, label, rect, action, data, hits, size=26):
 
 def render(surface, settings) -> list:
     hits: list = []
-    _text(surface, "螢幕", 32, theme.C["text"], 40, 24)
+    _text_bold(surface, "螢幕", 32, theme.C["text"], 40, 24)
     _text(surface, "下班時間起自動套用下班亮度", 22, theme.C["muted"], 200, 34)
     _btn(surface, "返回", pygame.Rect(1700, 20, 180, 52), "open_settings", None, hits,
          size=24)

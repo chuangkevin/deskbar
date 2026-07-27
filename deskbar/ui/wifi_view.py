@@ -40,6 +40,13 @@ def new_state() -> dict:
             "shift": False, "sym": False, "show_pw": False, "msg": "", "active": None}
 
 
+def _text_bold(surface, s, size, color, x, y, anchor="topleft"):
+    img = theme.font(size, bold=True).render(s, True, color)
+    r = img.get_rect(**{anchor: (x, y)})
+    surface.blit(img, r)
+    return r
+
+
 def _text(surface, s, size, color, x, y, anchor="topleft"):
     img = theme.font(size).render(s, True, color)
     r = img.get_rect(**{anchor: (x, y)})
@@ -96,7 +103,7 @@ def render(surface, ui: dict, now) -> list:
 # ---------------------------------------------------------------- 清單
 
 def _render_list(surface, ui: dict, hits: list) -> None:
-    _text(surface, "Wi-Fi 設定", 32, theme.C["text"], 40, 24)
+    _text_bold(surface, "Wi-Fi 設定", 32, theme.C["text"], 40, 24)
     active = ui.get("active")
     status = f"已連線：{active[0]}（{active[1] or '取得 IP 中'}）" if active else "未連線"
     _text(surface, status, 22, theme.C["ok"] if active else theme.C["muted"], 280, 34)
