@@ -329,6 +329,12 @@ class App:
                 ui.update(phase="list", pw="", msg=f"已連線 {ssid}")
                 ui["nets"] = wifi.scan()
                 ui["active"] = wifi.active_info()
+            elif password is None:
+                # 「已儲存」網路用舊 profile 連失敗（密碼改了/profile 壞了）：
+                # 直接彈密碼鍵盤讓使用者重新輸入，而不是卡在清單反覆失敗。
+                ui.update(phase="password", selected=ssid, selected_secured=True,
+                          pw="", shift=False, sym=False, show_pw=False,
+                          msg=f"連線失敗：{msg}｜請輸入密碼重試")
             else:
                 ui["msg"] = f"連線失敗：{msg}"
             ui["busy"] = None

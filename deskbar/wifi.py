@@ -15,7 +15,7 @@ import subprocess
 from dataclasses import dataclass
 
 _TIMEOUT_SCAN = 20
-_TIMEOUT_CONNECT = 45
+_TIMEOUT_CONNECT = 60       # 弱訊號 AP 的關聯+DHCP 可能拖很久，45 秒實測會誤殺
 WLAN_DEV = "wlan0"          # Pi Zero 2 W 內建無線介面
 
 
@@ -146,6 +146,11 @@ def connect(ssid: str, password: "str | None" = None) -> "tuple[bool, str]":
         _run(["connection", "delete", "id", ssid], 10)   # rc 忽略：本來就可能不存在
         rc, out = _run(["dev", "wifi", "connect", ssid, "password", password],
                        _TIMEOUT_CONNECT)
+        if rc != 0:
+            # 失敗也要把 nmcli 剛替這次嘗試建立的壞 profile 清掉——留著的話，
+            # 這個網路下次掃描會被當成「已儲存」、點了直接用壞密碼重連，
+            # 鍵盤永遠不再出現（實機回報：打錯密碼的 WiFi 改不了密碼）。
+            _run(["connection", "delete", "id", ssid], 10)
     else:
         rc, out = _run(["dev", "wifi", "connect", ssid], _TIMEOUT_CONNECT)
     msg = " ".join(out.split())[:140]      # 壓成單行截短；nmcli 輸出不含密碼原文

@@ -120,7 +120,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         lane_emails = [e for e in lane_emails if e not in hidden]
     visible = [e for e in snap.events
                if e.account in lane_emails and e.end > win_start and e.start < win_end]
-    _, timed = split_allday(visible)
+    allday, timed = split_allday(visible)
 
     # v4.1：行程模式改回「視窗制」（跟河道共用 anchor／資料窗口概念），故窗口標籤
     # 與「回到今天」鈕的顯示條件不再依 is_agenda 特判——回到 fixwave2 之前、
@@ -180,6 +180,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
             hits.append(Hit(p.rect, "open_detail", p.event))
         if overflow:
             _text(surface, f"＋{len(overflow)} 更多", 20, theme.C["muted"], TL_X1, 44, "topright")
+        _render_allday_pills(surface, allday, lane_emails, settings, hits)
         _render_now_line_range(surface, win_start, win_end, now)
 
     if settings.presence_enabled and settings.presence_hide_accounts:
@@ -323,6 +324,44 @@ def _render_lanes(surface, lane_emails, settings):
         _text(surface, settings.accounts[email].lane_label, 22, main, TL_X0 + 6, int(y) + 4)
         if i:
             pygame.draw.line(surface, theme.C["panel_line"], (TL_X0, y), (TL_X1, y))
+
+
+def _render_allday_pills(surface, allday, lane_emails, settings, hits) -> None:
+    """河道（half/day 連續軸）模式的整日事件：各帳號泳道頂部一排小膠囊。
+
+    2026-07-27 頂欄整日膠囊移除後，河道曾對整日事件「全盲」——個人日曆常以
+    整日行程為主，看起來就像同步壞了、整欄空白（實機當晚回報）。agenda/週/月
+    都有各自的整日呈現，河道用泳道內膠囊補齊；放泳道頂部、泳道標籤右側，
+    最多 3 顆＋「+N」，可點開詳情。"""
+    if not allday:
+        return
+    n = max(1, len(lane_emails))
+    lane_h = TL_AREA.h / n
+    for i, email in enumerate(lane_emails):
+        evs = [e for e in allday if e.account == email]
+        if not evs:
+            continue
+        acc = settings.accounts.get(email)
+        main, dark = theme.account_color(acc.color if acc else 0)
+        y = TL_AREA.y + i * lane_h + 4
+        x = TL_X0 + 150
+        shown = 0
+        for e in evs[:3]:
+            label = theme.truncate_to_width(f"整日 {e.title}", theme.font(18), 190)
+            if not label:
+                continue
+            wpx = theme.font(18).size(label)[0] + 16
+            r = pygame.Rect(int(x), int(y), int(wpx), 26)
+            if r.right > TL_X1 - 56:
+                break
+            pygame.draw.rect(surface, dark, r, border_radius=13)
+            _text(surface, label, 18, main, r.x + 8, r.y + 3)
+            hits.append(Hit(Rect(r.x, r.y, r.w, r.h), "open_detail", e))
+            x = r.right + 8
+            shown += 1
+        extra = len(evs) - shown
+        if extra > 0 and x < TL_X1 - 50:
+            _text(surface, f"+{extra}", 18, theme.C["muted"], x, y + 3)
 
 
 def _render_now_line_range(surface, win_start, win_end, now: datetime) -> None:

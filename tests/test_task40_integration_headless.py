@@ -328,6 +328,22 @@ def test_flip_and_ambient_frames_share_live_weather_t(tmp_path, monkeypatch):
     assert ts == sorted(ts), "兩條路徑必須共用同一個單調時間基準"
 
 
+def test_lanes_mode_renders_allday_events_as_tappable_pills():
+    """河道模式整日事件回歸鎖：2026-07-27 頂欄膠囊移除後河道曾對整日事件
+    全盲——個人日曆常以整日行程為主，看起來就像沒同步/整欄空白（實機當晚
+    回報「個人行事曆完全沒有東西」）。整日事件必須以泳道頂膠囊呈現且可點。"""
+    settings = _settings_two_accounts()
+    st = AppState()
+    st.set_events("open@x.com", [Event(
+        "ad1", "open@x.com", "c", "整日待辦",
+        NOW.replace(hour=0, minute=0), NOW.replace(hour=23, minute=59),
+        True, None, None)], NOW)
+    hits = dashboard.render(_surf(), st.snapshot(), settings, NOW)
+    pills = [h for h in hits if h.action == "open_detail"
+             and getattr(h.data, "id", None) == "ad1"]
+    assert pills, "河道模式必須畫出整日事件膠囊（可點開詳情）"
+
+
 def test_glass_rain_layer_renders_on_top_of_clock_cards():
     """HTC Sense 玻璃比喻的掛載驗證：雨天時 dashboard 左欄的時鐘卡區域，
     在「水滴積聚期」與「刷完乾淨期」要長得不一樣——證明水滴真的畫在時鐘

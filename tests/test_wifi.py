@@ -65,7 +65,10 @@ def test_connect_without_password_uses_saved_profile(monkeypatch):
 
 
 def test_connect_failure_returns_false_with_short_message(monkeypatch):
+    calls = []
+
     def fake_run(args, capture_output, text, timeout):
+        calls.append(args)
         return subprocess.CompletedProcess(
             args, 4, stdout="", stderr="Error: Connection activation failed: " + "x" * 500)
 
@@ -73,6 +76,10 @@ def test_connect_failure_returns_false_with_short_message(monkeypatch):
     ok, msg = wifi.connect("Office", "pw")
     assert ok is False
     assert len(msg) <= 140
+    # 失敗後必須把 nmcli 剛建立的壞 profile 清掉——留著會讓這個網路變成
+    # 「已儲存」、之後點了直接用壞密碼連、密碼鍵盤永遠不再出現。
+    deletes = [c for c in calls if c[:4] == ["nmcli", "connection", "delete", "id"]]
+    assert len(deletes) == 2, "連線失敗後應再刪一次壞 profile（前置刪＋失敗清理）"
 
 
 def test_scan_returns_empty_when_nmcli_missing(monkeypatch):
