@@ -8,7 +8,7 @@ import pygame
 
 from deskbar.layout import Rect, layout_timeline_range, split_allday, time_to_x_range
 from deskbar.ui import Hit
-from deskbar.ui import agenda, icons, monthgrid, theme, transitions, usagewidget, weekgrid
+from deskbar.ui import agenda, eventcard, icons, monthgrid, theme, transitions, usagewidget, weekgrid
 from deskbar.viewwin import agenda_window, data_window, view_window, window_label
 from deskbar.weather import code_text
 
@@ -167,16 +167,14 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         _render_lanes(surface, lane_emails, settings)
         imminent_evt_ids = transitions.imminent_ids(timed, now)
         for p in placed:
-            main, dark = theme.account_color(settings.accounts[p.event.account].color)
+            main, _dark = theme.account_color(settings.accounts[p.event.account].color)
             r = pygame.Rect(int(p.rect.x), int(p.rect.y) + 2, int(p.rect.w), int(p.rect.h) - 4)
-            pygame.draw.rect(surface, dark, r, border_radius=6)
-            if p.event.id in imminent_evt_ids:
-                pygame.draw.rect(surface, transitions.pulse_border_color(main, now), r,
-                                 width=3, border_radius=6)
             label = ("◀ " if p.clip_l else "") + p.event.title + (" ▶" if p.clip_r else "")
-            fitted = theme.truncate_to_width(label, theme.font(22), r.width - 12)
-            if fitted:                             # 量不出能放下的內容就乾脆不畫
-                _text(surface, fitted, 22, main, r.x + 8, r.y + r.height / 2 - 14)
+            time_text = (f"{p.event.start.strftime('%H:%M')} – "
+                         f"{p.event.end.strftime('%H:%M')}")
+            pulse = (transitions.pulse_border_color(main, now)
+                     if p.event.id in imminent_evt_ids else None)
+            eventcard.draw_card(surface, r, main, label, time_text, pulse_color=pulse)
             hits.append(Hit(p.rect, "open_detail", p.event))
         if overflow:
             _text(surface, f"＋{len(overflow)} 更多", 20, theme.C["muted"], TL_X1, 44, "topright")
@@ -307,8 +305,8 @@ def _render_lanes(surface, lane_emails, settings):
     for i, email in enumerate(lane_emails):
         y = TL_AREA.y + i * lane_h
         main, _ = theme.account_color(settings.accounts[email].color)
-        pygame.draw.rect(surface, main, pygame.Rect(TL_X0 - 14, int(y) + 4, 6, int(lane_h) - 8))
-        _text(surface, settings.accounts[email].lane_label, 22, main, TL_X0 + 6, int(y) + 4)
+        eventcard.draw_lane_label(surface, TL_X0 - 12, y + 18, main,
+                                  settings.accounts[email].lane_label)
         if i:
             pygame.draw.line(surface, theme.C["panel_line"], (TL_X0, y), (TL_X1, y))
 
@@ -329,20 +327,18 @@ def _render_allday_pills(surface, allday, lane_emails, settings, hits) -> None:
         if not evs:
             continue
         acc = settings.accounts.get(email)
-        main, dark = theme.account_color(acc.color if acc else 0)
+        main, _dark = theme.account_color(acc.color if acc else 0)
         y = TL_AREA.y + i * lane_h + 4
         x = TL_X0 + 150
         shown = 0
         for e in evs[:3]:
-            label = theme.truncate_to_width(f"整日 {e.title}", theme.font(18), 190)
-            if not label:
-                continue
-            wpx = theme.font(18).size(label)[0] + 16
-            r = pygame.Rect(int(x), int(y), int(wpx), 26)
+            label = f"整日 {e.title}"   # 全形中點會豆腐（字型老坑）
+            wpx = min(theme.font(18).size(label)[0] + 36, 260)
+            r = pygame.Rect(int(x), int(y), int(wpx), 28)
             if r.right > TL_X1 - 56:
                 break
-            pygame.draw.rect(surface, dark, r, border_radius=13)
-            _text(surface, label, 18, main, r.x + 8, r.y + 3)
+            if not eventcard.draw_pill(surface, r, main, label):
+                continue
             hits.append(Hit(Rect(r.x, r.y, r.w, r.h), "open_detail", e))
             x = r.right + 8
             shown += 1
@@ -355,7 +351,8 @@ def _render_now_line_range(surface, win_start, win_end, now: datetime) -> None:
     if not (win_start <= now <= win_end):
         return
     x = time_to_x_range(now, win_start, win_end, TL_X0, TL_X1)
-    pygame.draw.line(surface, theme.C["now"], (x, 52), (x, 420), 3)
+    pygame.draw.line(surface, theme.C["now"], (x, 52), (x, 420), 2)
+    pygame.draw.circle(surface, theme.C["now"], (round(x), 54), 5)   # iOS 式線頭圓點
     img = theme.font(20).render(now.strftime("%H:%M"), True, theme.C["now_text"])
     r = img.get_rect(midtop=(x, 54))
     pygame.draw.rect(surface, theme.C["now"], r.inflate(12, 6), border_radius=4)

@@ -47,19 +47,17 @@ def _draw_micro_row(surface, e, settings, x: float, y: float, w: float) -> None:
     main, _dark = theme.account_color(acc.color if acc else 0)
     text_x = x + 2
     if e.all_day:
-        badge_img = theme.font(BADGE_FONT).render("整", True, theme.C["now_text"])
-        badge_rect = pygame.Rect(0, 0, badge_img.get_width() + 6, badge_img.get_height() + 2)
-        badge_rect.midleft = (round(text_x), round(y + MICRO_ROW_H / 2))
-        pygame.draw.rect(surface, theme.C["now"], badge_rect, border_radius=3)
-        surface.blit(badge_img, badge_img.get_rect(center=badge_rect.center))
-        text_x = badge_rect.right + 4
+        # 整日＝實心色點（原本的橘色「整」badge 太吵，Apple 語彙：點＝整日）
+        pygame.draw.circle(surface, main, (round(text_x + 4), round(y + MICRO_ROW_H / 2)), 3)
+        text_x += 12
         label = e.title
     else:
         label = f"{e.start.strftime('%H:%M')} {e.title}"
     max_w = x + w - text_x - 2
     fitted = theme.truncate_to_width(label, theme.font(MICRO_FONT), max_w)
     if fitted:
-        img = theme.font(MICRO_FONT).render(fitted, True, main)
+        # 中性文字（帳號識別已由「列」承擔）——滿格飽和彩字是舊語彙（eventcard 檔頭）
+        img = theme.font(MICRO_FONT).render(fitted, True, theme.C["text"])
         surface.blit(img, (text_x, y + MICRO_ROW_H / 2 - img.get_height() / 2))
 
 
@@ -93,10 +91,9 @@ def render_week(surface, events, lane_order: list[str], settings, week_start_dat
         acc = settings.accounts[email]
         main, _dark = theme.account_color(acc.color)
         y = area.y + HEADER_H + li * row_h
-        pygame.draw.rect(surface, main,
-                         pygame.Rect(int(area.x), int(y) + 4, 3, max(1, int(row_h) - 8)))
-        img = theme.font(18).render(acc.lane_label, True, main)
-        surface.blit(img, img.get_rect(midleft=(area.x + 10, y + row_h / 2)))
+        from deskbar.ui import eventcard
+        eventcard.draw_lane_label(surface, area.x, y + row_h / 2, main,
+                                  acc.lane_label, size=18)
         if li:
             pygame.draw.line(surface, theme.C["panel_line"], (area.x, y), (area.x + area.w, y))
 

@@ -41,13 +41,17 @@ def _draw_today_header(surface, cx: float, top: float, day: int) -> None:
 
 
 def _draw_count_pill(surface, count: int, main, dark, cx: float, cy: float) -> None:
-    """帳號色深底＋主色字的件數膠囊，置中畫在該帳號那一列、那一天的格子裡。"""
+    """件數膠囊（Apple 語彙版）：帳號色淡底＋淡框＋中性文字（見 eventcard 檔頭；
+    dark 參數保留簽名相容，不再使用）。"""
+    from deskbar.ui import eventcard
     label = str(count)
-    img = theme.font(18).render(label, True, main)
+    img = theme.font(18).render(label, True, theme.C["text"])
     w = max(img.get_width() + 14, PILL_H)
     rect = pygame.Rect(0, 0, w, PILL_H)
     rect.center = (round(cx), round(cy))
-    pygame.draw.rect(surface, dark, rect, border_radius=PILL_H // 2)
+    pygame.draw.rect(surface, eventcard.fill_color(main), rect, border_radius=PILL_H // 2)
+    pygame.draw.rect(surface, eventcard.border_color(main), rect, width=1,
+                     border_radius=PILL_H // 2)
     surface.blit(img, img.get_rect(center=rect.center))
 
 
@@ -96,7 +100,9 @@ def render_month(surface, events, lane_order: list[str], settings, win_start: da
         acc = settings.accounts[email]
         main, dark = theme.account_color(acc.color)
         y = area.y + HEADER_H + li * row_h
-        _text(surface, acc.lane_label, 18, main, area.x, y + row_h / 2, "midleft")
+        from deskbar.ui import eventcard
+        eventcard.draw_lane_label(surface, area.x, y + row_h / 2, main,
+                                  acc.lane_label, size=18)
         if li:
             pygame.draw.line(surface, theme.C["panel_line"], (area.x, y), (area.x + area.w, y))
         for d in range(1, days_in_month + 1):

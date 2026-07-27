@@ -38,27 +38,13 @@ def _draw_column_header(surface, cx: float, top: float, d: _date, is_today: bool
 
 
 def _draw_row(surface, e, settings, rect: Rect, font_size: int) -> None:
-    """畫一列（整日或計時皆共用）：行首 3px 帳號色條＋內容。"""
+    """畫一列（整日或計時皆共用）：Apple 式事件卡（見 eventcard 檔頭）。"""
+    from deskbar.ui import eventcard
     acc = settings.accounts.get(e.account)
     main, _dark = theme.account_color(acc.color if acc else 0)
-    pygame.draw.rect(surface, main,
-                     pygame.Rect(int(rect.x), int(rect.y) + 2, 3, max(1, int(rect.h) - 4)))
-    text_x = rect.x + 10
-    if e.all_day:
-        badge_img = theme.font(12).render("整日", True, theme.C["now_text"])
-        badge_rect = pygame.Rect(0, 0, badge_img.get_width() + 8, badge_img.get_height() + 4)
-        badge_rect.midleft = (round(text_x), round(rect.y + rect.h / 2))
-        pygame.draw.rect(surface, theme.C["now"], badge_rect, border_radius=4)
-        surface.blit(badge_img, badge_img.get_rect(center=badge_rect.center))
-        text_x = badge_rect.right + 8
-        label = e.title
-    else:
-        label = f"{e.start.strftime('%H:%M')} {e.title}"
-    max_w = rect.x + rect.w - text_x - 8
-    fitted = theme.truncate_to_width(label, theme.font(font_size), max_w)
-    if fitted:
-        img = theme.font(font_size).render(fitted, True, theme.C["text"])
-        surface.blit(img, (text_x, rect.y + rect.h / 2 - img.get_height() / 2))
+    r = pygame.Rect(int(rect.x), int(rect.y) + 1, int(rect.w), max(2, int(rect.h) - 2))
+    label = f"整日 {e.title}" if e.all_day else f"{e.start.strftime('%H:%M')} {e.title}"
+    eventcard.draw_card(surface, r, main, label, None, title_size=font_size)
 
 
 def _assign_day(e, start_date: _date, days: list[_date], day_events: dict) -> None:
