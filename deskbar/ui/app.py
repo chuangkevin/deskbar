@@ -7,6 +7,7 @@ import pygame
 from deskbar import transform
 from deskbar.layout import Rect
 from deskbar.ui import Hit
+from deskbar.ui import theme
 from deskbar.ui.transitions import SlideTransition
 
 LOGICAL_W, LOGICAL_H = 1920, 480
@@ -199,7 +200,7 @@ class App:
         拆出這支給 _render()（正常重繪）與 _render_transition_frame()（切換過場，
         還要在這之上疊一層舊畫面滑出效果）共用。"""
         from deskbar.ui import alarm_view, dashboard, detail, settings_view
-        self.logical.fill((15, 15, 15))
+        self.logical.fill(theme.C["bg"])
         # sync 現在只在 phase (a) 短暫持鎖（微秒級），這裡加鎖不會再造成長時間凍結；
         # 反過來若不加鎖，sync 的 phase (a) 可能正好在改 settings.accounts 途中被讀到。
         # _dispatch 的 with self.lock: 區塊不會呼叫 _render，故這裡再取鎖不會死結。

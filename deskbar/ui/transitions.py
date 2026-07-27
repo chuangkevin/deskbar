@@ -73,7 +73,8 @@ class SlideTransition:
 
 
 def splash_frames(w: int, h: int, text: str = "deskbar") -> list:
-    """開機畫面的逐格畫面清單，共 13 張，黑底、文字置中、字級 72：
+    """開機畫面的逐格畫面清單，共 13 張，底色隨目前主題（theme.C["bg"]，深色
+    預設即純黑）、文字置中、字級 72：
 
     - 前 10 張是「掃光顯現」：第 i 張（i=1..10）露出文字左起 i*10% 寬度，
       模擬由左至右掃出來的效果，第 10 張即完整文字。
@@ -87,11 +88,12 @@ def splash_frames(w: int, h: int, text: str = "deskbar") -> list:
     text_img = f.render(text, True, theme.C["text"])
     tw, th = text_img.get_size()
     tx, ty = (w - tw) // 2, (h - th) // 2
+    bg = theme.C["bg"]
 
     frames = []
     for i in range(1, 11):
         frame = pygame.Surface((w, h))
-        frame.fill((0, 0, 0))
+        frame.fill(bg)
         reveal_w = min(tw, round(tw * i / 10))
         if reveal_w > 0:
             clip = text_img.subsurface(pygame.Rect(0, 0, reveal_w, th))
@@ -100,7 +102,7 @@ def splash_frames(w: int, h: int, text: str = "deskbar") -> list:
 
     for i in range(1, 4):
         frame = pygame.Surface((w, h))
-        frame.fill((0, 0, 0))
+        frame.fill(bg)
         alpha = max(0, round(255 * (1 - i / 3)))
         faded = text_img.copy()
         faded.set_alpha(alpha)

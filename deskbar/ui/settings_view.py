@@ -94,7 +94,7 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
                  (QR_X, QR_Y + QR_SIZE + 36))
     if confirm_remove:
         bar = pygame.Rect(0, 380, 1920, 100)
-        pygame.draw.rect(surface, theme.col((40, 20, 20)), bar)
+        pygame.draw.rect(surface, theme.C["danger_bg"], bar)
         surface.blit(theme.font(26).render(f"確定移除 {confirm_remove}？", True,
                                            theme.C["text"]), (60, 414))
         _btn(surface, "確定移除", 1420, 398, 220, 60, "confirm_remove",

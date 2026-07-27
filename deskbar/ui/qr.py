@@ -11,6 +11,8 @@ import os
 import pygame
 import qrcode
 
+from deskbar.ui import theme
+
 # 未來要改網址只改這裡。
 # 實際網址由裝置端環境變數 DESKBAR_WEB_URL 指定（不入版控）；未設定時用區網預設。
 WEB_URL = os.environ.get("DESKBAR_WEB_URL", "http://deskbar.local:8080")
@@ -20,6 +22,17 @@ _cache_surface: "pygame.Surface | None" = None
 
 # 供測試驗證是否真的命中快取（每次實際重算才會 +1）。
 build_count = 0
+
+
+def _clear_cache() -> None:
+    """QR 底色兩主題都固定白底黑點（不隨主題變化），理論上不必清；主題切換時
+    仍登記進來保險清空一次，避免未來有人改成主題色卻忘了補這支快取失效。"""
+    global _cache_key, _cache_surface
+    _cache_key = None
+    _cache_surface = None
+
+
+theme.register_cache_clear(_clear_cache)
 
 
 def _build_surface(text: str, size: int) -> "pygame.Surface":

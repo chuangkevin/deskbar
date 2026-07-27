@@ -2,23 +2,63 @@ import os
 
 import pygame
 
-C = {
-    "bg": (15, 15, 15), "panel_line": (38, 38, 38), "grid": (36, 36, 36),
-    "text": (236, 236, 236), "text2": (168, 168, 168), "muted": (111, 111, 111),
-    "now": (240, 153, 123), "now_text": (74, 27, 12),
-    "warn": (240, 149, 149), "card": (26, 26, 26),
+# 雙主題色板（2026-07-27 重調）：實機是低色域低對比 TN 類面板，舊版多層深灰
+# （0f0f0f/1a1a1a/262626 那個量級）在面板上會塌陷成一坨、次要文字掉進黑階看不見。
+# 深色改走「純黑底＋高對比字/線」；新增淺色（暖紙感）供設定頁切換。
+# 兩套 key 完全一致，缺一個 set_theme() 組字典時就會直接 KeyError，不會悄悄退化。
+_PALETTES_RAW = {
+    "dark": {
+        "bg": (0, 0, 0), "card": (30, 30, 30), "panel_line": (70, 70, 70),
+        "grid": (55, 55, 55), "text": (255, 255, 255), "text2": (212, 212, 212),
+        "muted": (186, 186, 186), "now": (255, 138, 101), "now_text": (60, 20, 8),
+        "warn": (255, 105, 105), "ok": (60, 220, 170),
+        # flipclock 數字卡底色／分隔線（原 flipclock.py 模組級 CARD/SPLIT 常量）。
+        "clock_card": (34, 34, 34), "clock_split": (12, 12, 12),
+        # monthgrid 窗口外日期數字（原 OUT_OF_WINDOW_DATE_COLOR 常量）。
+        "date_dim": (150, 150, 150),
+        # settings_view 移除帳號二次確認底條（原 theme.col((40, 20, 20)) 字面值）。
+        "danger_bg": (40, 20, 20),
+        # dashboard「未同步範圍」暗帶：純黑底下 (20,20,20) 幾乎會被吃掉，
+        # 改用能跟 bg 拉出可辨識差距的中灰，兩色帶著 alpha=170 疊上去才看得見。
+        "dim_band": (60, 60, 60),
+    },
+    "light": {
+        "bg": (242, 240, 235), "card": (255, 255, 255), "panel_line": (198, 194, 186),
+        "grid": (216, 212, 204), "text": (26, 26, 26), "text2": (70, 70, 70),
+        "muted": (122, 120, 114), "now": (200, 88, 56), "now_text": (255, 255, 255),
+        "warn": (178, 44, 44), "ok": (20, 140, 110),
+        "clock_card": (255, 255, 255), "clock_split": (214, 210, 202),
+        "date_dim": (168, 164, 156),
+        "danger_bg": (250, 218, 210),
+        "dim_band": (206, 202, 194),
+    },
 }
-ACCOUNT_COLORS = [
-    ((93, 202, 165), (8, 80, 65)),     # teal
-    ((133, 183, 235), (12, 68, 124)),  # blue
-    ((175, 169, 236), (60, 52, 137)),  # purple
-    ((240, 153, 123), (74, 27, 12)),   # coral
-]
+
+# 帳號色（4 組 [(main, fill), ...]）：main＝標題字／泳道字，fill＝件數膠囊、事件
+# 色塊底。深色版 main 用高亮飽和色、fill 用能從純黑底分離出來的深色；淺色版
+# main 用深濃色（在白底上仍清楚）、fill 用淡色底——呼叫端「標題字=main、
+# 色塊底=fill」的慣例兩套下都不用改。
+_ACCOUNTS_RAW = {
+    "dark": [
+        ((0, 228, 180), (0, 88, 66)),      # teal
+        ((108, 180, 255), (16, 84, 150)),  # blue
+        ((186, 166, 255), (74, 60, 160)),  # purple
+        ((255, 150, 110), (120, 52, 28)),  # clay
+    ],
+    "light": [
+        ((0, 112, 88), (198, 236, 224)),     # teal
+        ((22, 92, 168), (206, 226, 250)),    # blue
+        ((88, 62, 170), (226, 216, 248)),    # purple
+        ((176, 84, 48), (248, 220, 204)),    # clay
+    ],
+}
+
+PALETTES = _PALETTES_RAW   # 對外別名：供測試/工具檢查兩套 key 是否一致
 
 # BGR 色板開關：某些面板排線只吃 BGR 順序，接反了全螢幕顏色就會錯置。
-# DESKBAR_BGR=1 時，theme 載入當下就把 C／ACCOUNT_COLORS 所有顏色 (r,g,b)→(b,g,r)；
-# 沒設就完全不碰，dev 模式零行為差異。只在「theme 載入時」讀一次 env，
-# 之後 col() 沿用同一個旗標，不必每次呼叫都重新查 os.environ。
+# DESKBAR_BGR=1 時，set_theme() 套用當下主題時就把 C／ACCOUNT_COLORS 所有顏色
+# (r,g,b)→(b,g,r)；沒設就完全不碰，dev 模式零行為差異。只在模組載入當下讀一次
+# env，之後 col() 沿用同一個旗標，不必每次呼叫都重新查 os.environ。
 _BGR = os.environ.get("DESKBAR_BGR") == "1"
 
 
@@ -32,9 +72,60 @@ def col(rgb):
     return tuple(rgb)
 
 
-if _BGR:
-    C = {k: col(v) for k, v in C.items()}
-    ACCOUNT_COLORS = [(col(main), col(dark)) for main, dark in ACCOUNT_COLORS]
+# C／ACCOUNT_COLORS 維持模組級容器物件（dict／list），set_theme() 一律
+# in-place clear+update／clear+extend，不重新綁定名字——這樣任何拿到這兩個物件
+# 參照的呼叫端（例如未來出現的 from-import）都會跟著切換，不會抱著切換前的舊物件。
+C: dict = {}
+ACCOUNT_COLORS: list = []
+
+_current_theme = "dark"
+# globals().get(...) 而非直接 `= []`：theme 模組在測試裡會被 importlib.reload()
+# 用來驗證 DESKBAR_BGR 讀取行為（見 test_theme_bgr_headless.py），reload 會重跑
+# 這段模組碼，但登記快取清除的 flipclock／qr／weatherfx 等模組並不會跟著重新
+# import，只是單純 import theme 這支模組——若這裡無條件 `= []`，reload 一次就會
+# 把它們先前登記的 callback 永久清空，之後任何 set_theme() 都清不到那些快取。
+# 用 globals().get() 在同一個模組物件的既有命名空間裡找舊的 list 沿用，
+# reload 前後容器身分不變，只有真的第一次 import 時才會是全新空 list。
+_cache_clear_fns: list = globals().get("_cache_clear_fns", [])
+
+
+def register_cache_clear(fn) -> None:
+    """登記一個「主題切換時要清掉」的模組級快取回呼。凡是把顏色烤進快取
+    Surface 的模組（flipclock 的數字卡、qr／weatherfx 的單槽底圖快取）都應該在
+    自己模組載入時呼叫這支登記，set_theme() 會在套用新色板後逐一呼叫。
+    fn 應冪等、不吃參數——呼叫端只負責清空自己的快取容器，不必知道新主題是誰。"""
+    _cache_clear_fns.append(fn)
+
+
+def current_theme() -> str:
+    return _current_theme
+
+
+def set_theme(name: str) -> None:
+    """切換主題：套用 PALETTES[name]／對應帳號色到 C／ACCOUNT_COLORS（BGR 開關
+    在這裡套用，palette 本身存的是原始未交換值），再呼叫所有已登記的快取清除
+    回呼。name 不是 dark/light 就靜默退回 dark，不拋例外——設定檔可能被手動
+    改壞，畫面渲染不該因此整個炸掉。"""
+    global _current_theme
+    _current_theme = name if name in _PALETTES_RAW else "dark"
+    palette = _PALETTES_RAW[_current_theme]
+    accounts = _ACCOUNTS_RAW[_current_theme]
+
+    new_c = {k: col(v) for k, v in palette.items()}
+    C.clear()
+    C.update(new_c)
+
+    new_accounts = [(col(main), col(fill)) for main, fill in accounts]
+    ACCOUNT_COLORS.clear()
+    ACCOUNT_COLORS.extend(new_accounts)
+
+    for fn in _cache_clear_fns:
+        fn()
+
+
+set_theme("dark")   # 模組載入即套用預設深色，維持「import 完就能用」的既有行為
+
+
 _FONT_PATHS = [
     os.environ.get("DESKBAR_FONT", ""),
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",

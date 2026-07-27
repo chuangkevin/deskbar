@@ -19,9 +19,9 @@ from deskbar.viewwin import WINDOW_FUTURE_DAYS, WINDOW_PAST_DAYS
 LANE_LABEL_W = 72
 HEADER_H = 28
 PILL_H = 22
-# 窗口外（還沒同步）日期數字：比 theme.C["muted"] (111,111,111) 亮一階，
-# 跟窗口內的 theme.C["text2"] 拉出可辨識的明暗差，同時不會亮到看起來像正常日期。
-OUT_OF_WINDOW_DATE_COLOR = (130, 130, 130)
+# 窗口外（還沒同步）日期數字色改走 theme.C["date_dim"]（兩主題各自定義，見
+# deskbar/ui/theme.py）：要比 theme.C["muted"] 更暗一階，跟窗口內的
+# theme.C["text2"] 拉出可辨識的明暗差，同時不會亮到看起來像正常日期。
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft"):
@@ -89,7 +89,7 @@ def render_month(surface, events, lane_order: list[str], settings, win_start: da
                                          int(area.h)), width=1)
             _draw_today_header(surface, cx, area.y + 4, d)
         else:
-            color = theme.C["text2"] if within else OUT_OF_WINDOW_DATE_COLOR
+            color = theme.C["text2"] if within else theme.C["date_dim"]
             _text(surface, str(d), 16, color, cx, area.y + 4, "midtop")
 
     for li, email in enumerate(lane_order):

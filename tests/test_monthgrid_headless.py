@@ -1,5 +1,8 @@
-"""月視圖窗口外日期數字對比度：(111,111,111) 太接近背景，改成 (130,130,130)，
-且仍要跟窗口內的 theme.C["text2"] 拉出可辨識的明暗差。"""
+"""月視圖窗口外日期數字對比度：改走 theme.C["date_dim"]（兩主題各自定義，見
+deskbar/ui/theme.py），且仍要跟窗口內的 theme.C["text2"] 拉出可辨識的明暗差。
+
+2026-07-27 雙主題重構：舊版模組級常量 OUT_OF_WINDOW_DATE_COLOR=(130,130,130)
+拆成主題 key，monthgrid.py 已不再輸出該常量，這裡改直接讀 theme.C["date_dim"]。"""
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -21,9 +24,8 @@ def _settings():
     return s
 
 
-def test_out_of_window_date_color_updated_constant():
-    assert monthgrid.OUT_OF_WINDOW_DATE_COLOR == (130, 130, 130)
-    assert monthgrid.OUT_OF_WINDOW_DATE_COLOR != theme.C["muted"]
+def test_out_of_window_date_color_is_distinct_theme_key():
+    assert theme.C["date_dim"] != theme.C["muted"]
 
 
 def test_out_of_window_day_has_no_goto_day_hit():
@@ -35,9 +37,9 @@ def test_out_of_window_day_has_no_goto_day_hit():
     assert any(h.action == "goto_day" and h.data == NOW.date() for h in hits)
 
 
-def test_out_of_window_day_header_uses_new_muted_color():
-    """量測 7/1（確定窗口外）表頭數字像素的最亮值，應貼近新色 (130,130,130)
-    而不是舊的 (111,111,111)——挑最亮像素避開反鋸齒邊緣造成的誤判。"""
+def test_out_of_window_day_header_uses_date_dim_color():
+    """量測 7/1（確定窗口外）表頭數字像素的最亮值，應貼近 theme.C["date_dim"]
+    而不是 theme.C["muted"]——挑最亮像素避開反鋸齒邊緣造成的誤判。"""
     settings = _settings()
     win_start = NOW.replace(day=1)
     surf = pygame.Surface((1920, 480))
@@ -54,4 +56,4 @@ def test_out_of_window_day_header_uses_new_muted_color():
             px = surf.get_at((x, y))[:3]
             if sum(px) > sum(best):
                 best = px
-    assert best == monthgrid.OUT_OF_WINDOW_DATE_COLOR
+    assert best == theme.C["date_dim"]

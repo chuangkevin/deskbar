@@ -46,6 +46,17 @@ _cache_surface: "pygame.Surface | None" = None
 build_count = 0
 
 
+def _clear_cache() -> None:
+    """雲層底圖顏色目前兩主題共用、不隨主題變化，理論上不必清；主題切換時仍
+    登記進來保險清空一次（比照 qr.py），避免未來雲層改成主題色卻漏清快取。"""
+    global _cache_key, _cache_surface
+    _cache_key = None
+    _cache_surface = None
+
+
+theme.register_cache_clear(_clear_cache)
+
+
 def draw(surface, code: int, tick: int, x0: int = 0, w: int = 400, h: int = 480) -> None:
     """在 surface 的 (x0, 0)-(x0+w, h) 矩形內畫出 code 對應的天氣氛圍層。
 

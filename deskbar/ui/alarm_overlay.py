@@ -7,7 +7,7 @@ from deskbar.ui import theme
 
 def render(surface, alarm, now) -> list[Hit]:
     flash = int(now.timestamp() * 2) % 2 == 0
-    bg = theme.C["now"] if flash else (15, 15, 15)
+    bg = theme.C["now"] if flash else theme.C["bg"]
     fg = theme.C["now_text"] if flash else theme.C["text"]
     surface.fill(bg)
     img = theme.font(96).render(alarm.label, True, fg)

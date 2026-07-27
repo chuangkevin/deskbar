@@ -234,7 +234,7 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_t
             msg = f"已同步 {mins} 分鐘前" if ok else "部分帳號同步異常"
         else:
             msg = "等待首次同步"
-        dot = theme.col((93, 202, 165)) if ok else theme.C["warn"]
+        dot = theme.C["ok"] if ok else theme.C["warn"]
     pygame.draw.circle(surface, dot, (32, 449), 5)
     _text(surface, msg, 18, theme.C["muted"], 46, 440)
     hits.append(Hit(Rect(20, 26, 370, 130), "open_alarms", None))
@@ -289,7 +289,7 @@ def _render_data_window_overlay(surface, win_start, win_end, now, tz) -> None:
         x1 = time_to_x_range(seg_end, win_start, win_end, TL_X0, TL_X1)
         w = max(1, round(x1 - x0))
         band = pygame.Surface((w, TL_AREA.h), pygame.SRCALPHA)
-        band.fill((20, 20, 20, 170))
+        band.fill((*theme.C["dim_band"], 170))
         surface.blit(band, (round(x0), TL_AREA.y))
         if not labeled:
             _text(surface, "未同步範圍", 20, theme.C["muted"],

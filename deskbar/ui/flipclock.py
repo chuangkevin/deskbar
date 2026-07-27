@@ -2,10 +2,17 @@ import pygame
 
 from deskbar.ui import theme
 
-CARD = (28, 28, 28)
-SPLIT = (12, 12, 12)
 RADIUS = 14
 _cache: dict = {}
+
+
+def _clear_cache() -> None:
+    """主題切換時數字卡快取要整組丟掉——CARD/SPLIT 底色已經烤進 Surface 裡，
+    不清掉就會在新主題下繼續顯示舊主題的卡片底色。"""
+    _cache.clear()
+
+
+theme.register_cache_clear(_clear_cache)
 
 
 def _digit_card(ch: str, w: int, h: int) -> "pygame.Surface":
@@ -13,10 +20,11 @@ def _digit_card(ch: str, w: int, h: int) -> "pygame.Surface":
     s = _cache.get(key)
     if s is None:
         s = pygame.Surface((w, h), pygame.SRCALPHA)
-        pygame.draw.rect(s, CARD, pygame.Rect(0, 0, w, h), border_radius=RADIUS)
+        pygame.draw.rect(s, theme.C["clock_card"], pygame.Rect(0, 0, w, h),
+                         border_radius=RADIUS)
         img = theme.font(int(h * 0.78)).render(ch, True, theme.C["text"])
         s.blit(img, img.get_rect(center=(w // 2, h // 2)))
-        pygame.draw.line(s, SPLIT, (2, h // 2), (w - 2, h // 2), 2)
+        pygame.draw.line(s, theme.C["clock_split"], (2, h // 2), (w - 2, h // 2), 2)
         _cache[key] = s
     return s
 
