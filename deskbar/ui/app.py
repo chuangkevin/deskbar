@@ -97,8 +97,8 @@ class App:
         from datetime import datetime
         from zoneinfo import ZoneInfo
         from deskbar import brightness
-        pct = brightness.effective(self.settings,
-                                   datetime.now(ZoneInfo("Asia/Taipei")).hour)
+        now = datetime.now(ZoneInfo("Asia/Taipei"))
+        pct = brightness.effective(self.settings, now.hour * 60 + now.minute)
         alpha = brightness.veil_alpha(pct)
         if alpha <= 0:
             return None

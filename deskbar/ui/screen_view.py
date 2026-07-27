@@ -14,8 +14,8 @@ from deskbar.ui import theme
 
 # (欄位, 標題, 單位/格式, 步進, 下限, 上限)
 FIELDS = [
-    ("work_start_hour", "上班開始", "hour", 1, 0, 23),
-    ("work_end_hour", "下班時間", "hour", 1, 0, 23),
+    ("work_start_min", "上班開始", "min", 30, 0, 1410),
+    ("work_end_min", "下班時間", "min", 30, 0, 1410),
     ("brightness_day", "上班亮度", "pct", 10, 10, 100),
     ("brightness_night", "下班亮度", "pct", 10, 10, 100),
 ]
@@ -51,7 +51,7 @@ def render(surface, settings) -> list:
         pygame.draw.rect(surface, theme.C["panel_line"], card, 1, border_radius=10)
         _text(surface, title, 24, theme.C["text2"], x + 24, _CARD_Y + 18)
         val = getattr(settings, field)
-        label = f"{val:02d}:00" if fmt == "hour" else f"{val}%"
+        label = f"{val // 60:02d}:{val % 60:02d}" if fmt == "min" else f"{val}%"
         _text(surface, label, 44, theme.C["text"], x + _CARD_W / 2, _CARD_Y + 92,
               "center")
         _btn(surface, "−", pygame.Rect(x + 24, _CARD_Y + 136, 150, 64),
@@ -64,7 +64,7 @@ def render(surface, settings) -> list:
     from deskbar import brightness
     from datetime import datetime
     from zoneinfo import ZoneInfo
-    now_h = datetime.now(ZoneInfo("Asia/Taipei")).hour
-    cur = brightness.effective(settings, now_h)
+    now = datetime.now(ZoneInfo("Asia/Taipei"))
+    cur = brightness.effective(settings, now.hour * 60 + now.minute)
     _text(surface, f"目前套用亮度：{cur}%", 22, theme.C["muted"], 380, 380)
     return hits

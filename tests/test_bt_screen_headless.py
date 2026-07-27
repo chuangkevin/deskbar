@@ -85,21 +85,25 @@ def test_bt_failures_never_raise(monkeypatch):
 
 # ---------------------------------------------------------------- brightness
 
-def test_in_work_hours_normal_overnight_and_allday():
-    assert brightness.in_work_hours(9, 9, 18)
-    assert not brightness.in_work_hours(18, 9, 18)
-    assert brightness.in_work_hours(23, 22, 6), "跨午夜班"
-    assert brightness.in_work_hours(3, 22, 6)
-    assert not brightness.in_work_hours(12, 22, 6)
-    assert brightness.in_work_hours(5, 7, 7), "start==end 視為全天"
+def test_in_work_span_normal_overnight_and_allday():
+    assert brightness.in_work_span(9 * 60, 540, 1080)
+    assert not brightness.in_work_span(18 * 60, 540, 1080)
+    assert brightness.in_work_span(560, 540, 570), "半小時刻度窗內"
+    assert not brightness.in_work_span(570, 540, 570), "終點排除"
+    assert brightness.in_work_span(23 * 60, 22 * 60, 6 * 60), "跨午夜班"
+    assert brightness.in_work_span(3 * 60, 22 * 60, 6 * 60)
+    assert not brightness.in_work_span(12 * 60, 22 * 60, 6 * 60)
+    assert brightness.in_work_span(5 * 60, 420, 420), "start==end 視為全天"
 
 
 def test_effective_brightness_switches_at_off_work():
     s = Settings()
-    s.work_start_hour, s.work_end_hour = 9, 18
+    s.work_start_min, s.work_end_min = 540, 1080
     s.brightness_day, s.brightness_night = 100, 40
-    assert brightness.effective(s, 10) == 100
-    assert brightness.effective(s, 20) == 40
+    assert brightness.effective(s, 10 * 60) == 100
+    assert brightness.effective(s, 20 * 60) == 40
+    assert brightness.effective(s, 17 * 60 + 59) == 100, "17:59 還在上班"
+    assert brightness.effective(s, 18 * 60) == 40, "18:00 整點切下班"
 
 
 def test_veil_alpha_bounds():
@@ -132,8 +136,8 @@ def test_screen_page_adjusts_hours_and_brightness_with_persistence(tmp_path, mon
     app = _make_app(tmp_path, monkeypatch)
     app.view = "screen"
     app.hits = screen_view.render(_surf(), app.settings)
-    _tap(app, "scr_adj", ("work_end_hour", 1, 0, 23))
-    assert app.settings.work_end_hour == 19
+    _tap(app, "scr_adj", ("work_end_min", 30, 0, 1410))
+    assert app.settings.work_end_min == 1110, "30 分鐘刻度"
     _tap(app, "scr_adj", ("brightness_night", -10, 10, 100))
     assert app.settings.brightness_night == 30
     # 夾住下限：連按不會低於 10

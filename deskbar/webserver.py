@@ -129,6 +129,52 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             on_save(settings_provider)
         return jsonify({"ok": True})
 
+    # 手機網頁可調的裝置偏好（2026-07-27 需求：「那些設定也應該要可以在手機
+    # 設定頁調整」）。theme 刻意不開放——theme.set_theme 會清渲染快取，只能由
+    # UI 執行緒自己做，webserver 執行緒碰了會跟 render 撞快取。
+    _PREF_INT = {
+        "work_start_min": (0, 1410), "work_end_min": (0, 1410),
+        "brightness_day": (10, 100), "brightness_night": (10, 100),
+        "presence_interval_sec": (5, 600), "presence_grace_sec": (0, 3600),
+        "sync_interval_min": (1, 120),
+    }
+    _PREF_BOOL = {"presence_enabled"}
+
+    @app.get("/api/prefs")
+    def get_prefs():
+        if not _calendars_available():
+            return jsonify({"error": "not available"}), 501
+        with settings_lock:
+            out = {k: getattr(settings_provider, k) for k in _PREF_INT}
+            out.update({k: getattr(settings_provider, k) for k in _PREF_BOOL})
+        return jsonify(out)
+
+    @app.patch("/api/prefs")
+    def patch_prefs():
+        if not _calendars_available():
+            return jsonify({"error": "not available"}), 501
+        d = request.get_json(force=True, silent=True) or {}
+        if not isinstance(d, dict) or not d:
+            return jsonify({"error": "empty payload"}), 400
+        staged = {}
+        for k, v in d.items():
+            if k in _PREF_BOOL:
+                if not isinstance(v, bool):
+                    return jsonify({"error": f"{k} must be boolean"}), 400
+                staged[k] = v
+            elif k in _PREF_INT:
+                lo, hi = _PREF_INT[k]
+                if not isinstance(v, int) or isinstance(v, bool) or not (lo <= v <= hi):
+                    return jsonify({"error": f"{k} out of range {lo}..{hi}"}), 400
+                staged[k] = v
+            else:
+                return jsonify({"error": f"unknown field {k}"}), 400
+        with settings_lock:
+            for k, v in staged.items():
+                setattr(settings_provider, k, v)
+            on_save(settings_provider)
+        return jsonify({"ok": True})
+
     @app.post("/api/usage")
     def push_usage():
         """Mac 上的 agent 每 60 秒讀本機 Keychain 的 Claude Code 憑證、打 usage

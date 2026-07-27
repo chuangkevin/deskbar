@@ -54,8 +54,8 @@ class Settings:
     presence_hide_accounts: list[str] = field(default_factory=list)
     presence_grace_sec: int = 150
     presence_interval_sec: int = 45     # 藍牙探測間隔；設定頁「感應速度」快/中/慢連動
-    work_start_hour: int = 9            # 上班開始（時）；螢幕亮度排程用
-    work_end_hour: int = 18             # 下班（時）；此後套用下班亮度
+    work_start_min: int = 540           # 上班開始（分鐘制 0-1439）；螢幕亮度排程用
+    work_end_min: int = 1080            # 下班（分鐘制）；此後套用下班亮度
     brightness_day: int = 100           # 上班時段亮度 %（軟體疊黑實現）
     brightness_night: int = 40          # 下班時段亮度 %
 
@@ -121,8 +121,18 @@ def load_settings() -> Settings:
                 return default
             return v
 
-        work_start_hour = _int_in("work_start_hour", 9, 0, 23)
-        work_end_hour = _int_in("work_end_hour", 18, 0, 23)
+        def _min_from(new_key, old_key, default_min):
+            # 新欄位優先；讀得到舊的「小時制」欄位就 ×60 遷移（2026-07-27 改制）。
+            v = raw.get(new_key)
+            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1439:
+                return v
+            old = raw.get(old_key)
+            if isinstance(old, int) and not isinstance(old, bool) and 0 <= old <= 23:
+                return old * 60
+            return default_min
+
+        work_start_min = _min_from("work_start_min", "work_start_hour", 540)
+        work_end_min = _min_from("work_end_min", "work_end_hour", 1080)
         brightness_day = _int_in("brightness_day", 100, 10, 100)
         brightness_night = _int_in("brightness_night", 40, 10, 100)
         return Settings(
@@ -143,8 +153,8 @@ def load_settings() -> Settings:
             presence_hide_accounts=presence_hide_accounts,
             presence_grace_sec=presence_grace_sec,
             presence_interval_sec=presence_interval_sec,
-            work_start_hour=work_start_hour,
-            work_end_hour=work_end_hour,
+            work_start_min=work_start_min,
+            work_end_min=work_end_min,
             brightness_day=brightness_day,
             brightness_night=brightness_night,
         )
@@ -170,8 +180,8 @@ def save_settings(s: Settings) -> None:
         "presence_hide_accounts": s.presence_hide_accounts,
         "presence_grace_sec": s.presence_grace_sec,
         "presence_interval_sec": s.presence_interval_sec,
-        "work_start_hour": s.work_start_hour,
-        "work_end_hour": s.work_end_hour,
+        "work_start_min": s.work_start_min,
+        "work_end_min": s.work_end_min,
         "brightness_day": s.brightness_day,
         "brightness_night": s.brightness_night,
         "accounts": {

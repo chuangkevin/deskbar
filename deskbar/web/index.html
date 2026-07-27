@@ -36,6 +36,8 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
 </div>
 <h2>日曆</h2>
 <div id="cals"></div>
+<h2>裝置設定</h2>
+<div id="prefs"></div>
 <script>
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const WD=["一","二","三","四","五","六","日"];
@@ -86,6 +88,46 @@ async function togCal(account,calendarId,enabled){
   body:JSON.stringify({account,calendar_id:calendarId,enabled})});
  loadCals();
 }
+const MIN_OPTS=Array.from({length:48},(_,i)=>i*30);
+const fm=m=>`${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`;
+const sel=(id,opts,cur,f)=>`<select id="${id}">${opts.map(v=>
+ `<option value="${v}" ${v===cur?"selected":""}>${f(v)}</option>`).join("")}</select>`;
+async function loadPrefs(){
+ const box=document.getElementById("prefs");
+ const r=await fetch("/api/prefs");
+ if(!r.ok){box.innerHTML='<div class="card">此功能需重新部署後啟用</div>';return}
+ const p=await r.json();
+ const pct=[...Array(10)].map((_,i)=>(i+1)*10);
+ const spd=[[15,"快"],[30,"中"],[45,"慢"]];
+ box.innerHTML=`<div class="card">
+  <div class="cal-row">上班開始 ${sel("p_ws",MIN_OPTS,p.work_start_min,fm)}</div>
+  <div class="cal-row">下班時間 ${sel("p_we",MIN_OPTS,p.work_end_min,fm)}（此後套用下班亮度）</div>
+  <div class="cal-row">上班亮度 ${sel("p_bd",pct.filter(v=>v>=10),p.brightness_day,v=>v+"%")}</div>
+  <div class="cal-row">下班亮度 ${sel("p_bn",pct,p.brightness_night,v=>v+"%")}</div>
+  <div class="cal-row"><input type="checkbox" id="p_pe" ${p.presence_enabled?"checked":""}>
+   <label for="p_pe">在場感應（需先在螢幕上完成藍牙配對）</label></div>
+  <div class="cal-row">感應速度 <select id="p_pi">${spd.map(([v,n])=>
+   `<option value="${v}" ${v===p.presence_interval_sec?"selected":""}>${n}</option>`).join("")}</select></div>
+  <div class="cal-row">同步頻率 ${sel("p_si",[1,3,5,10,30],p.sync_interval_min,v=>v+" 分鐘")}</div>
+  <button onclick="savePrefs()">儲存設定</button><span id="p_msg"></span>
+ </div>`;
+}
+async function savePrefs(){
+ const iv=+document.getElementById("p_pi").value;
+ const grace={15:45,30:90,45:150}[iv]||150;
+ const body={work_start_min:+document.getElementById("p_ws").value,
+  work_end_min:+document.getElementById("p_we").value,
+  brightness_day:+document.getElementById("p_bd").value,
+  brightness_night:+document.getElementById("p_bn").value,
+  presence_enabled:document.getElementById("p_pe").checked,
+  presence_interval_sec:iv,presence_grace_sec:grace,
+  sync_interval_min:+document.getElementById("p_si").value};
+ const r=await fetch("/api/prefs",{method:"PATCH",
+  headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+ document.getElementById("p_msg").textContent=r.ok?" 已儲存 ✓":" 儲存失敗";
+ if(r.ok)setTimeout(loadPrefs,600);
+}
 load();
 loadCals();
+loadPrefs();
 </script></body></html>

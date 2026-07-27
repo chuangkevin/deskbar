@@ -10,18 +10,19 @@
 from __future__ import annotations
 
 
-def in_work_hours(hour: int, start: int, end: int) -> bool:
-    """start == end 視為全天上班（永不變暗）；支援跨午夜（start > end）。"""
-    if start == end:
+def in_work_span(minute_of_day: int, start_min: int, end_min: int) -> bool:
+    """分鐘制（0-1439）。start == end 視為全天上班（永不變暗）；
+    支援跨午夜（start > end）。"""
+    if start_min == end_min:
         return True
-    if start < end:
-        return start <= hour < end
-    return hour >= start or hour < end
+    if start_min < end_min:
+        return start_min <= minute_of_day < end_min
+    return minute_of_day >= start_min or minute_of_day < end_min
 
 
-def effective(settings, hour: int) -> int:
+def effective(settings, minute_of_day: int) -> int:
     """當下應套用的亮度百分比（10..100）。"""
-    if in_work_hours(hour, settings.work_start_hour, settings.work_end_hour):
+    if in_work_span(minute_of_day, settings.work_start_min, settings.work_end_min):
         pct = settings.brightness_day
     else:
         pct = settings.brightness_night
