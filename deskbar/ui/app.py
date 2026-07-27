@@ -48,26 +48,52 @@ class App:
                              "label_idx": 0}
 
     def _init_display(self) -> None:
-        if os.environ.get("DESKBAR_DEV") != "1":
+        self._dev = os.environ.get("DESKBAR_DEV") == "1"
+        if not self._dev:
             os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
         pygame.init()
-        flags = 0 if os.environ.get("DESKBAR_DEV") == "1" else pygame.FULLSCREEN
-        if os.environ.get("DESKBAR_DEV") == "1":
-            scale = float(os.environ.get("DESKBAR_DEV_SCALE", "0.45"))
-            self.win = (round(transform.NATIVE_W * scale), round(transform.NATIVE_H * scale))
+        flags = 0 if self._dev else pygame.FULLSCREEN
+        if self._dev:
+            # dev 外層旋轉（Mac 上看畫面用）：0/180＝橫向轉正（能看全景、預設）、
+            # 90/270＝模擬實機直立面板。與實機的 settings.rotation 管線無關，
+            # 純粹是「Mac 視窗要怎麼擺給人看」。視窗內按 R 鍵循環。
+            self._dev_rotate = int(os.environ.get("DESKBAR_DEV_ROTATE", "0")) % 360
+            self._dev_scale = float(os.environ.get("DESKBAR_DEV_SCALE", "0.6"))
+            self._apply_dev_window()
         else:
+            self._dev_rotate = None
             self.win = (transform.NATIVE_W, transform.NATIVE_H)
-        self.screen = pygame.display.set_mode(self.win, flags)
+            self.screen = pygame.display.set_mode(self.win, flags)
         pygame.display.set_caption("deskbar")
-        pygame.mouse.set_visible(False)
+        pygame.mouse.set_visible(self._dev)
         self.logical = pygame.Surface((LOGICAL_W, LOGICAL_H))
 
+    def _apply_dev_window(self) -> None:
+        s = self._dev_scale
+        if self._dev_rotate in (0, 180):
+            self.win = (round(LOGICAL_W * s), round(LOGICAL_H * s))
+        else:
+            self.win = (round(LOGICAL_H * s), round(LOGICAL_W * s))
+        self.screen = pygame.display.set_mode(self.win, 0)
+
+    def _cycle_dev_rotate(self) -> None:
+        if not self._dev:
+            return
+        self._dev_rotate = (self._dev_rotate + 90) % 360
+        self._apply_dev_window()
+        self._last_seq = -1     # 立即重繪
+
     def _flip(self) -> None:
-        angle = transform.pygame_rotation_angle(self.settings.rotation)
-        rotated = pygame.transform.rotate(self.logical, angle)
-        if self.win != (transform.NATIVE_W, transform.NATIVE_H):
-            rotated = pygame.transform.smoothscale(rotated, self.win)
-        self.screen.blit(rotated, (0, 0))
+        if self._dev:
+            # dev：外層旋轉直接作用在邏輯畫面上（0=轉正全景），不經實機面板管線
+            out = self.logical if self._dev_rotate == 0 \
+                else pygame.transform.rotate(self.logical, -self._dev_rotate)
+            out = pygame.transform.smoothscale(out, self.win)
+            self.screen.blit(out, (0, 0))
+        else:
+            angle = transform.pygame_rotation_angle(self.settings.rotation)
+            rotated = pygame.transform.rotate(self.logical, angle)
+            self.screen.blit(rotated, (0, 0))
         pygame.display.flip()
 
     def _dispatch(self, x: int, y: int) -> None:
@@ -349,6 +375,8 @@ class App:
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 running = False
+            elif ev.type == pygame.KEYDOWN and ev.key == pygame.K_r:
+                self._cycle_dev_rotate()
             elif ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_q):
                 running = False
             elif ev.type == pygame.FINGERDOWN:
@@ -363,21 +391,18 @@ class App:
                 x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
                 self._handle_touch_up(x, y)
             elif ev.type == pygame.MOUSEBUTTONDOWN:   # dev 模式滑鼠模擬觸控
-                nx = ev.pos[0] / max(1, self.win[0] - 1)
-                ny = ev.pos[1] / max(1, self.win[1] - 1)
-                x, y = transform.touch_to_logical(nx, ny, self.settings.rotation)
+                x, y = transform.dev_window_to_logical(
+                    ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
                 self._drag_start = (x, y)
                 self._drag_last = (x, y)
             elif ev.type == pygame.MOUSEMOTION:
                 if self._drag_start is not None:
-                    nx = ev.pos[0] / max(1, self.win[0] - 1)
-                    ny = ev.pos[1] / max(1, self.win[1] - 1)
-                    x, y = transform.touch_to_logical(nx, ny, self.settings.rotation)
+                    x, y = transform.dev_window_to_logical(
+                        ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
                     self._drag_last = (x, y)
             elif ev.type == pygame.MOUSEBUTTONUP:
-                nx = ev.pos[0] / max(1, self.win[0] - 1)
-                ny = ev.pos[1] / max(1, self.win[1] - 1)
-                x, y = transform.touch_to_logical(nx, ny, self.settings.rotation)
+                x, y = transform.dev_window_to_logical(
+                    ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
                 self._handle_touch_up(x, y)
         from datetime import datetime
         from zoneinfo import ZoneInfo
