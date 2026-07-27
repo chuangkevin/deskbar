@@ -37,3 +37,33 @@ def test_corrupt_file_falls_back(tmp_path, monkeypatch):
     (tmp_path / "settings.json").write_text("{broken", encoding="utf-8")
     s = config.load_settings()
     assert s.rotation == 90
+
+
+def test_theme_defaults_to_dark(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    s = config.load_settings()
+    assert s.theme == "dark"
+
+
+def test_theme_roundtrips_through_save(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    s = config.load_settings()
+    s.theme = "light"
+    config.save_settings(s)
+    s2 = config.load_settings()
+    assert s2.theme == "light"
+
+
+def test_invalid_theme_value_falls_back_to_dark(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"theme": "solarized-purple-neon"}), encoding="utf-8")
+    s = config.load_settings()
+    assert s.theme == "dark"
+
+
+def test_non_string_theme_value_falls_back_to_dark(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text(json.dumps({"theme": 42}), encoding="utf-8")
+    s = config.load_settings()
+    assert s.theme == "dark"

@@ -32,6 +32,8 @@ def _fake_data(state: AppState, settings) -> None:
 
 def main() -> None:
     settings = config.load_settings()
+    from deskbar.ui import theme
+    theme.set_theme(settings.theme)   # 一定要在 App._init_display()／pygame.init() 之前
     state = AppState()
     state.load_cache()
     lock = threading.Lock()

@@ -7,6 +7,7 @@ from pathlib import Path
 DEFAULT_LAT, DEFAULT_LON, DEFAULT_LABEL = 25.046, 121.517, "台北"
 VALID_VIEW_SPANS = {"half", "day", "week", "month"}
 VALID_VIEW_MODES = {"lanes", "agenda"}
+VALID_THEMES = {"dark", "light"}
 
 
 def config_dir() -> Path:
@@ -45,6 +46,7 @@ class Settings:
     sync_interval_min: int = 5
     view_span: str = "day"
     view_mode: str = "lanes"
+    theme: str = "dark"
     accounts: dict[str, AccountCfg] = field(default_factory=dict)
     presence_enabled: bool = False
     presence_mac: str = ""
@@ -77,6 +79,9 @@ def load_settings() -> Settings:
         view_mode = raw.get("view_mode", "lanes")
         if view_mode not in VALID_VIEW_MODES:
             view_mode = "lanes"
+        theme = raw.get("theme", "dark")
+        if theme not in VALID_THEMES:
+            theme = "dark"
         sync_interval_min = raw.get("sync_interval_min", 5)
         if not isinstance(sync_interval_min, int) or isinstance(sync_interval_min, bool) \
                 or not (1 <= sync_interval_min <= 120):
@@ -109,6 +114,7 @@ def load_settings() -> Settings:
             sync_interval_min=sync_interval_min,
             view_span=view_span,
             view_mode=view_mode,
+            theme=theme,
             accounts=accounts,
             presence_enabled=presence_enabled,
             presence_mac=presence_mac,
@@ -131,6 +137,7 @@ def save_settings(s: Settings) -> None:
         "sync_interval_min": s.sync_interval_min,
         "view_span": s.view_span,
         "view_mode": s.view_mode,
+        "theme": s.theme,
         "presence_enabled": s.presence_enabled,
         "presence_mac": s.presence_mac,
         "presence_rssi_threshold": s.presence_rssi_threshold,

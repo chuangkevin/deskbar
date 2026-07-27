@@ -145,6 +145,10 @@ class App:
                     elif a == "toggle_presence":
                         self.settings.presence_enabled = not self.settings.presence_enabled
                         self.on_save(self.settings)
+                    elif a == "cycle_theme":
+                        self.settings.theme = "light" if self.settings.theme == "dark" else "dark"
+                        theme.set_theme(self.settings.theme)
+                        self.on_save(self.settings)
                     elif a == "cycle_span":
                         self._start_transition()
                         self.settings.view_span = next_span(self.settings.view_span)

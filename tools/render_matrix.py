@@ -7,6 +7,13 @@ git diff / 圖片比對工具追蹤某次改動實際造成了哪些畫面差異
 
 用法：
     .venv/bin/python tools/render_matrix.py --events /tmp/pi-events.json --out /tmp/matrix
+    .venv/bin/python tools/render_matrix.py --events /tmp/pi-events.json --out /tmp/matrix --theme light
+    .venv/bin/python tools/render_matrix.py --events /tmp/pi-events.json --out /tmp/matrix --theme both
+
+--theme dark（預設）／light：整套矩陣改用指定色板出，檔名不變。
+--theme both：矩陣照常用 dark 出，另外對 6 張代表圖（day-lanes/week-agenda/
+month-lanes/settings/alarms/usage）各補一張 light 版本，檔名加 "_light" 後綴，
+方便直接並排比對同一場景在兩套主題下的樣子。
 
 headless：SDL_VIDEODRIVER 在 import pygame 之前就設成 dummy，不需要真的顯示器、
 也不需要在 Pi 上跑——純渲染到 Surface 再存檔，跟 tests/conftest.py 的做法一致。
@@ -32,7 +39,7 @@ from deskbar.claudeusage import UsageInfo  # noqa: E402
 from deskbar.config import Settings  # noqa: E402
 from deskbar.models import event_from_json  # noqa: E402
 from deskbar.store import AppState  # noqa: E402
-from deskbar.ui import alarm_overlay, alarm_view, dashboard, detail, settings_view  # noqa: E402
+from deskbar.ui import alarm_overlay, alarm_view, dashboard, detail, settings_view, theme  # noqa: E402
 
 TZ = ZoneInfo("Asia/Taipei")
 NOW = datetime(2026, 7, 26, 21, 30, tzinfo=TZ)   # 固定「現在」，確保輸出可重現
@@ -47,7 +54,13 @@ ANCHORS = [
 
 
 def _surface() -> "pygame.Surface":
-    return pygame.Surface((1920, 480))
+    """跟 App._draw_frame() 一樣先鋪一層 theme.C["bg"]——dashboard.render()／
+    settings_view.render() 本身不畫背景（那是 App 的職責），沒填的話 pygame
+    新建 Surface 預設是純黑，在舊版全黑系深色主題下差異不明顯，換成 light
+    主題（暖紙色底）後背景卻還是黑的，會整張圖看起來完全沒切換到 light。"""
+    surf = pygame.Surface((1920, 480))
+    surf.fill(theme.C["bg"])
+    return surf
 
 
 def _save(surface: "pygame.Surface", out_dir: Path, name: str, manifest: list[str]) -> None:
@@ -232,6 +245,55 @@ def render_usage_pages(state: AppState, settings: Settings, out_dir: Path) -> li
     return manifest
 
 
+def render_light_representatives(state: AppState, settings: Settings, out_dir: Path) -> list[str]:
+    """--theme both 專用：挑 6 張最具代表性的畫面（day-lanes／week-agenda／
+    month-lanes／settings／alarms／usage），在 light 主題下各多存一張，檔名沿用
+    對應 dark 版本的 base name 再加 "_light" 後綴，方便直接並排比對同一個場景
+    在兩套主題下的樣子。呼叫端負責在呼叫前後切換 theme.set_theme()（這支只管
+    畫面本身，不動全域主題狀態）；沿用同一個 state（真實行事曆事件快取），
+    settings 的 view_span/view_mode 會被沿途覆寫（跟 render_matrix() 系列函式
+    做法一致），呼叫端不須事先重設。"""
+    manifest: list[str] = []
+
+    for span, mode, name in (
+        ("day", "lanes", "span-day_mode-lanes_anchor-none_light"),
+        ("week", "agenda", "span-week_mode-agenda_anchor-none_light"),
+        ("month", "lanes", "span-month_mode-lanes_anchor-none_light"),
+    ):
+        settings.view_span, settings.view_mode = span, mode
+        surf = _surface()
+        dashboard.render(surf, state.snapshot(), settings, NOW)
+        _save(surf, out_dir, name, manifest)
+
+    surf = _surface()
+    settings_view.render(surf, state.snapshot(), settings, None)
+    _save(surf, out_dir, "settings_confirm-off_light", manifest)
+
+    draft = {"hour": (NOW.hour + 1) % 24, "minute": 0, "days": set(), "label_idx": 0}
+    two = [
+        Alarm(id="a1", time="07:30", days=[0, 1, 2, 3, 4], label="打卡", enabled=True),
+        Alarm(id="a2", time="21:30", days=[], label="吃藥", enabled=False),
+    ]
+    surf = _surface()
+    alarm_view.render(surf, _FixedAlarmStore(two), draft, NOW)
+    _save(surf, out_dir, "alarms_two_light", manifest)
+
+    normal = UsageInfo(
+        session_pct=42.0, session_resets_at=NOW + timedelta(hours=2, minutes=3),
+        weekly_pct=71.0, weekly_resets_at=NOW + timedelta(days=1, hours=4),
+        fable_pct=91.0, fable_resets_at=NOW + timedelta(hours=1),
+        fetched_at=NOW,
+    )
+    settings.view_span, settings.view_mode = "day", "lanes"
+    state.set_usage(normal)
+    surf = _surface()
+    dashboard.render(surf, state.snapshot(), settings, NOW)
+    _save(surf, out_dir, "usage_normal_three_groups_light", manifest)
+    state.set_usage(None)
+
+    return manifest
+
+
 def render_token_invalid(state: AppState, settings: Settings, out_dir: Path) -> list[str]:
     """帳號 token 失效狀態：設定頁該帳號卡片顯示實際錯誤訊息（st.error）。"""
     manifest: list[str] = []
@@ -250,10 +312,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--events", required=True, type=Path, help="事件快取 JSON（見 store.save_cache）")
     parser.add_argument("--out", required=True, type=Path, help="輸出 PNG 的資料夾")
+    parser.add_argument("--theme", choices=["dark", "light", "both"], default="dark",
+                       help="色板（預設 dark）。both：整套矩陣照常用 dark 出，"
+                            "外加 6 張代表圖（day-lanes/week-agenda/month-lanes/"
+                            "settings/alarms/usage）的 light 版本，檔名加 _light 後綴。")
     args = parser.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
     pygame.init()
+    # both 模式下主矩陣仍固定用 dark 畫（跟現有輸出檔名/張數完全相容），
+    # light 版本另外只挑 6 張代表圖出（見 render_light_representatives）。
+    theme.set_theme("dark" if args.theme == "both" else args.theme)
 
     state, settings = load_state_and_settings(args.events)
 
@@ -267,6 +336,11 @@ def main() -> None:
     manifest += render_token_invalid(state, settings, args.out)
     manifest += render_empty_states(args.out)
     manifest += render_usage_pages(state, settings, args.out)
+
+    if args.theme == "both":
+        theme.set_theme("light")
+        manifest += render_light_representatives(state, settings, args.out)
+        theme.set_theme("dark")   # 收尾歸位，不留在 light 狀態
 
     print(f"共產出 {len(manifest)} 張 PNG：")
     for p in manifest:
