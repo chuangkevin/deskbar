@@ -86,6 +86,15 @@ def test_goto_now_dispatch_clears_anchor(tmp_path, monkeypatch):
 
 
 def test_goto_day_dispatch_sets_anchor_noon_and_day_span(tmp_path, monkeypatch):
+    """凍結 now：goto_day 的窗口夾取用真實時鐘，剛過午夜時「月視圖第一個
+    可點日＝窗口起點日」的正午候選會落在夾取邊界上，測試在 00:00~01:00
+    區間跑會 flaky（2026-07-28 00:0x 實際抓到）。"""
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW.astimezone(tz) if tz is not None else NOW
+
+    monkeypatch.setattr("datetime.datetime", _Frozen)
     app = _make_app(tmp_path, monkeypatch)
     app.settings.view_span = "month"
     _click(app, "goto_day")
