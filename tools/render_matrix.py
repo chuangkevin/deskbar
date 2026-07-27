@@ -146,7 +146,7 @@ def render_alarm_pages(out_dir: Path) -> list[str]:
     return manifest
 
 
-def render_detail_overlay(state: AppState, settings: Settings, out_dir: Path) -> list[str]:
+def render_detail_overlay(state: AppState, settings: Settings, out_dir: Path, suffix: str = "") -> list[str]:
     """詳情浮層：疊在 day/lanes 的 dashboard 背景上，挑一筆有描述的真實事件驗證截斷。"""
     manifest: list[str] = []
     snap = state.snapshot()
@@ -158,7 +158,7 @@ def render_detail_overlay(state: AppState, settings: Settings, out_dir: Path) ->
     surf = _surface()
     dashboard.render(surf, snap, settings, NOW)
     detail.render(surf, event)
-    _save(surf, out_dir, "detail_overlay", manifest)
+    _save(surf, out_dir, "detail_overlay" + suffix, manifest)
     return manifest
 
 
@@ -305,6 +305,11 @@ def render_token_invalid(state: AppState, settings: Settings, out_dir: Path) -> 
     surf = _surface()
     settings_view.render(surf, snap, settings, None)
     _save(surf, out_dir, "settings_token_invalid", manifest)
+    # 還原：把該帳號的事件重新 set 回去（set_events 會把 status 蓋回 ok），
+    # 避免錯誤狀態汙染後續的 usage/light 代表圖（審查發現的比較基準問題）。
+    if target is not None:
+        evs = [e for e in snap.events if e.account == target]
+        state.set_events(target, evs, NOW)
     return manifest
 
 
@@ -340,6 +345,7 @@ def main() -> None:
     if args.theme == "both":
         theme.set_theme("light")
         manifest += render_light_representatives(state, settings, args.out)
+        manifest += render_detail_overlay(state, settings, args.out, suffix="_light")
         theme.set_theme("dark")   # 收尾歸位，不留在 light 狀態
 
     print(f"共產出 {len(manifest)} 張 PNG：")

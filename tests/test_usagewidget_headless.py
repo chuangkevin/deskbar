@@ -78,7 +78,7 @@ def test_bar_color_normal_use_is_claude_orange():
     for pct in (50.0, 75.0, 85.0):
         surf = _surf()
         usagewidget.render(surf, _usage(session_pct=pct), NOW, 1540, 360)
-        assert _bar_fill_pixel(surf) == theme.col((217, 119, 87))
+        assert _bar_fill_pixel(surf) == theme.C["usage_bar"]
 
 
 def test_bar_color_warn_tier_above_85_percent():

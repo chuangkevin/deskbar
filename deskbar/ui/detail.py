@@ -18,6 +18,7 @@ def render(surface, event) -> list[Hit]:
     surface.blit(overlay, (0, 0))
     card = pygame.Rect(CARD_X, CARD_Y, CARD_W, CARD_H)
     pygame.draw.rect(surface, theme.C["card"], card, border_radius=10)
+    pygame.draw.rect(surface, theme.C["panel_line"], card, 1, border_radius=10)
     f_time = "%H:%M"
     if event.all_day:
         when = f"{event.start.month}月{event.start.day}日 · 整日"

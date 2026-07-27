@@ -41,6 +41,7 @@ def render(surface, snap, settings, confirm_remove) -> list[Hit]:
         main, dark = theme.account_color(acc.color)
         card = pygame.Rect(x, 96, 430, 330)
         pygame.draw.rect(surface, theme.C["card"], card, border_radius=10)
+        pygame.draw.rect(surface, theme.C["panel_line"], card, 1, border_radius=10)
         pygame.draw.circle(surface, main, (x + 26, 126), 8)
         st = snap.statuses.get(email)
         name = email if len(email) <= 26 else email[:24] + "…"

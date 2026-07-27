@@ -25,6 +25,8 @@ def _digit_card(ch: str, w: int, h: int) -> "pygame.Surface":
         img = theme.font(int(h * 0.78)).render(ch, True, theme.C["text"])
         s.blit(img, img.get_rect(center=(w // 2, h // 2)))
         pygame.draw.line(s, theme.C["clock_split"], (2, h // 2), (w - 2, h // 2), 2)
+        pygame.draw.rect(s, theme.C["panel_line"], pygame.Rect(0, 0, w, h), 1,
+                         border_radius=RADIUS)
         _cache[key] = s
     return s
 

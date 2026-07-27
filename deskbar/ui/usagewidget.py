@@ -31,8 +31,6 @@ BAR_MARGIN = 20              # 橫條左右各留白，寬度＝欄寬-2*BAR_MAR
 STALE_AFTER_S = 300          # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
 VERY_STALE_AFTER_S = 3600    # 超過這麼久，整組轉 muted 灰（agent 可能已經停了）
 
-# Claude 招牌珊瑚橘（clay）：正常用量一律這色；只有爆量（>85%）才轉紅示警
-_CLAUDE_ORANGE = (217, 119, 87)
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft"):
@@ -48,10 +46,11 @@ def _center_text(surface, s, size, color, x0, w, cy):
 
 
 def _level_color(pct: float):
-    # 正常用量一律 Claude 珊瑚橘；只有爆量（>85%）轉紅示警。
+    # 正常用量一律 Claude 珊瑚橘（per-theme：淺色版用較深的焦橘保飽和度）；
+    # 只有爆量（>85%）轉紅示警。
     if pct > 85:
         return theme.C["warn"]
-    return theme.col(_CLAUDE_ORANGE)
+    return theme.C["usage_bar"]
 
 
 def _draw_group(surface, x0: float, w: float, y: float, label: str,
@@ -68,6 +67,9 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
     pygame.draw.rect(surface, theme.C["card"],
                      pygame.Rect(round(bar_x), round(bar_y), round(bar_w), BAR_H),
                      border_radius=BAR_RADIUS)
+    pygame.draw.rect(surface, theme.C["panel_line"],
+                     pygame.Rect(round(bar_x), round(bar_y), round(bar_w), BAR_H),
+                     width=1, border_radius=BAR_RADIUS)
     if pct is not None and pct > 0:
         fill_w = max(0.0, min(bar_w, bar_w * pct / 100))
         fill_color = theme.C["muted"] if muted else _level_color(pct)
