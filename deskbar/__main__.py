@@ -44,7 +44,7 @@ def main() -> None:
         sync.start_threads(state, settings, lock)
 
     from deskbar.presence import start_presence_thread
-    start_presence_thread(state, settings, lock)   # 沒設定 presence_enabled/mac 就自動跳過
+    start_presence_thread(state, settings, lock)   # 永遠啟動；迴圈每輪自查 enabled/mac 就自動跳過
 
     from deskbar.alarms import AlarmStore
     alarm_store = AlarmStore()

@@ -89,37 +89,22 @@ def test_presence_disabled_never_filters_even_when_absent():
     assert "hidden@x.com" in _accounts_with_open_detail(hits)
 
 
-# ---------------------------------------------------------------- 右上角鎖頭圖示
+# ---------------------------------------------------------------- 右上角鎖頭圖示（已移除）
 
 
-def test_presence_lock_icon_warn_color_when_hiding():
-    settings = _settings_two_accounts()
-    settings.presence_enabled = True
-    settings.presence_hide_accounts = ["hidden@x.com"]
-    st = _state_with_events()
-    st.set_presence(PresenceState(present=False, rssi=None, last_seen=None, enabled=True))
-    surf = _surf()
-    dashboard.render(surf, st.snapshot(), settings, NOW)
-    assert surf.get_at((1878, 30))[:3] == theme.C["warn"]
-
-
-def test_presence_lock_icon_muted_color_when_enabled_but_present():
-    settings = _settings_two_accounts()
-    settings.presence_enabled = True
-    settings.presence_hide_accounts = ["hidden@x.com"]
-    st = _state_with_events()
-    st.set_presence(PresenceState(present=True, rssi=None, last_seen=NOW, enabled=True))
-    surf = _surf()
-    dashboard.render(surf, st.snapshot(), settings, NOW)
-    assert surf.get_at((1878, 30))[:3] == theme.C["muted"]
-
-
-def test_presence_lock_icon_absent_when_feature_disabled():
-    settings = _settings_two_accounts()   # presence_enabled 預設 False
-    st = _state_with_events()
-    surf = _surf()
-    dashboard.render(surf, st.snapshot(), settings, NOW)
-    assert surf.get_at((1878, 30))[:3] == theme.C["bg"]
+def test_presence_lock_icon_never_drawn():
+    """2026-07-27 首日 UAT：右上鎖頭被誤認為異常狀態，使用者要求移除——
+    任何 presence 狀態組合都不得在右上角畫鎖頭。"""
+    for present in (True, False):
+        settings = _settings_two_accounts()
+        settings.presence_enabled = True
+        settings.presence_hide_accounts = ["hidden@x.com"]
+        st = _state_with_events()
+        st.set_presence(PresenceState(present=present, rssi=None,
+                                      last_seen=NOW if present else None, enabled=True))
+        surf = _surf()
+        dashboard.render(surf, st.snapshot(), settings, NOW)
+        assert surf.get_at((1878, 30))[:3] == theme.C["bg"], "鎖頭不得再出現"
 
 
 # ---------------------------------------------------------------- settings_view 開關鈕

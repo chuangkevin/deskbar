@@ -11,7 +11,10 @@ def test_settings_actions_present():
     settings.ensure_account("a@x.com").calendars["c1"] = True
     hits = settings_view.render(surf, AppState().snapshot(), settings, None)
     actions = [h.action for h in hits]
-    for a in ("rotate", "settings_done", "cycle_label", "toggle_cal", "remove_account"):
+    # rotate 已搬到「螢幕」子頁（open_screen 進入）；主設定頁是七顆控制鈕一排。
+    for a in ("settings_done", "cycle_label", "toggle_cal", "remove_account",
+              "toggle_presence", "cycle_presence_speed", "open_bt", "open_wifi",
+              "open_screen", "cycle_theme", "cycle_sync_interval"):
         assert a in actions
     hits2 = settings_view.render(surf, AppState().snapshot(), settings, "a@x.com")
     assert "confirm_remove" in [h.action for h in hits2]

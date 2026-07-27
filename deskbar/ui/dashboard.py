@@ -183,25 +183,12 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         _render_allday_pills(surface, allday, lane_emails, settings, hits)
         _render_now_line_range(surface, win_start, win_end, now)
 
-    if settings.presence_enabled and settings.presence_hide_accounts:
-        _render_presence_lock(surface, hiding=not snap.presence.present)
+    # 在場感應不畫任何角落圖示（2026-07-27 首日 UAT：右上鎖頭被誤認為異常
+    # 狀態，使用者要求移除——隱私簾的「效果」本身就是狀態指示）。
     # 右欄：Claude usage 油表——獨立呼叫，不吃 TL_AREA、不產生 hits（純資訊面板，
     # 跟左欄時鐘/天氣一樣不可互動），畫在最後純粹是慣例（跟中欄內容互不重疊，順序無關）。
     usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
     return hits
-
-
-def _render_presence_lock(surface, hiding: bool) -> None:
-    """右上角鎖頭：presence_enabled 且有設定要隱藏的帳號時才顯示（在 usagewidget
-    的 TITLE_Y=60 之前、右欄頂帶完全沒人用的 y=0..50 這塊畫）。
-    hiding=True（手機不在場，正在隱藏個人行程）用警示色實心鎖；
-    hiding=False（功能開著、手機在場、目前沒隱藏中）用 muted 色描邊鎖，
-    讓使用者知道「功能有開」而不是完全沒反應。"""
-    cx, cy = 1878, 24
-    color = theme.C["warn"] if hiding else theme.C["muted"]
-    body = pygame.Rect(cx - 10, cy - 2, 20, 16)
-    pygame.draw.rect(surface, color, body, border_radius=3)
-    pygame.draw.arc(surface, color, pygame.Rect(cx - 7, cy - 16, 14, 18), 0, math.pi, 3)
 
 
 def render_panel_only(surface, snap, settings, now, weather_t=0.0) -> None:

@@ -68,16 +68,19 @@ def test_settings_has_theme_toggle_button_meeting_touch_target():
     assert hit.rect.h >= 48 and hit.rect.w >= 48
 
 
-def test_theme_button_does_not_overlap_existing_topbar_buttons():
+def test_control_row_buttons_do_not_overlap_each_other():
+    """兩層版面：控制列七顆鈕（rotate 已搬進螢幕子頁）任兩顆不得重疊。"""
     settings = Settings()
     hits = settings_view.render(_surf(), AppState().snapshot(), settings, None)
     by_action = {h.action: h.rect for h in hits}
-    theme_r = by_action["cycle_theme"]
-    for action in ("toggle_presence", "cycle_sync_interval", "rotate", "settings_done"):
-        other = by_action[action]
-        overlap = not (theme_r.x + theme_r.w <= other.x or other.x + other.w <= theme_r.x
-                      or theme_r.y + theme_r.h <= other.y or other.y + other.h <= theme_r.y)
-        assert not overlap, f"主題鈕與 {action} 鈕重疊"
+    row = ["toggle_presence", "cycle_presence_speed", "open_bt", "open_wifi",
+           "open_screen", "cycle_theme", "cycle_sync_interval", "settings_done"]
+    rects = [by_action[a] for a in row]
+    for i, a in enumerate(rects):
+        for b in rects[i + 1:]:
+            overlap = not (a.x + a.w <= b.x or b.x + b.w <= a.x
+                           or a.y + a.h <= b.y or b.y + b.h <= a.y)
+            assert not overlap, f"{row[i]} 與另一顆鈕重疊"
 
 
 def test_theme_button_label_reflects_current_setting():

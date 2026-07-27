@@ -135,22 +135,24 @@ def test_probe_once_rssi_unavailable_still_present():
 
 
 # ---- start_presence_thread() ----
+# 2026-07-27 語意翻轉：執行緒永遠啟動、每輪自查 enabled/mac——開機時 mac 未設
+# 就不建 thread 的舊行為，會讓使用者事後配好裝置/打開開關卻要重開機才生效
+# （實機回報「開了沒反應」的根因之一）。
 
-def test_start_returns_false_when_disabled():
+
+def test_start_always_spawns_even_when_disabled():
     state = AppState()
     settings = Settings()
     settings.presence_enabled = False
     settings.presence_mac = "AA:BB:CC:DD:EE:FF"
     import threading
-    ok = presence.start_presence_thread(state, settings, threading.Lock())
-    assert ok is False
+    assert presence.start_presence_thread(state, settings, threading.Lock()) is True
 
 
-def test_start_returns_false_when_mac_empty():
+def test_start_always_spawns_even_when_mac_empty():
     state = AppState()
     settings = Settings()
     settings.presence_enabled = True
     settings.presence_mac = ""
     import threading
-    ok = presence.start_presence_thread(state, settings, threading.Lock())
-    assert ok is False
+    assert presence.start_presence_thread(state, settings, threading.Lock()) is True

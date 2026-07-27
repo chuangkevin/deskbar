@@ -76,21 +76,17 @@ def decide(present_probe: bool, rssi: int | None, threshold: int, prev: Presence
 
 def start_presence_thread(state: "AppState", settings: "Settings",
                           settings_lock: threading.Lock, interval: int = 45) -> bool:
-    """啟動藍牙在場感應背景執行緒。settings.presence_enabled 且 presence_mac 非空
-    才會真的啟動；任一條件不滿足就直接回 False、不建立 thread（呼叫端可能是
-    app 啟動流程，不該為了一個選用功能硬開一條永遠沒事做的 thread）。
+    """啟動藍牙在場感應背景執行緒。**永遠啟動**：迴圈每輪自己檢查
+    enabled/mac，沒開就 no-op 睡下一輪——2026-07-27 首日教訓：開機時
+    presence_mac 還沒設就不建 thread，之後使用者在藍牙配對頁配好裝置、
+    打開開關，功能卻要重開機才活，看起來就是「開了沒反應」。
 
-    迴圈每輪：持 settings_lock 只做快照讀取（mac/threshold/grace/enabled，純量、
-    很快)，放鎖後才做探測（l2ping/hcitool，可能耗時到秒級，不該卡住其他也要拿
-    settings_lock 的執行緒——呼應 sync.py 同樣的鎖範圍原則）。探測完依 decide()
-    算出新狀態，再用當輪讀到的 enabled 覆寫 enabled 欄位（decide 本身不管開關，
-    只管 present/rssi/last_seen），最後 state.set_presence(...) 寫回。
+    迴圈每輪：持 settings_lock 只做快照讀取（mac/threshold/grace/enabled/間隔，
+    純量、很快)，放鎖後才做探測（l2ping/hcitool，可能耗時到秒級，不該卡住其他
+    也要拿 settings_lock 的執行緒——呼應 sync.py 同樣的鎖範圍原則）。探測完依
+    decide() 算出新狀態，再用當輪讀到的 enabled 覆寫 enabled 欄位，最後
+    state.set_presence(...) 寫回。
     """
-    with settings_lock:
-        enabled = settings.presence_enabled
-        mac = settings.presence_mac
-    if not enabled or not mac:
-        return False
 
     def loop():
         while True:

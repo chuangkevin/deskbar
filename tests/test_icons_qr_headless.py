@@ -58,5 +58,5 @@ def test_settings_has_qr_and_actions():
     settings.ensure_account("a@x.com").calendars["c1"] = True
     hits = settings_view.render(surf, AppState().snapshot(), settings, None)
     actions = {h.action for h in hits}
-    assert "rotate" in actions
+    assert "open_screen" in actions   # rotate 已搬進「螢幕」子頁
     assert "settings_done" in actions

@@ -44,8 +44,10 @@ class App:
         self._last_imminent_check = None  # 迫近行程：上次檢查時間（每秒檢查一次即可）
         self._imminent_active = False     # 迫近行程：本秒是否有迫近中的行程
         self._weather_epoch = time.monotonic()   # 天氣場景時間基準：t＝距開機浮點秒數
-        from deskbar.ui import wifi_view
+        from deskbar.ui import bt_view, wifi_view
         self.wifi_ui = wifi_view.new_state()     # Wi-Fi 設定頁狀態（背景執行緒共寫）
+        self.bt_ui = bt_view.new_state()         # 藍牙配對頁狀態（背景執行緒共寫）
+        self._veil = None                        # 亮度疊黑快取：(size, alpha, surface)
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -88,16 +90,40 @@ class App:
         self._apply_dev_window()
         self._last_seq = -1     # 立即重繪
 
+    def _dim_veil(self, size) -> "pygame.Surface | None":
+        """亮度排程的疊黑面。必須蓋在「輸出面」（每幀新製的 rotated/out），
+        不能蓋 logical——氛圍幀只重畫左欄，蓋持久畫布會讓其餘區域逐幀重複
+        疊黑越來越暗。veil 依 (size, alpha) 快取，亮度沒變就零成本。"""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from deskbar import brightness
+        pct = brightness.effective(self.settings,
+                                   datetime.now(ZoneInfo("Asia/Taipei")).hour)
+        alpha = brightness.veil_alpha(pct)
+        if alpha <= 0:
+            return None
+        if self._veil is None or self._veil[0] != size or self._veil[1] != alpha:
+            s = pygame.Surface(size, pygame.SRCALPHA)
+            s.fill((0, 0, 0, alpha))
+            self._veil = (size, alpha, s)
+        return self._veil[2]
+
     def _flip(self) -> None:
         if self._dev:
             # dev：外層旋轉直接作用在邏輯畫面上（0=轉正全景），不經實機面板管線
             out = self.logical if self._dev_rotate == 0 \
                 else pygame.transform.rotate(self.logical, -self._dev_rotate)
             out = pygame.transform.smoothscale(out, self.win)
+            veil = self._dim_veil(out.get_size())
+            if veil is not None:
+                out.blit(veil, (0, 0))
             self.screen.blit(out, (0, 0))
         else:
             angle = transform.pygame_rotation_angle(self.settings.rotation)
             rotated = pygame.transform.rotate(self.logical, angle)
+            veil = self._dim_veil(rotated.get_size())
+            if veil is not None:
+                rotated.blit(veil, (0, 0))
             self.screen.blit(rotated, (0, 0))
         pygame.display.flip()
 
@@ -124,6 +150,23 @@ class App:
                     elif a == "open_wifi":
                         self.view = "wifi"
                         self._wifi_rescan()
+                    elif a == "open_screen":
+                        self.view = "screen"
+                    elif a == "scr_adj":
+                        field, delta, lo, hi = h.data
+                        cur = getattr(self.settings, field)
+                        setattr(self.settings, field,
+                                max(lo, min(hi, cur + delta)))
+                        self.on_save(self.settings)
+                    elif a == "open_bt":
+                        self.view = "bt"
+                        self._bt_rescan()
+                    elif a == "bt_rescan":
+                        self._bt_rescan()
+                    elif a == "bt_pick":
+                        self._bt_pick(h.data)
+                    elif a == "bt_unpair":
+                        self._bt_unpair(h.data)
                     elif a == "wifi_back":
                         self.view = "settings"
                         self.wifi_ui["msg"] = ""
@@ -298,6 +341,12 @@ class App:
             elif self.view == "wifi":
                 from deskbar.ui import wifi_view
                 self.hits = wifi_view.render(self.logical, self.wifi_ui, now)
+            elif self.view == "bt":
+                from deskbar.ui import bt_view
+                self.hits = bt_view.render(self.logical, self.bt_ui, self.settings, now)
+            elif self.view == "screen":
+                from deskbar.ui import screen_view
+                self.hits = screen_view.render(self.logical, self.settings)
             elif self.view == "alarms":
                 self.hits = alarm_view.render(self.logical, self.alarm_store,
                                               self.alarm_draft, now)
@@ -355,6 +404,69 @@ class App:
             ui["busy"] = None
 
         threading.Thread(target=work, daemon=True, name="wifi-connect").start()
+
+    def _bt_rescan(self) -> None:
+        ui = self.bt_ui
+        if ui["busy"]:
+            return
+        ui["busy"] = "scan"
+        import threading
+        from deskbar import bt
+
+        def work():
+            ui["devices"] = bt.scan()
+            ui["busy"] = None
+
+        threading.Thread(target=work, daemon=True, name="bt-scan").start()
+
+    def _bt_pick(self, dev) -> None:
+        """未配對→配對＋信任→設為感應目標；已配對→直接切換感應目標。"""
+        ui = self.bt_ui
+        if ui["busy"]:
+            return
+        if dev.paired:
+            self.settings.presence_mac = dev.mac
+            self.on_save(self.settings)
+            ui["msg"] = f"感應目標已切換：{dev.name or dev.mac}"
+            return
+        ui["busy"] = "pair"
+        ui["msg"] = ""
+        import threading
+        from deskbar import bt
+
+        def work():
+            ok, msg = bt.pair(dev.mac)
+            if ok:
+                with self.lock:
+                    self.settings.presence_mac = dev.mac
+                    self.on_save(self.settings)
+                ui["msg"] = f"已配對並設為感應目標：{dev.name or dev.mac}"
+                ui["devices"] = bt.scan()
+            else:
+                ui["msg"] = f"配對失敗：{msg}"
+            ui["busy"] = None
+
+        threading.Thread(target=work, daemon=True, name="bt-pair").start()
+
+    def _bt_unpair(self, mac: str) -> None:
+        ui = self.bt_ui
+        if ui["busy"]:
+            return
+        ui["busy"] = "unpair"
+        import threading
+        from deskbar import bt
+
+        def work():
+            ok, msg = bt.unpair(mac)
+            if ok and self.settings.presence_mac == mac:
+                with self.lock:
+                    self.settings.presence_mac = ""
+                    self.on_save(self.settings)
+            ui["msg"] = msg if ok else f"解除失敗：{msg}"
+            ui["devices"] = bt.scan()
+            ui["busy"] = None
+
+        threading.Thread(target=work, daemon=True, name="bt-unpair").start()
 
     def _weather_t(self) -> float:
         """天氣場景的浮點秒數（單調時鐘，不受對時跳動影響）。weatherfx 全部速度
@@ -576,9 +688,9 @@ class App:
             clock.tick(30)
         else:
             snap = self.state.snapshot()
-            if self.view == "wifi":
-                # Wi-Fi 頁固定 5fps 重繪：掃描/連線結束由背景執行緒改 wifi_ui，
-                # 沒有 seq 可觸發，低頻輪詢重繪畫面自然跟上（含連線中的動態點點）。
+            if self.view in ("wifi", "bt"):
+                # Wi-Fi／藍牙頁固定 5fps 重繪：掃描/連線/配對結束由背景執行緒
+                # 改 ui dict，沒有 seq 可觸發，低頻輪詢重繪畫面自然跟上。
                 self._render()
                 clock.tick(5)
             elif snap.seq != self._last_seq or now.minute != self._last_minute:

@@ -54,6 +54,10 @@ class Settings:
     presence_hide_accounts: list[str] = field(default_factory=list)
     presence_grace_sec: int = 150
     presence_interval_sec: int = 45     # 藍牙探測間隔；設定頁「感應速度」快/中/慢連動
+    work_start_hour: int = 9            # 上班開始（時）；螢幕亮度排程用
+    work_end_hour: int = 18             # 下班（時）；此後套用下班亮度
+    brightness_day: int = 100           # 上班時段亮度 %（軟體疊黑實現）
+    brightness_night: int = 40          # 下班時段亮度 %
 
     def ensure_account(self, email: str) -> AccountCfg:
         if email not in self.accounts:
@@ -110,6 +114,17 @@ def load_settings() -> Settings:
                 or isinstance(presence_interval_sec, bool) \
                 or not (5 <= presence_interval_sec <= 600):
             presence_interval_sec = 45
+
+        def _int_in(key, default, lo, hi):
+            v = raw.get(key, default)
+            if not isinstance(v, int) or isinstance(v, bool) or not (lo <= v <= hi):
+                return default
+            return v
+
+        work_start_hour = _int_in("work_start_hour", 9, 0, 23)
+        work_end_hour = _int_in("work_end_hour", 18, 0, 23)
+        brightness_day = _int_in("brightness_day", 100, 10, 100)
+        brightness_night = _int_in("brightness_night", 40, 10, 100)
         return Settings(
             rotation=raw.get("rotation", 90),
             weather_lat=raw.get("weather_lat", DEFAULT_LAT),
@@ -128,6 +143,10 @@ def load_settings() -> Settings:
             presence_hide_accounts=presence_hide_accounts,
             presence_grace_sec=presence_grace_sec,
             presence_interval_sec=presence_interval_sec,
+            work_start_hour=work_start_hour,
+            work_end_hour=work_end_hour,
+            brightness_day=brightness_day,
+            brightness_night=brightness_night,
         )
     except (OSError, ValueError, KeyError, TypeError):
         return Settings()
@@ -151,6 +170,10 @@ def save_settings(s: Settings) -> None:
         "presence_hide_accounts": s.presence_hide_accounts,
         "presence_grace_sec": s.presence_grace_sec,
         "presence_interval_sec": s.presence_interval_sec,
+        "work_start_hour": s.work_start_hour,
+        "work_end_hour": s.work_end_hour,
+        "brightness_day": s.brightness_day,
+        "brightness_night": s.brightness_night,
         "accounts": {
             e: {"lane_label": a.lane_label, "color": a.color, "calendars": a.calendars}
             for e, a in s.accounts.items()
