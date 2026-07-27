@@ -546,6 +546,14 @@ class App:
 
     def _handle_touch_up(self, x: int, y: int) -> None:
         """FINGERUP／MOUSEBUTTONUP 共用：判斷是點擊還是時間軸平移拖曳。"""
+        if self.firing:
+            # 響鈴中任何觸碰＝全部關掉，不走拖曳判定、不逐顆 pop——
+            # (1) 手指滑過 24px 會被當拖曳而不觸發解除；(2) 多顆排隊要一顆
+            # 一顆點。兩者在使用者眼裡都是「點了關不掉」（實機深夜回報）。
+            self.firing.clear()
+            self._drag_start = None
+            self._last_seq = -1
+            return
         if self._drag_start is None:
             self._dispatch(x, y)
             return

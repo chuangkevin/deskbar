@@ -313,6 +313,18 @@ def test_flip_and_ambient_frames_share_live_weather_t(tmp_path, monkeypatch):
     assert ts == sorted(ts), "兩條路徑必須共用同一個單調時間基準"
 
 
+def test_any_touch_dismisses_all_firing_alarms(tmp_path, monkeypatch):
+    """響鈴中任何觸碰（含被拖曳判定吃掉的滑動）都要一次關掉全部鬧鐘：
+    逐顆 pop＋拖曳門檻在實機上的體感就是「點了關不掉」。"""
+    from deskbar.alarms import Alarm
+    app = _make_dashboard_app(tmp_path, monkeypatch)
+    app.firing = [Alarm(id="a", time="18:00", days=[], label="下班", enabled=True),
+                  Alarm(id="b", time="18:00", days=[], label="備用", enabled=True)]
+    app._drag_start = (500, 200)      # 模擬手指按下後滑動 >24px（原本會被當拖曳）
+    app._handle_touch_up(560, 260)
+    assert app.firing == [], "任何觸碰都要清空整個響鈴佇列"
+
+
 def test_cycle_presence_speed_cycles_presets_and_saves(tmp_path, monkeypatch):
     """感應速度鈕：快(15/45)→中(30/90)→慢(45/150) 循環，間隔與緩衝連動並持久化。"""
     app = _make_app(tmp_path, monkeypatch)
