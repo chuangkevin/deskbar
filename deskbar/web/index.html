@@ -27,7 +27,16 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
 .acc-email{color:#9a9a9a;font-size:13px;margin-top:-4px}
 .hint{color:#777;font-size:12px;margin:10px 2px 0}
 </style></head><body>
-<h1>deskbar 鬧鐘</h1>
+<h1>deskbar</h1>
+<h2 style="margin-top:8px">便條</h2>
+<div class="card">
+ <div class="row"><input type="text" id="nt" placeholder="閃念丟這裡，Enter 上牆"
+  onkeydown="if(event.key==='Enter')addNote()">
+ <button onclick="addNote()">上牆</button></div>
+ <div class="hint">Mac 終端機：note 指令兩秒上牆（設定方式問 Claude）</div>
+</div>
+<div id="notes"></div>
+<h2>鬧鐘</h2>
 <div id="list"></div>
 <div class="card">
  <div class="row"><input type="time" id="t" value="09:00"><input type="text" id="lb" placeholder="標籤（例如：打卡）"></div>
@@ -138,7 +147,28 @@ async function saveKey(){
  document.getElementById("p_msg").textContent=r.ok?" Key 已儲存 ✓（5 分鐘內生效）":" 儲存失敗";
  if(r.ok)setTimeout(loadPrefs,600);
 }
+async function loadNotes(){
+ const box=document.getElementById("notes");
+ const r=await fetch("/api/notes");
+ if(!r.ok){box.innerHTML="";return}
+ const ns=await r.json();
+ box.innerHTML=ns.map(n=>`
+  <div class="card"><div class="row">
+   <div style="flex:1;white-space:pre-wrap">${esc(n.text)}</div>
+   <button class="del" onclick="delNote('${esc(n.id)}')">撕掉</button>
+  </div></div>`).join("");
+}
+async function addNote(){
+ const el=document.getElementById("nt");
+ const v=el.value.trim();
+ if(!v)return;
+ const r=await fetch("/api/notes",{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({text:v})});
+ if(r.ok){el.value="";loadNotes()}
+}
+async function delNote(id){await fetch("/api/notes/"+id,{method:"DELETE"});loadNotes()}
 load();
 loadCals();
 loadPrefs();
+loadNotes();
 </script></body></html>

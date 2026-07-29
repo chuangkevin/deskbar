@@ -59,7 +59,7 @@ class Settings:
     brightness_day: int = 100           # 上班時段亮度 %（軟體疊黑實現）
     brightness_night: int = 40          # 下班時段亮度 %
     linear_api_key: str = ""            # Linear 個人 API Key（只存裝置，不進 repo/log）
-    center_view: str = "calendar"       # 中欄顯示：calendar｜linear（待辦卡）
+    center_view: str = "calendar"       # 中欄顯示：calendar｜linear（待辦）｜notes（便條）
 
     def ensure_account(self, email: str) -> AccountCfg:
         if email not in self.accounts:
@@ -141,7 +141,7 @@ def load_settings() -> Settings:
         if not isinstance(linear_api_key, str):
             linear_api_key = ""
         center_view = raw.get("center_view", "calendar")
-        if center_view not in ("calendar", "linear"):
+        if center_view not in ("calendar", "linear", "notes"):
             center_view = "calendar"
         return Settings(
             rotation=raw.get("rotation", 90),

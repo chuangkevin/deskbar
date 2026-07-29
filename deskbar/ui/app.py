@@ -20,7 +20,8 @@ SYNC_INTERVALS = [1, 3, 5, 10, 30]       # 設定頁「同步頻率」鈕的循�
 
 
 class App:
-    def __init__(self, state, settings, settings_lock, on_save, alarm_store=None):
+    def __init__(self, state, settings, settings_lock, on_save, alarm_store=None,
+                 notes_store=None):
         self.state = state
         self.settings = settings
         self.lock = settings_lock
@@ -34,6 +35,9 @@ class App:
         self._clock_prev = None
         self._anim_start = None
         self.alarm_store = alarm_store
+        self.notes_store = notes_store
+        from deskbar.ui import notesview
+        self.notes_ui = notesview.new_state()
         self.firing = []
         self._last_alarm_check = None
         self.view_anchor = None         # datetime|None，None=跟隨現在
@@ -281,10 +285,28 @@ class App:
                         self.on_save(self.settings)
                     elif a == "toggle_center":
                         self._start_transition()
-                        self.settings.center_view = (
-                            "calendar" if getattr(self.settings, "center_view",
-                                                  "calendar") == "linear" else "linear")
+                        order = ["calendar", "linear", "notes"]
+                        cur = getattr(self.settings, "center_view", "calendar")
+                        idx = order.index(cur) if cur in order else 0
+                        self.settings.center_view = order[(idx + 1) % len(order)]
                         self.on_save(self.settings)
+                    elif a == "note_tap":
+                        from deskbar.ui import notesview
+                        nid = h.data
+                        ui = self.notes_ui
+                        if (ui["pending_id"] == nid and
+                                time.monotonic() - ui["pending_at"]
+                                <= notesview.PENDING_TIMEOUT_S):
+                            if self.notes_store is not None:
+                                try:
+                                    self.notes_store.remove(nid)
+                                except OSError as e:
+                                    print(f"[deskbar] note remove failed: {e}",
+                                          file=sys.stderr)
+                            ui["pending_id"] = None
+                        else:
+                            ui["pending_id"] = nid
+                            ui["pending_at"] = time.monotonic()
                     elif a == "cycle_view_mode":
                         self._start_transition()
                         self.settings.view_mode = (
@@ -359,7 +381,9 @@ class App:
             else:
                 self.hits = dashboard.render(self.logical, snap, self.settings, now, clock_anim,
                                              anchor=self.view_anchor,
-                                             weather_t=self._weather_t())
+                                             weather_t=self._weather_t(),
+                                             notes_store=self.notes_store,
+                                             notes_ui=self.notes_ui)
                 if self.view == "detail" and self.detail_event is not None:
                     self.hits += detail.render(self.logical, self.detail_event)
 
@@ -705,7 +729,13 @@ class App:
             clock.tick(30)
         else:
             snap = self.state.snapshot()
-            if self.view in ("wifi", "bt"):
+            if (self.view == "dashboard"
+                    and getattr(self.settings, "center_view", "") == "notes"
+                    and self.notes_ui.get("pending_id")):
+                # 便條「再點一下撕掉」的 5 秒逾時回復需要重繪才看得到
+                self._render()
+                clock.tick(2)
+            elif self.view in ("wifi", "bt"):
                 # Wi-Fi／藍牙頁固定 5fps 重繪：掃描/連線/配對結束由背景執行緒
                 # 改 ui dict，沒有 seq 可觸發，低頻輪詢重繪畫面自然跟上。
                 self._render()

@@ -101,7 +101,7 @@ def _agenda_label(start_date, n_days: int) -> str:
 
 
 def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
-          weather_t=0.0) -> list[Hit]:
+          weather_t=0.0, notes_store=None, notes_ui=None) -> list[Hit]:
     hits: list[Hit] = []
     tz = now.tzinfo
     span = settings.view_span
@@ -113,17 +113,26 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     pygame.draw.line(surface, theme.C["panel_line"], (PANEL_W, 0), (PANEL_W, 480))
     pygame.draw.line(surface, theme.C["panel_line"], (TL_X1, 0), (TL_X1, 480))
 
-    # 中欄切換：行事曆 ↔ Linear 待辦。待辦模式下行事曆專屬的頂帶元素
-    # （寬度/模式鈕、窗口標籤、回到今天）全部不畫——它們對待辦無意義。
-    center_linear = getattr(settings, "center_view", "calendar") == "linear"
-    _chip_btn(surface, "行事曆" if center_linear else "待辦", CENTER_BTN,
+    # 中欄三態循環：行事曆 → 待辦（Linear）→ 便條。鈕標籤＝「下一個」視圖名；
+    # 非行事曆模式下，行事曆專屬頂帶元素（寬度/模式鈕、窗口標籤、回到今天）
+    # 全部不畫。
+    center = getattr(settings, "center_view", "calendar")
+    next_label = {"calendar": "待辦", "linear": "便條", "notes": "行事曆"}
+    _chip_btn(surface, next_label.get(center, "待辦"), CENTER_BTN,
               "toggle_center", hits)
-    if center_linear:
+    if center == "linear":
         from deskbar.ui import linearview
         _text(surface, "待辦事項", 22, theme.C["text2"], TL_X0, 22)
         hits += linearview.render(surface, snap, settings, TL_AREA, now)
-        if settings.presence_enabled and settings.presence_hide_accounts:
-            pass                        # 在場感應不影響待辦卡（工作資料）
+        usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
+        return hits
+    if center == "notes":
+        from deskbar.ui import notesview
+        _text(surface, "便條", 22, theme.C["text2"], TL_X0, 22)
+        notes = notes_store.list() if notes_store is not None else []
+        import time as _t
+        hits += notesview.render(surface, notes, notes_ui or notesview.new_state(),
+                                 TL_AREA, now, _t.monotonic())
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
         return hits
 

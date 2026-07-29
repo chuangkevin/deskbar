@@ -48,7 +48,7 @@ def _to_float(v):
 
 
 def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
-              usage_state=None) -> Flask:
+              usage_state=None, notes_store=None) -> Flask:
     app = Flask("deskbar")
     web_dir = Path(__file__).parent / "web"
 
@@ -128,6 +128,32 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             acc.calendars[cal_id] = enabled
             on_save(settings_provider)
         return jsonify({"ok": True})
+
+    @app.get("/api/notes")
+    def list_notes():
+        if notes_store is None:
+            return jsonify({"error": "not available"}), 501
+        return jsonify([asdict(n) for n in notes_store.list()])
+
+    @app.post("/api/notes")
+    def add_note():
+        """便條輸入端（Mac shell function／手機網頁）。跟 /api/alarms 一樣
+        tailnet 內無認證；文字上限由 NotesStore 截斷。"""
+        if notes_store is None:
+            return jsonify({"error": "not available"}), 501
+        d = request.get_json(force=True, silent=True) or {}
+        n = notes_store.add(d.get("text", "") if isinstance(d.get("text"), str) else "")
+        if n is None:
+            return jsonify({"error": "text required"}), 400
+        return jsonify(asdict(n)), 201
+
+    @app.delete("/api/notes/<nid>")
+    def delete_note(nid):
+        if notes_store is None:
+            return jsonify({"error": "not available"}), 501
+        if notes_store.remove(nid):
+            return "", 204
+        return jsonify({"error": "not found"}), 404
 
     # 手機網頁可調的裝置偏好（2026-07-27 需求：「那些設定也應該要可以在手機
     # 設定頁調整」）。theme 刻意不開放——theme.set_theme 會清渲染快取，只能由
@@ -222,9 +248,9 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
 
 
 def start_web(store, port: int = 8080, settings_provider=None, settings_lock=None,
-              on_save=None, usage_state=None) -> None:
+              on_save=None, usage_state=None, notes_store=None) -> None:
     app = create_app(store, settings_provider=settings_provider, settings_lock=settings_lock,
-                      on_save=on_save, usage_state=usage_state)
+                      on_save=on_save, usage_state=usage_state, notes_store=notes_store)
     t = threading.Thread(
         target=lambda: app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False),
         daemon=True)
