@@ -73,9 +73,11 @@ def _layout_topbar(span, anchor_or_now, win_start, win_end,
     不呼叫 window_label——行程模式的視窗是 agenda_window 算出的日期範圍，跟河道
     的 view_window 不是同一組數字，標籤格式也不同（"7/27–8/2" vs "7月27日–8月2日"）。
     """
-    goto_now_rect = (Rect(SPAN_BTN.x - GOTO_NOW_W, 4, GOTO_NOW_W, GOTO_NOW_H)
+    # 2026-07-30：CENTER_BTN（中欄切換）固定佔 1172..1282，「回到今天」再往左
+    # 一格——首日把它留在 SPAN_BTN 左側，跟切換鈕整顆重疊（實機滑動時回報）。
+    goto_now_rect = (Rect(CENTER_BTN.x - GOTO_NOW_W, 4, GOTO_NOW_W, GOTO_NOW_H)
                      if show_goto_now else None)
-    leftmost = goto_now_rect.x if goto_now_rect is not None else SPAN_BTN.x
+    leftmost = goto_now_rect.x if goto_now_rect is not None else CENTER_BTN.x
 
     label_text = ""
     label_right_x = leftmost - TOPBAR_GAP
@@ -101,7 +103,8 @@ def _agenda_label(start_date, n_days: int) -> str:
 
 
 def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
-          weather_t=0.0, notes_store=None, notes_ui=None) -> list[Hit]:
+          weather_t=0.0, notes_store=None, notes_ui=None,
+          linear_page=0, notes_page=0) -> list[Hit]:
     hits: list[Hit] = []
     tz = now.tzinfo
     span = settings.view_span
@@ -123,7 +126,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     if center == "linear":
         from deskbar.ui import linearview
         _text(surface, "待辦事項", 22, theme.C["text2"], TL_X0, 22)
-        hits += linearview.render(surface, snap, settings, TL_AREA, now)
+        hits += linearview.render(surface, snap, settings, TL_AREA, now,
+                                  page=linear_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
         return hits
     if center == "notes":
@@ -132,7 +136,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         notes = notes_store.list() if notes_store is not None else []
         import time as _t
         hits += notesview.render(surface, notes, notes_ui or notesview.new_state(),
-                                 TL_AREA, now, _t.monotonic())
+                                 TL_AREA, now, _t.monotonic(), page=notes_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
         return hits
 

@@ -24,8 +24,27 @@ def _text(surface, s, size, color, x, y, anchor="topleft", bold=False):
     return r
 
 
-def render(surface, snap, settings, area, now) -> list:
-    """回傳 hits（目前無可點元素，回空清單維持介面一致）。"""
+PAGE_SIZE = 8
+
+
+def page_count(n_items: int) -> int:
+    return max(1, (n_items + PAGE_SIZE - 1) // PAGE_SIZE)
+
+
+def _pager(surface, area, page, pages) -> None:
+    """頁點指示（●○○），畫在牆底下緣中央；單頁不畫。"""
+    if pages <= 1:
+        return
+    cx = area.x + area.w / 2 - (pages - 1) * 11
+    for i in range(pages):
+        color = theme.C["text2"] if i == page else theme.C["panel_line"]
+        pygame.draw.circle(surface, color, (round(cx + i * 22),
+                                            round(area.y + area.h + 16)), 5)
+
+
+def render(surface, snap, settings, area, now, page: int = 0) -> list:
+    """回傳 hits（目前無可點元素，回空清單維持介面一致）。
+    page 由 app 持有（左右滑動翻頁），這裡夾在合法範圍內顯示。"""
     items = snap.linear
     if not getattr(settings, "linear_api_key", ""):
         _text(surface, "尚未連接 Linear", 28, theme.C["text"],
@@ -46,7 +65,9 @@ def render(surface, snap, settings, area, now) -> list:
     gap = 10
     cw = (area.w - gap) / cols
     ch = (area.h - gap * (rows - 1)) / rows
-    shown = items[:cols * rows]
+    pages = page_count(len(items))
+    page = max(0, min(page, pages - 1))
+    shown = items[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
     for idx, it in enumerate(shown):
         col, row = idx % cols, idx // cols
         x = area.x + col * (cw + gap)
@@ -88,8 +109,8 @@ def render(surface, snap, settings, area, now) -> list:
         if it.project and card.h >= 78:
             proj = theme.truncate_to_width(it.project, theme.font(16), card.w - 30)
             _text(surface, proj, 16, theme.C["muted"], tx, card.y + 62)
-    extra = len(items) - len(shown)
-    if extra > 0:
-        _text(surface, f"＋{extra} 件", 18, theme.C["muted"],
-              area.x + area.w, area.y + area.h + 6, "bottomright")
+    _pager(surface, area, page, pages)
+    if pages > 1:
+        _text(surface, f"{page + 1}/{pages}", 16, theme.C["muted"],
+              area.x + area.w, area.y + area.h + 8, "topright")
     return []

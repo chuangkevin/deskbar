@@ -61,8 +61,15 @@ def _fmt_ts(iso: str, now: datetime) -> str:
     return f"{dt.month}/{dt.day}"
 
 
+PAGE_SIZE = 6
+
+
+def page_count(n_items: int) -> int:
+    return max(1, (n_items + PAGE_SIZE - 1) // PAGE_SIZE)
+
+
 def render(surface, notes: list, ui: dict, area: Rect, now: datetime,
-           mono: float) -> list:
+           mono: float, page: int = 0) -> list:
     """notes＝NotesStore.list()；ui＝app.notes_ui；mono＝time.monotonic()
     （撕掉確認的逾時判斷用，跟 render 時刻解耦方便測試）。"""
     hits: list = []
@@ -83,7 +90,9 @@ def render(surface, notes: list, ui: dict, area: Rect, now: datetime,
     gap = 14
     cw = (area.w - gap * (cols - 1)) / cols
     ch = (area.h - gap) / rows
-    shown = notes[:cols * rows]
+    pages = page_count(len(notes))
+    page = max(0, min(page, pages - 1))
+    shown = notes[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
     for idx, n in enumerate(shown):
         col, row = idx % cols, idx // cols
         x = area.x + col * (cw + gap)
@@ -122,9 +131,13 @@ def render(surface, notes: list, ui: dict, area: Rect, now: datetime,
         rot = pygame.transform.rotozoom(card, angle, 1.0)
         surface.blit(rot, rot.get_rect(center=(x + cw / 2, y + ch / 2)))
         hits.append(Hit(Rect(x, y, cw, ch), "note_tap", n.id))
-    extra = len(notes) - len(shown)
-    if extra > 0:
-        img = theme.font(18).render(f"＋{extra} 張", True, theme.C["muted"])
-        surface.blit(img, img.get_rect(bottomright=(area.x + area.w,
-                                                    area.y + area.h + 26)))
+    if pages > 1:
+        cx = area.x + area.w / 2 - (pages - 1) * 11
+        for i in range(pages):
+            color = theme.C["text2"] if i == page else theme.C["panel_line"]
+            pygame.draw.circle(surface, color, (round(cx + i * 22),
+                                                round(area.y + area.h + 16)), 5)
+        img = theme.font(16).render(f"{page + 1}/{pages}", True, theme.C["muted"])
+        surface.blit(img, img.get_rect(topright=(area.x + area.w,
+                                                 area.y + area.h + 8)))
     return hits

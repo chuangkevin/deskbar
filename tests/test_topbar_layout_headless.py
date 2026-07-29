@@ -20,19 +20,21 @@ def _surf():
 
 
 def test_layout_topbar_maintains_min_gap_for_every_combo():
-    """對 span×goto_now×label 全排列，逐一驗證：回到今天鈕緊貼寬度鈕左側且不重疊；
-    標籤右緣與其左方元素之間、chips 右界與其左方元素之間都保有 >= TOPBAR_GAP。"""
+    """對 span×goto_now×label 全排列，逐一驗證：回到今天鈕緊貼「中欄切換鈕」
+    左側且不重疊（2026-07-30 起 CENTER_BTN 固定佔原本回到今天的位置——首日
+    重疊實機翻車）；標籤右緣與其左方元素之間、chips 右界與其左方元素之間
+    都保有 >= TOPBAR_GAP。"""
     for span in ["half", "day", "week", "month"]:
         win_start, win_end = view_window(span, NOW, TZ)
         for show_goto_now in (False, True):
             for show_label in (False, True):
                 topbar = dashboard._layout_topbar(span, NOW, win_start, win_end,
                                                   show_goto_now, show_label)
-                right_boundary = dashboard.SPAN_BTN.x
+                right_boundary = dashboard.CENTER_BTN.x
                 if topbar.goto_now_rect is not None:
                     gn = topbar.goto_now_rect
-                    # 緊貼寬度鈕左側：右緣剛好等於寬度鈕左緣，中間不留縫也不重疊。
-                    assert gn.x + gn.w == dashboard.SPAN_BTN.x
+                    # 緊貼中欄切換鈕左側：右緣剛好等於其左緣，不留縫也不重疊。
+                    assert gn.x + gn.w == dashboard.CENTER_BTN.x
                     assert gn.w == dashboard.GOTO_NOW_W
                     right_boundary = gn.x
                 if topbar.label_text:
@@ -40,7 +42,7 @@ def test_layout_topbar_maintains_min_gap_for_every_combo():
                     assert topbar.label_right_x <= right_boundary - dashboard.TOPBAR_GAP
                     right_boundary = topbar.label_right_x - label_w
                 assert topbar.chip_right_x <= right_boundary - dashboard.TOPBAR_GAP
-                assert topbar.chip_right_x < dashboard.SPAN_BTN.x
+                assert topbar.chip_right_x < dashboard.CENTER_BTN.x
 
 
 def _allday_settings_and_events(n: int, long_title: bool,

@@ -172,3 +172,41 @@ def test_toggle_center_dispatch_flips_and_saves(tmp_path, monkeypatch):
         seen.append(app.settings.center_view)
     assert seen == ["linear", "notes", "calendar"], "三態循環：行事曆→待辦→便條→行事曆"
     assert saved
+
+def test_swipe_flips_linear_pages_and_clamps(tmp_path, monkeypatch):
+    """待辦牆左右滑動翻頁：往左滑=下一頁、夾在頁數範圍內、點擊不翻頁。"""
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    app = App(AppState(), Settings(), threading.Lock(), on_save=lambda s: None,
+              alarm_store=None)
+    app.settings.center_view = "linear"
+    app.view = "dashboard"
+    app.logical = pygame.Surface((1920, 480))
+    app._flip = lambda: None
+    app.state.set_linear([_issue(f"S-{i}") for i in range(20)], NOW)   # 3 頁
+    app.hits = []
+    app._drag_start = (800, 200)
+    app._handle_touch_up(700, 200)          # 往左滑 100px → 下一頁
+    assert app.center_pages["linear"] == 1
+    app._drag_start = (800, 200)
+    app._handle_touch_up(700, 200)
+    app._drag_start = (800, 200)
+    app._handle_touch_up(700, 200)          # 第三次：已是最後一頁，夾住
+    assert app.center_pages["linear"] == 2
+    app._drag_start = (700, 200)
+    app._handle_touch_up(820, 200)          # 往右滑 → 上一頁
+    assert app.center_pages["linear"] == 1
+
+
+def test_goto_now_button_no_longer_overlaps_center_toggle():
+    """回歸鎖（實機回報：滑動行事曆時「回到今天」壓在切換鈕上）。"""
+    settings = Settings()
+    settings.ensure_account("a@x.com").calendars["c"] = True
+    st = AppState()
+    anchor = NOW.replace(day=25)
+    hits = dashboard.render(_surf(), st.snapshot(), settings, NOW, anchor=anchor)
+    by_action = {h.action: h.rect for h in hits}
+    assert "goto_now" in by_action and "toggle_center" in by_action
+    a, b = by_action["goto_now"], by_action["toggle_center"]
+    overlap = not (a.x + a.w <= b.x or b.x + b.w <= a.x
+                   or a.y + a.h <= b.y or b.y + b.h <= a.y)
+    assert not overlap, "回到今天與中欄切換鈕不得重疊"

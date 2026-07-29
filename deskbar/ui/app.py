@@ -52,6 +52,7 @@ class App:
         self.wifi_ui = wifi_view.new_state()     # Wi-Fi 設定頁狀態（背景執行緒共寫）
         self.bt_ui = bt_view.new_state()         # 藍牙配對頁狀態（背景執行緒共寫）
         self._veil = None                        # 亮度疊黑快取：(size, alpha, surface)
+        self.center_pages = {"linear": 0, "notes": 0}   # 待辦/便條牆目前頁碼（滑動翻頁）
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -289,6 +290,7 @@ class App:
                         cur = getattr(self.settings, "center_view", "calendar")
                         idx = order.index(cur) if cur in order else 0
                         self.settings.center_view = order[(idx + 1) % len(order)]
+                        self.center_pages = {"linear": 0, "notes": 0}
                         self.on_save(self.settings)
                     elif a == "note_tap":
                         from deskbar.ui import notesview
@@ -383,9 +385,24 @@ class App:
                                              anchor=self.view_anchor,
                                              weather_t=self._weather_t(),
                                              notes_store=self.notes_store,
-                                             notes_ui=self.notes_ui)
+                                             notes_ui=self.notes_ui,
+                                             linear_page=self.center_pages["linear"],
+                                             notes_page=self.center_pages["notes"])
                 if self.view == "detail" and self.detail_event is not None:
                     self.hits += detail.render(self.logical, self.detail_event)
+
+    def _flip_center_page(self, center: str, delta: int) -> None:
+        """待辦/便條牆翻頁：夾在 [0, 總頁數-1]。總頁數依當下資料量現算，
+        資料變少時頁碼由 render 端再夾一次（雙保險）。"""
+        if center == "linear":
+            from deskbar.ui import linearview
+            total = linearview.page_count(len(self.state.snapshot().linear))
+        else:
+            from deskbar.ui import notesview
+            total = notesview.page_count(
+                len(self.notes_store.list()) if self.notes_store else 0)
+        cur = self.center_pages.get(center, 0)
+        self.center_pages[center] = max(0, min(total - 1, cur + delta))
 
     def _wifi_rescan(self) -> None:
         """背景掃描：nmcli 最長可跑 20 秒，不能擋 render loop。單寫者模式：
@@ -591,8 +608,14 @@ class App:
         dx = x - sx
         self._drag_start = None
         from deskbar.ui.dashboard import TL_X0, TL_X1
-        if getattr(self.settings, "center_view", "calendar") == "linear":
-            self._dispatch(x, y)          # 待辦卡無時間軸，拖曳一律當點擊
+        center = getattr(self.settings, "center_view", "calendar")
+        if center in ("linear", "notes") and self.view == "dashboard":
+            # 待辦/便條牆：左右滑動＝翻頁（往左滑看下一頁），點擊照舊 dispatch
+            if abs(dx) > DRAG_THRESHOLD and sx > TL_X0:
+                self._flip_center_page(center, +1 if dx < 0 else -1)
+                self._last_seq = -1
+            else:
+                self._dispatch(x, y)
             return
         if abs(dx) > DRAG_THRESHOLD and sx > TL_X0:
             self._pan_view(dx, TL_X1 - TL_X0)
