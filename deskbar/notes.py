@@ -76,6 +76,20 @@ class NotesStore:
             self._save_locked()
         return n
 
+    def update(self, nid: str, text: str) -> "Note | None":
+        """編輯便條內文（保留原 ts——那是「捕捉時刻」）。空文字拒改。"""
+        text = (text or "").strip()[:MAX_TEXT]
+        if not text:
+            return None
+        with self._lock:
+            for i, n in enumerate(self._notes):
+                if n.id == nid:
+                    new = Note(n.id, text, n.ts)
+                    self._notes[i] = new
+                    self._save_locked()
+                    return new
+        return None
+
     def remove(self, nid: str) -> bool:
         with self._lock:
             before = len(self._notes)

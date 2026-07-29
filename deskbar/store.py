@@ -70,6 +70,11 @@ class AppState:
             self._cached_seq = self._seq
             return snap
 
+    def bump(self) -> None:
+        """外部資料（如便條）變更時叫醒 render 迴圈：只推進 seq，不改任何欄位。"""
+        with self._lock:
+            self._seq += 1
+
     def set_syncing(self, v: bool) -> None:
         with self._lock:
             self._syncing = v

@@ -169,3 +169,39 @@ def test_note_tap_confirm_expires(tmp_path, monkeypatch):
     app._dispatch(hit.rect.x + 5, hit.rect.y + 5)
     assert len(app.notes_store.list()) == 1, "逾時後的點擊＝重新進入確認，不是刪除"
     assert app.notes_ui["pending_id"] == hit.data
+
+def test_store_update_edits_text_keeps_ts(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    st = NotesStore()
+    n = st.add("原文")
+    upd = st.update(n.id, "  改過的內容  ")
+    assert upd.text == "改過的內容" and upd.ts == n.ts, "編輯保留捕捉時刻"
+    assert st.list()[0].text == "改過的內容"
+    assert st.update(n.id, "   ") is None, "空文字拒改"
+    assert st.list()[0].text == "改過的內容"
+    assert st.update("nope", "x") is None
+    st2 = NotesStore(); st2.load()
+    assert st2.list()[0].text == "改過的內容", "編輯要持久化"
+
+
+def test_notes_api_patch_edits_and_bumps_render(tmp_path, monkeypatch):
+    from deskbar.webserver import create_app
+
+    class _FakeAlarms:
+        def list(self):
+            return []
+
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    ns = NotesStore()
+    state = AppState()
+    app = create_app(_FakeAlarms(), notes_store=ns, usage_state=state)
+    app.config["TESTING"] = True
+    c = app.test_client()
+    seq0 = state.snapshot().seq
+    nid = c.post("/api/notes", json={"text": "v1"}).get_json()["id"]
+    assert state.snapshot().seq > seq0, "新增便條要叫醒 render 迴圈"
+    r = c.patch(f"/api/notes/{nid}", json={"text": "v2"})
+    assert r.status_code == 200 and r.get_json()["text"] == "v2"
+    assert c.patch(f"/api/notes/{nid}", json={"text": "  "}).status_code == 400
+    assert c.patch("/api/notes/nope", json={"text": "x"}).status_code == 404
+    assert ns.list()[0].text == "v2"

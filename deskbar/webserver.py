@@ -135,6 +135,12 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             return jsonify({"error": "not available"}), 501
         return jsonify([asdict(n) for n in notes_store.list()])
 
+    def _notes_changed():
+        # 便條變更後叫醒裝置的 render 迴圈（usage_state 即 AppState），
+        # 便條牆才會即時跟上，不用等下一次整分重繪。
+        if usage_state is not None:
+            usage_state.bump()
+
     @app.post("/api/notes")
     def add_note():
         """便條輸入端（Mac shell function／手機網頁）。跟 /api/alarms 一樣
@@ -145,13 +151,29 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
         n = notes_store.add(d.get("text", "") if isinstance(d.get("text"), str) else "")
         if n is None:
             return jsonify({"error": "text required"}), 400
+        _notes_changed()
         return jsonify(asdict(n)), 201
+
+    @app.patch("/api/notes/<nid>")
+    def patch_note(nid):
+        if notes_store is None:
+            return jsonify({"error": "not available"}), 501
+        d = request.get_json(force=True, silent=True) or {}
+        text = d.get("text", "")
+        n = notes_store.update(nid, text if isinstance(text, str) else "")
+        if n is None:
+            if not (isinstance(text, str) and text.strip()):
+                return jsonify({"error": "text required"}), 400
+            return jsonify({"error": "not found"}), 404
+        _notes_changed()
+        return jsonify(asdict(n))
 
     @app.delete("/api/notes/<nid>")
     def delete_note(nid):
         if notes_store is None:
             return jsonify({"error": "not available"}), 501
         if notes_store.remove(nid):
+            _notes_changed()
             return "", 204
         return jsonify({"error": "not found"}), 404
 

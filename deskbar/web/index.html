@@ -31,7 +31,7 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
 <h2 style="margin-top:8px">便條</h2>
 <div class="card">
  <div class="row"><input type="text" id="nt" placeholder="閃念丟這裡，Enter 上牆"
-  onkeydown="if(event.key==='Enter')addNote()">
+  onkeydown="if(event.key==='Enter'&&!event.isComposing&&event.keyCode!==229)addNote()">
  <button onclick="addNote()">上牆</button></div>
  <div class="hint">Mac 終端機：note 指令兩秒上牆（設定方式問 Claude）</div>
 </div>
@@ -147,16 +147,32 @@ async function saveKey(){
  document.getElementById("p_msg").textContent=r.ok?" Key 已儲存 ✓（5 分鐘內生效）":" 儲存失敗";
  if(r.ok)setTimeout(loadPrefs,600);
 }
+let NOTES=[],editingNote=null;
 async function loadNotes(){
- const box=document.getElementById("notes");
  const r=await fetch("/api/notes");
- if(!r.ok){box.innerHTML="";return}
- const ns=await r.json();
- box.innerHTML=ns.map(n=>`
+ if(!r.ok){document.getElementById("notes").innerHTML="";return}
+ NOTES=await r.json();renderNotes();
+}
+function renderNotes(){
+ document.getElementById("notes").innerHTML=NOTES.map(n=>editingNote===n.id?`
+  <div class="card"><input type="text" id="ed_${esc(n.id)}" value="${esc(n.text)}"
+    onkeydown="if(event.key==='Enter'&&!event.isComposing&&event.keyCode!==229)saveEdit('${esc(n.id)}')">
+   <div class="row" style="margin-top:8px;justify-content:flex-end">
+    <button onclick="saveEdit('${esc(n.id)}')">存</button>
+    <button onclick="editingNote=null;renderNotes()">取消</button></div></div>`:`
   <div class="card"><div class="row">
    <div style="flex:1;white-space:pre-wrap">${esc(n.text)}</div>
-   <button class="del" onclick="delNote('${esc(n.id)}')">撕掉</button>
+   <div style="display:flex;gap:6px"><button onclick="editingNote='${esc(n.id)}';renderNotes()">編輯</button>
+   <button class="del" onclick="delNote('${esc(n.id)}')">撕掉</button></div>
   </div></div>`).join("");
+ const el=document.getElementById("ed_"+editingNote);if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length)}
+}
+async function saveEdit(id){
+ const v=document.getElementById("ed_"+id).value.trim();
+ if(!v)return;
+ const r=await fetch("/api/notes/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({text:v})});
+ if(r.ok){editingNote=null;loadNotes()}
 }
 async function addNote(){
  const el=document.getElementById("nt");
