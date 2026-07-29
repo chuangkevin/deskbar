@@ -69,6 +69,19 @@ def test_patch_prefs_rejects_bad_input_without_side_effects(client, payload, why
     assert not client._saved, "驗證失敗不得寫檔"
 
 
+def test_patch_linear_key_sets_value_and_get_only_exposes_bool(client):
+    r = client.patch("/api/prefs", json={"linear_api_key": " lin_api_secret123 "})
+    assert r.status_code == 200
+    assert client._settings.linear_api_key == "lin_api_secret123", "應 strip 後寫入"
+    d = client.get("/api/prefs").get_json()
+    assert d["linear_key_set"] is True
+    assert "lin_api_secret123" not in str(d), "金鑰原文絕不得出現在 GET 回應"
+    r2 = client.patch("/api/prefs", json={"linear_api_key": "x" * 300})
+    assert r2.status_code == 400, "超長金鑰拒收"
+    r3 = client.patch("/api/prefs", json={"linear_api_key": ""})
+    assert r3.status_code == 200 and client._settings.linear_api_key == "", "空字串=清除"
+
+
 def test_prefs_unavailable_without_settings_wiring(tmp_path, monkeypatch):
     monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
     app = create_app(_FakeStore())

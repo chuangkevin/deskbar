@@ -279,6 +279,12 @@ class App:
                         self._start_transition()
                         self.settings.view_span = next_span(self.settings.view_span)
                         self.on_save(self.settings)
+                    elif a == "toggle_center":
+                        self._start_transition()
+                        self.settings.center_view = (
+                            "calendar" if getattr(self.settings, "center_view",
+                                                  "calendar") == "linear" else "linear")
+                        self.on_save(self.settings)
                     elif a == "cycle_view_mode":
                         self._start_transition()
                         self.settings.view_mode = (
@@ -561,6 +567,9 @@ class App:
         dx = x - sx
         self._drag_start = None
         from deskbar.ui.dashboard import TL_X0, TL_X1
+        if getattr(self.settings, "center_view", "calendar") == "linear":
+            self._dispatch(x, y)          # 待辦卡無時間軸，拖曳一律當點擊
+            return
         if abs(dx) > DRAG_THRESHOLD and sx > TL_X0:
             self._pan_view(dx, TL_X1 - TL_X0)
             self._last_seq = -1      # 放手後強制重繪

@@ -58,6 +58,8 @@ class Settings:
     work_end_min: int = 1080            # 下班（分鐘制）；此後套用下班亮度
     brightness_day: int = 100           # 上班時段亮度 %（軟體疊黑實現）
     brightness_night: int = 40          # 下班時段亮度 %
+    linear_api_key: str = ""            # Linear 個人 API Key（只存裝置，不進 repo/log）
+    center_view: str = "calendar"       # 中欄顯示：calendar｜linear（待辦卡）
 
     def ensure_account(self, email: str) -> AccountCfg:
         if email not in self.accounts:
@@ -135,6 +137,12 @@ def load_settings() -> Settings:
         work_end_min = _min_from("work_end_min", "work_end_hour", 1080)
         brightness_day = _int_in("brightness_day", 100, 10, 100)
         brightness_night = _int_in("brightness_night", 40, 10, 100)
+        linear_api_key = raw.get("linear_api_key", "")
+        if not isinstance(linear_api_key, str):
+            linear_api_key = ""
+        center_view = raw.get("center_view", "calendar")
+        if center_view not in ("calendar", "linear"):
+            center_view = "calendar"
         return Settings(
             rotation=raw.get("rotation", 90),
             weather_lat=raw.get("weather_lat", DEFAULT_LAT),
@@ -157,6 +165,8 @@ def load_settings() -> Settings:
             work_end_min=work_end_min,
             brightness_day=brightness_day,
             brightness_night=brightness_night,
+            linear_api_key=linear_api_key,
+            center_view=center_view,
         )
     except (OSError, ValueError, KeyError, TypeError):
         return Settings()
@@ -184,6 +194,8 @@ def save_settings(s: Settings) -> None:
         "work_end_min": s.work_end_min,
         "brightness_day": s.brightness_day,
         "brightness_night": s.brightness_night,
+        "linear_api_key": s.linear_api_key,
+        "center_view": s.center_view,
         "accounts": {
             e: {"lane_label": a.lane_label, "color": a.color, "calendars": a.calendars}
             for e, a in s.accounts.items()

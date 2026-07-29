@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -36,6 +36,8 @@ class Snapshot:
     syncing: bool = False
     presence: PresenceState = _DEFAULT_PRESENCE
     usage: "UsageInfo | None" = None
+    linear: list = field(default_factory=list)        # LinearIssue 清單（待辦卡）
+    linear_at: datetime | None = None                  # 上次成功同步時間
 
 
 class AppState:
@@ -48,6 +50,8 @@ class AppState:
         self._syncing = False
         self._usage: "UsageInfo | None" = None
         self._presence: PresenceState = _DEFAULT_PRESENCE
+        self._linear: list = []
+        self._linear_at: datetime | None = None
         self._cached_snapshot: Snapshot | None = None
         self._cached_seq: int | None = None
 
@@ -60,7 +64,8 @@ class AppState:
             events = [e for lst in self._events.values() for e in lst]
             events.sort(key=lambda e: (e.start, e.id))
             snap = Snapshot(events, self._weather, dict(self._statuses), self._seq,
-                            self._syncing, self._presence, self._usage)
+                            self._syncing, self._presence, self._usage,
+                            list(self._linear), self._linear_at)
             self._cached_snapshot = snap
             self._cached_seq = self._seq
             return snap
@@ -97,6 +102,12 @@ class AppState:
     def set_usage(self, info: "UsageInfo") -> None:
         with self._lock:
             self._usage = info
+            self._seq += 1
+
+    def set_linear(self, items: list, now: datetime) -> None:
+        with self._lock:
+            self._linear = list(items)
+            self._linear_at = now
             self._seq += 1
 
     def set_presence(self, ps: PresenceState) -> None:

@@ -139,6 +139,7 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
         "sync_interval_min": (1, 120),
     }
     _PREF_BOOL = {"presence_enabled"}
+    _PREF_STR = {"linear_api_key": 200}      # 值=長度上限；GET 絕不回傳原文
 
     @app.get("/api/prefs")
     def get_prefs():
@@ -147,6 +148,9 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
         with settings_lock:
             out = {k: getattr(settings_provider, k) for k in _PREF_INT}
             out.update({k: getattr(settings_provider, k) for k in _PREF_BOOL})
+            # 祕密欄位只回「是否已設定」，原文永不出站
+            out["linear_key_set"] = bool(getattr(settings_provider,
+                                                 "linear_api_key", ""))
         return jsonify(out)
 
     @app.patch("/api/prefs")
@@ -167,6 +171,10 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
                 if not isinstance(v, int) or isinstance(v, bool) or not (lo <= v <= hi):
                     return jsonify({"error": f"{k} out of range {lo}..{hi}"}), 400
                 staged[k] = v
+            elif k in _PREF_STR:
+                if not isinstance(v, str) or len(v) > _PREF_STR[k]:
+                    return jsonify({"error": f"{k} must be string"}), 400
+                staged[k] = v.strip()
             else:
                 return jsonify({"error": f"unknown field {k}"}), 400
         with settings_lock:

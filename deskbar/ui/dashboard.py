@@ -23,6 +23,7 @@ SPAN_LABELS = {"half": "半天", "day": "日", "week": "週", "month": "月"}
 # 右欄完全不放任何頂帶元素）。
 SPAN_BTN = Rect(1290, 2, 110, 48)
 MODE_BTN = Rect(1408, 2, 110, 48)
+CENTER_BTN = Rect(1172, 2, 110, 48)      # 行事曆↔待辦（Linear）切換
 GOTO_NOW_W, GOTO_NOW_H = 110, 40        # 「回到今天」鈕：緊貼寬度鈕左側
 TOPBAR_GAP = 16                          # 頂帶固定區塊之間的最小留白
 # 2026-07-27：頂欄整日行程膠囊（_render_allday／_layout_allday_chips）已移除——
@@ -111,6 +112,20 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     _render_panel(surface, snap, settings, now, hits, clock_anim, weather_t)
     pygame.draw.line(surface, theme.C["panel_line"], (PANEL_W, 0), (PANEL_W, 480))
     pygame.draw.line(surface, theme.C["panel_line"], (TL_X1, 0), (TL_X1, 480))
+
+    # 中欄切換：行事曆 ↔ Linear 待辦。待辦模式下行事曆專屬的頂帶元素
+    # （寬度/模式鈕、窗口標籤、回到今天）全部不畫——它們對待辦無意義。
+    center_linear = getattr(settings, "center_view", "calendar") == "linear"
+    _chip_btn(surface, "行事曆" if center_linear else "待辦", CENTER_BTN,
+              "toggle_center", hits)
+    if center_linear:
+        from deskbar.ui import linearview
+        _text(surface, "待辦事項", 22, theme.C["text2"], TL_X0, 22)
+        hits += linearview.render(surface, snap, settings, TL_AREA, now)
+        if settings.presence_enabled and settings.presence_hide_accounts:
+            pass                        # 在場感應不影響待辦卡（工作資料）
+        usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
+        return hits
 
     lane_emails = [e for e in settings.accounts if settings.accounts[e].calendars] \
         or list(snap.statuses)

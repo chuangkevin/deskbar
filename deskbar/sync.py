@@ -133,6 +133,27 @@ def weather_sync_once(state: AppState, settings, deps: SyncDeps,
         print(f"[deskbar] weather sync failed: {e}", file=sys.stderr)
 
 
+LINEAR_INTERVAL = 300      # Linear 待辦輪詢間隔（秒）；唯讀查詢，5 分鐘足夠
+
+
+def linear_sync_once(state: AppState, settings,
+                     settings_lock: threading.Lock | None = None) -> None:
+    """有設 API Key 才打；失敗保留舊資料＋stderr 一行（比照 weather）。"""
+    from deskbar import linear as linear_mod
+    if settings_lock is not None:
+        with settings_lock:
+            key = getattr(settings, "linear_api_key", "")
+    else:
+        key = getattr(settings, "linear_api_key", "")
+    if not key:
+        return
+    try:
+        items = linear_mod.fetch_issues(key)
+        state.set_linear(items, datetime.now(ZoneInfo("Asia/Taipei")))
+    except Exception as e:
+        print(f"[deskbar] linear sync failed: {e}", file=sys.stderr)
+
+
 def start_threads(state: AppState, settings, settings_lock: threading.Lock) -> None:
     deps = default_deps()
 
@@ -162,5 +183,16 @@ def start_threads(state: AppState, settings, settings_lock: threading.Lock) -> N
                 elapsed = 0
                 weather_sync_once(state, settings, deps, settings_lock)
 
+    def linear_loop():
+        linear_sync_once(state, settings, settings_lock)
+        elapsed = 0
+        while True:
+            _time.sleep(1)
+            elapsed += 1
+            if elapsed >= LINEAR_INTERVAL:
+                elapsed = 0
+                linear_sync_once(state, settings, settings_lock)
+
     threading.Thread(target=cal_loop, daemon=True).start()
     threading.Thread(target=wx_loop, daemon=True).start()
+    threading.Thread(target=linear_loop, daemon=True).start()

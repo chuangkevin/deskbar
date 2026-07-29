@@ -81,5 +81,6 @@ def test_allday_events_never_produce_topbar_chip_hits():
     # 寬度/模式/回到今天三顆控制鈕。
     topbar_zone_hits = [h for h in hits if h.rect.x >= dashboard.TL_X0 and h.rect.y < 52]
     assert topbar_zone_hits and all(
-        h.action in ("cycle_span", "cycle_view_mode", "goto_now") for h in topbar_zone_hits), \
+        h.action in ("cycle_span", "cycle_view_mode", "goto_now", "toggle_center")
+        for h in topbar_zone_hits), \
         f"頂欄（x>=TL_X0, y<52）不該再有整日 chip 產生的 hit：{topbar_zone_hits}"
