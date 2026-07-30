@@ -25,19 +25,19 @@ def render(surface, event) -> list[Hit]:
     else:
         when = f"{event.start.strftime(f_time)} – {event.end.strftime(f_time)}"
     y = CARD_Y + 40
-    img = theme.font(40).render(event.title, True, theme.C["text"])
+    img = theme.text_surface(event.title, 40, theme.C["text"])
     surface.blit(img, (TEXT_X, y)); y += 64
-    img = theme.font(28).render(when, True, theme.C["text2"])
+    img = theme.text_surface(when, 28, theme.C["text2"])
     surface.blit(img, (TEXT_X, y)); y += 48
     if event.location:
-        img = theme.font(24).render(f"地點：{event.location}", True, theme.C["text2"])
+        img = theme.text_surface(f"地點：{event.location}", 24, theme.C["text2"])
         surface.blit(img, (TEXT_X, y)); y += 40
     if event.description:
         lines = theme.wrap_lines(event.description, theme.font(22), TEXT_MAX_W, 2)
         for line in lines:
-            img = theme.font(22).render(line, True, theme.C["muted"])
+            img = theme.text_surface(line, 22, theme.C["muted"])
             surface.blit(img, (TEXT_X, y)); y += 28
-    img = theme.font(22).render("點擊空白處關閉", True, theme.C["muted"])
+    img = theme.text_surface("點擊空白處關閉", 22, theme.C["muted"])
     surface.blit(img, (TEXT_X, CARD_Y + 312))
     return [Hit(Rect(0, 0, 1920, 480), "close", None),
             Hit(Rect(card.x, card.y, card.w, card.h), "noop", None)]

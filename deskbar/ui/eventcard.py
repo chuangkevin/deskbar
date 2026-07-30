@@ -67,13 +67,13 @@ def draw_card(surface, rect: "pygame.Rect", main, title: str,
     fitted = theme.truncate_to_width(title, theme.font(title_size, bold=True), max_w)
     if not fitted:
         return
-    img = theme.font(title_size, bold=True).render(fitted, True, theme.C["text"])
+    img = theme.text_surface(fitted, title_size, theme.C["text"], bold=True)
     time_fits = (time_text and rect.h >= TWO_LINE_MIN_H
                  and theme.font(16).size(time_text)[0] <= max_w)
     if time_fits:
         base = rect.y + rect.h / 2
         surface.blit(img, (text_x, base - img.get_height() - 1))
-        t_img = theme.font(16).render(time_text, True, theme.C["muted"])
+        t_img = theme.text_surface(time_text, 16, theme.C["muted"])
         surface.blit(t_img, (text_x, base + 3))
     else:
         surface.blit(img, (text_x, rect.y + rect.h / 2 - img.get_height() / 2))
@@ -108,7 +108,7 @@ def draw_pill(surface, rect: "pygame.Rect", main, label: str,
     pygame.draw.rect(surface, border_color(main), rect, width=1,
                      border_radius=rect.h // 2)
     pygame.draw.circle(surface, main, (rect.x + 13, rect.centery), 4)
-    img = theme.font(size).render(fitted, True, theme.C["text"])
+    img = theme.text_surface(fitted, size, theme.C["text"])
     surface.blit(img, img.get_rect(midleft=(rect.x + 24, rect.centery)))
     return True
 
@@ -117,5 +117,5 @@ def draw_lane_label(surface, x: float, cy: float, main, label: str,
                     size: int = 20) -> None:
     """泳道標籤：色點＋中性文字（取代整串飽和彩字）。"""
     pygame.draw.circle(surface, main, (round(x + 5), round(cy)), 5)
-    img = theme.font(size).render(label, True, theme.C["text2"])
+    img = theme.text_surface(label, size, theme.C["text2"])
     surface.blit(img, img.get_rect(midleft=(x + 18, cy)))

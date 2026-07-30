@@ -37,7 +37,7 @@ CENTER_SLIDE_AREA = Rect(PANEL_W + 2, 52, TL_X1 - PANEL_W - 2, 480 - 52)
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft"):
-    img = theme.font(size).render(s, True, color)
+    img = theme.text_surface(s, size, color)
     r = img.get_rect(**{anchor: (x, y)})
     surface.blit(img, r)
     return r
@@ -47,7 +47,7 @@ def _chip_btn(surface, label, rect: Rect, action, hits, size=22):
     r = pygame.Rect(int(rect.x), int(rect.y), int(rect.w), int(rect.h))
     pygame.draw.rect(surface, theme.C["card"], r, border_radius=8)
     pygame.draw.rect(surface, theme.C["panel_line"], r, 1, border_radius=8)
-    img = theme.font(size).render(label, True, theme.C["text"])
+    img = theme.text_surface(label, size, theme.C["text"])
     surface.blit(img, img.get_rect(center=r.center))
     hits.append(Hit(rect, action, None))
 
@@ -257,8 +257,7 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_t
     flipclock.draw(surface, 24, 34, now.strftime("%H:%M"), anim[0], anim[1],
                    digit_h=96)    # 4 卡+冒號實測總寬 342px，PANEL_W=400 內綽綽有餘
     wd = "週" + "一二三四五六日"[now.weekday()]
-    img = theme.font(24, bold=True).render(f"{now.month}月{now.day}日 {wd}", True,
-                                           theme.C["text2"])
+    img = theme.text_surface(f"{now.month}月{now.day}日 {wd}", 24, theme.C["text2"], bold=True)
     surface.blit(img, (24, 150))
     if w is not None:
         age = (now - w.fetched_at).total_seconds()
@@ -330,13 +329,12 @@ def _render_next_event(surface, snap, settings, now) -> None:
     cd = f"{mins} 分鐘後" if mins < 60 else f"{mins // 60} 小時 {mins % 60:02d} 分後"
     imminent = mins <= 15
     r = _text(surface, "接下來", 16, theme.C["muted"], 24, 272)
-    img = theme.font(16, bold=True).render(cd, True,
-                                           theme.C["now"] if imminent
-                                           else theme.C["text2"])
+    img = theme.text_surface(cd, 16, theme.C["now"] if imminent
+                                           else theme.C["text2"], bold=True)
     surface.blit(img, (r.right + 12, 272))
     title = theme.truncate_to_width(f"{ev.start.strftime('%H:%M')} {ev.title}",
                                     theme.font(22, weight="medium"), PANEL_W - 48)
-    img = theme.font(22, weight="medium").render(title, True, theme.C["text"])
+    img = theme.text_surface(title, 22, theme.C["text"], weight="medium")
     surface.blit(img, (24, 296))
 
 
@@ -449,7 +447,7 @@ def _render_now_line_range(surface, win_start, win_end, now: datetime) -> None:
     x = time_to_x_range(now, win_start, win_end, TL_X0, TL_X1)
     pygame.draw.line(surface, theme.C["now"], (x, 52), (x, 420), 2)
     pygame.draw.circle(surface, theme.C["now"], (round(x), 54), 5)   # iOS 式線頭圓點
-    img = theme.font(20).render(now.strftime("%H:%M"), True, theme.C["now_text"])
+    img = theme.text_surface(now.strftime("%H:%M"), 20, theme.C["now_text"])
     r = img.get_rect(midtop=(x, 54))
     pygame.draw.rect(surface, theme.C["now"], r.inflate(12, 6), border_radius=4)
     surface.blit(img, r)

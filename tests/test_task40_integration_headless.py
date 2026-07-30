@@ -157,7 +157,7 @@ def _make_dashboard_app(tmp_path, monkeypatch) -> App:
     app = App(state, settings, lock, on_save=lambda s: None, alarm_store=None)
     app.view = "dashboard"
     app.logical = pygame.Surface((1920, 480))
-    app._flip = lambda: None    # 略過真正顯示器 flip，只驗證過場狀態機本身
+    app._flip = lambda *a, **k: None    # 略過真正顯示器 flip，只驗證過場狀態機本身
     return app
 
 
@@ -225,7 +225,7 @@ def _make_idle_dashboard_app(tmp_path, monkeypatch, weather_code=61) -> App:
     app._last_seq = app.state.snapshot().seq
     app._last_minute = NOW.minute
     app._flips = []
-    app._flip = lambda: app._flips.append(1)
+    app._flip = lambda *a, **k: app._flips.append(1)
     return app
 
 

@@ -18,7 +18,7 @@ _PRIO_LABEL = {1: "緊急", 2: "高"}     # 3/4/0 不掛標——滿版標籤＝
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft", bold=False):
-    img = theme.font(size, bold=bold).render(s, True, color)
+    img = theme.text_surface(s, size, color, bold=bold)
     r = img.get_rect(**{anchor: (x, y)})
     surface.blit(img, r)
     return r

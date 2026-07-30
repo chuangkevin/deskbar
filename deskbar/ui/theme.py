@@ -180,6 +180,32 @@ def font(size: int, bold: bool = False, weight: "str | None" = None) -> "pygame.
     return _font_cache[key]
 
 
+_text_cache: dict = {}
+_TEXT_CACHE_MAX = 700
+
+
+def text_surface(s: str, size: int, color, bold: bool = False,
+                 weight: "str | None" = None) -> "pygame.Surface":
+    """font().render 的快取版。全量重繪一幀要渲染近百段文字，Pi Zero 2W 上
+    每段 1-3ms＝重繪成本的大宗，而同字串同款式的面永遠相同——快取後熱路徑
+    趨近 0，點擊到畫面更新的延遲砍掉一大半。
+
+    注意：回傳的是共享面，呼叫端只准 blit、不准改（set_alpha/畫上去都不行，
+    要改先 .copy()）。超過上限整鍋清（防旋轉中的事件標題無限累積）；換主題
+    走既有的 register_cache_clear 清空。"""
+    key = (s, size, tuple(color), bold, weight)
+    surf = _text_cache.get(key)
+    if surf is None:
+        if len(_text_cache) >= _TEXT_CACHE_MAX:
+            _text_cache.clear()
+        surf = font(size, bold, weight).render(s, True, color)
+        _text_cache[key] = surf
+    return surf
+
+
+register_cache_clear(_text_cache.clear)
+
+
 def account_color(idx: int):
     return ACCOUNT_COLORS[idx % len(ACCOUNT_COLORS)]
 

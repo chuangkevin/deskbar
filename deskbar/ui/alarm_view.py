@@ -15,7 +15,7 @@ DIVIDER_X = 960
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft"):
-    img = theme.font(size).render(s, True, color)
+    img = theme.text_surface(s, size, color)
     r = img.get_rect(**{anchor: (x, y)})
     surface.blit(img, r)
     return r
@@ -27,7 +27,7 @@ def _btn(surface, label, x, y, w, h, action, data, hits, size=24, fg=None, activ
     pygame.draw.rect(surface, bg, r, border_radius=8)
     pygame.draw.rect(surface, theme.C["panel_line"], r, 1, border_radius=8)
     color = fg or (theme.C["now_text"] if active else theme.C["text"])
-    img = theme.font(size).render(label, True, color)
+    img = theme.text_surface(label, size, color)
     surface.blit(img, img.get_rect(center=r.center))
     hits.append(Hit(Rect(x, y, w, h), action, data))
 

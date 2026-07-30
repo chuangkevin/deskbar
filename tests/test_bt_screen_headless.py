@@ -124,7 +124,7 @@ def _make_app(tmp_path, monkeypatch) -> App:
     app = App(AppState(), Settings(), threading.Lock(),
               on_save=lambda s: saved.append(1), alarm_store=None)
     app.logical = pygame.Surface((1920, 480))
-    app._flip = lambda: None
+    app._flip = lambda *a, **k: None
     app._saved = saved
     return app
 

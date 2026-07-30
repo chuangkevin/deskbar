@@ -77,12 +77,12 @@ def render(surface, notes: list, ui: dict, area: Rect, now: datetime,
         ui["pending_id"] = None
     if not notes:
         cx = area.x + area.w / 2
-        img = theme.font(28, bold=True).render("便條牆是空的", True, theme.C["text"])
+        img = theme.text_surface("便條牆是空的", 28, theme.C["text"], bold=True)
         surface.blit(img, img.get_rect(center=(cx, area.y + 120)))
         for i, line in enumerate((
                 "Mac：note 指令兩秒上牆（設定見網頁）",
                 "手機：設定網頁 → 便條 → 輸入送出")):
-            img = theme.font(22).render(line, True, theme.C["muted"])
+            img = theme.text_surface(line, 22, theme.C["muted"])
             surface.blit(img, img.get_rect(center=(cx, area.y + 170 + i * 34)))
         return hits
 
@@ -113,19 +113,18 @@ def render(surface, notes: list, ui: dict, area: Rect, now: datetime,
                                  body.w - pad * 2, 4)
         ty = 22
         for line in lines:
-            img = theme.font(22, bold=True).render(line, True, theme.C["text"])
+            img = theme.text_surface(line, 22, theme.C["text"], bold=True)
             card.blit(img, (pad, ty))
             ty += 30
         ts = _fmt_ts(n.ts, now)
         if ts:
-            img = theme.font(16).render(ts, True, theme.C["muted"])
+            img = theme.text_surface(ts, 16, theme.C["muted"])
             card.blit(img, (pad, body.h - 26))
         if pending:
             veil = pygame.Surface((body.w, body.h), pygame.SRCALPHA)
             veil.fill((0, 0, 0, 120))
             card.blit(veil, (0, 0))
-            img = theme.font(22, bold=True).render("再點一下撕掉", True,
-                                                   theme.C["warn"])
+            img = theme.text_surface("再點一下撕掉", 22, theme.C["warn"], bold=True)
             card.blit(img, img.get_rect(center=(body.w // 2, body.h // 2)))
         angle = ((_h(n.id) >> 4) % 5 - 2) * 1.0          # -2..+2 度
         rot = pygame.transform.rotozoom(card, angle, 1.0)
@@ -137,7 +136,7 @@ def render(surface, notes: list, ui: dict, area: Rect, now: datetime,
             color = theme.C["text2"] if i == page else theme.C["panel_line"]
             pygame.draw.circle(surface, color, (round(cx + i * 22),
                                                 round(area.y + area.h + 16)), 5)
-        img = theme.font(16).render(f"{page + 1}/{pages}", True, theme.C["muted"])
+        img = theme.text_surface(f"{page + 1}/{pages}", 16, theme.C["muted"])
         surface.blit(img, img.get_rect(topright=(area.x + area.w,
                                                  area.y + area.h + 8)))
     return hits

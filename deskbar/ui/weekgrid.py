@@ -57,7 +57,7 @@ def _draw_micro_row(surface, e, settings, x: float, y: float, w: float) -> None:
     fitted = theme.truncate_to_width(label, theme.font(MICRO_FONT), max_w)
     if fitted:
         # 中性文字（帳號識別已由「列」承擔）——滿格飽和彩字是舊語彙（eventcard 檔頭）
-        img = theme.font(MICRO_FONT).render(fitted, True, theme.C["text"])
+        img = theme.text_surface(fitted, MICRO_FONT, theme.C["text"])
         surface.blit(img, (text_x, y + MICRO_ROW_H / 2 - img.get_height() / 2))
 
 
@@ -77,7 +77,7 @@ def render_week(surface, events, lane_order: list[str], settings, week_start_dat
         cx = x + col_w / 2
         is_today = d == today
         color = theme.C["now"] if is_today else theme.C["text2"]
-        img = theme.font(20).render(day_header_label(d), True, color)
+        img = theme.text_surface(day_header_label(d), 20, color)
         surface.blit(img, img.get_rect(midtop=(cx, area.y + 4)))
         if i:
             pygame.draw.line(surface, theme.C["grid"], (x, area.y), (x, area.y + area.h))
@@ -112,7 +112,7 @@ def render_week(surface, events, lane_order: list[str], settings, week_start_dat
                 _draw_micro_row(surface, evs[ri], settings, x, y + ri * MICRO_ROW_H, col_w)
             if overflow > 0:
                 label = f"＋{overflow}"
-                img2 = theme.font(MICRO_FONT).render(label, True, theme.C["muted"])
+                img2 = theme.text_surface(label, MICRO_FONT, theme.C["muted"])
                 ry = y + shown * MICRO_ROW_H
                 surface.blit(img2, (x + 4, ry + MICRO_ROW_H / 2 - img2.get_height() / 2))
             hits.append(Hit(cell, "goto_day", d))

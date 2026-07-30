@@ -142,7 +142,7 @@ def _make_app(tmp_path, monkeypatch) -> App:
               alarm_store=None, notes_store=ns)
     app.settings.center_view = "notes"
     app.logical = pygame.Surface((1920, 480))
-    app._flip = lambda: None
+    app._flip = lambda *a, **k: None
     return app
 
 

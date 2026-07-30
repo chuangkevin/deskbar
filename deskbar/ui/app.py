@@ -63,6 +63,8 @@ class App:
         self._pan_band = None           # 跟手拖曳：中欄帶狀快照（拖曳中 1:1 位移，放手清除）
         self._pan_band_at = 0.0
         self._transition_cache = None   # 過場期間的「新畫面」快照：只算一次，逐幀純合成
+        self._rot_cache = None          # 實機旋轉輸出快取：髒區域局部旋轉的基底
+        self._rot_angle = None
         self._auto_center_prev = None   # 迫近行程自動切回行事曆前，使用者原本的中欄視圖
         self._auto_center_hold = False  # 使用者在迫近期間手動切走＝這一波不再搶（實機回報：看便條被踢回）
         self._auto_center_check_at = 0.0
@@ -128,7 +130,22 @@ class App:
             self._veil = (size, alpha, s)
         return self._veil[2]
 
-    def _flip(self) -> None:
+    @staticmethod
+    def _map_rot(r: "pygame.Rect", angle: int, lw: int = LOGICAL_W,
+                 lh: int = LOGICAL_H) -> tuple:
+        """logical 上的矩形 r 旋轉 angle 後，在旋轉輸出面上的左上角座標。
+        只支援實機的兩個角度（rotation=90→-90、rotation=270→+90）；映射
+        正確性由 test_flip_dirty_rotation_matches_full 逐 byte 鎖定。"""
+        if angle % 360 == 270:          # pygame.rotate(-90)＝順時針
+            return (lh - r.y - r.h, r.x)
+        return (r.y, lw - r.x - r.w)    # +90＝逆時針
+
+    def _flip(self, dirty=None) -> None:
+        """dirty（logical 座標的 Rect|tuple|None）：這一幀只有該區域變了。
+        實機路徑據此只旋轉髒區域、貼回持久的旋轉快取——整張 1920×480 旋轉
+        （92 萬像素）是每幀固定稅，氛圍幀只動左欄(400 寬)、拖曳只動中欄，
+        局部旋轉把這筆稅砍到 1/5～1/2（實機 70% CPU 的主成分）。
+        亮度疊黑改蓋在 screen 上，旋轉快取永遠保持乾淨原圖。"""
         if self._dev:
             # dev：外層旋轉直接作用在邏輯畫面上（0=轉正全景），不經實機面板管線
             out = self.logical if self._dev_rotate == 0 \
@@ -140,11 +157,18 @@ class App:
             self.screen.blit(out, (0, 0))
         else:
             angle = transform.pygame_rotation_angle(self.settings.rotation)
-            rotated = pygame.transform.rotate(self.logical, angle)
-            veil = self._dim_veil(rotated.get_size())
+            if self._rot_cache is None or self._rot_angle != angle or dirty is None:
+                self._rot_cache = pygame.transform.rotate(self.logical, angle)
+                self._rot_angle = angle
+            else:
+                r = pygame.Rect(dirty).clip(self.logical.get_rect())
+                if r.w > 0 and r.h > 0:
+                    sub = pygame.transform.rotate(self.logical.subsurface(r), angle)
+                    self._rot_cache.blit(sub, self._map_rot(r, angle))
+            self.screen.blit(self._rot_cache, (0, 0))
+            veil = self._dim_veil(self._rot_cache.get_size())
             if veil is not None:
-                rotated.blit(veil, (0, 0))
-            self.screen.blit(rotated, (0, 0))
+                self.screen.blit(veil, (0, 0))
         pygame.display.flip()
 
     def _dispatch(self, x: int, y: int) -> None:
@@ -573,7 +597,7 @@ class App:
             from deskbar.ui import dashboard
             dashboard.render_panel_only(self.logical, snap, self.settings, now,
                                         self._weather_t())
-        self._flip()
+        self._flip((0, 0, dashboard.PANEL_W, LOGICAL_H))   # 只有左欄髒
 
     def _render(self, clock_anim=None) -> None:
         from datetime import datetime
@@ -613,7 +637,8 @@ class App:
         0.2s 的動畫實跑 0.6s 還在抖（「卡頓感」元凶之二）。過場僅 0.2s，期間
         時鐘/天氣凍結無感。超過 DURATION 後過場結束、丟快照。"""
         import time
-        if self._transition_cache is None:
+        first = self._transition_cache is None
+        if first:
             snap = self.state.snapshot()
             self._draw_frame(snap, now)
             self._transition_cache = (self.logical.copy(), snap.seq, now.minute,
@@ -624,7 +649,10 @@ class App:
         composed = self._transition.frame(self.logical, elapsed)
         if composed is not self.logical:
             self.logical.blit(composed, (0, 0))
-        self._flip()
+        # 首幀＝新畫面上場（chrome 可能整組換），全量；其後只有滑動帶在動
+        from deskbar.ui.dashboard import CENTER_SLIDE_AREA as A
+        self._flip(None if first else
+                   (int(A.x), int(A.y), int(A.w), int(A.h)))
         _frame, self._last_seq, self._last_minute, self._last_clock_text = \
             self._transition_cache
         if not self._transition.active():
@@ -752,7 +780,7 @@ class App:
         self.logical.fill(theme.C["bg"], r)
         self.logical.blit(self._pan_band, (r.x + dx, r.y))
         self.logical.set_clip(prev_clip)
-        self._flip()
+        self._flip(r)
 
     def _press_feedback(self, x: int, y: int) -> None:
         """按下瞬間的視覺回饋（目標 <50ms）：命中可點元素就疊一層高亮並立即
@@ -770,7 +798,7 @@ class App:
                 pygame.draw.rect(glow, color, glow.get_rect(), border_radius=10)
                 self.logical.blit(glow, r.topleft)
                 self._pressed_dirty = True
-                self._flip()
+                self._flip(r)
                 return
 
     def _screen_asleep(self) -> bool:

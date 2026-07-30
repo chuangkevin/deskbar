@@ -25,7 +25,7 @@ PILL_H = 22
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft"):
-    img = theme.font(size).render(s, True, color)
+    img = theme.text_surface(s, size, color)
     r = img.get_rect(**{anchor: (x, y)})
     surface.blit(img, r)
     return r
@@ -34,7 +34,7 @@ def _text(surface, s, size, color, x, y, anchor="topleft"):
 def _draw_today_header(surface, cx: float, top: float, day: int) -> None:
     """今天的表頭數字「反白」：小圓角色塊（theme.C["now"]）承底，深色字，
     跟 dashboard 現在時間線的時刻標籤同一套視覺語彙，一眼認出「今天」。"""
-    img = theme.font(16).render(str(day), True, theme.C["now_text"])
+    img = theme.text_surface(str(day), 16, theme.C["now_text"])
     r = img.get_rect(midtop=(cx, top))
     pygame.draw.rect(surface, theme.C["now"], r.inflate(10, 6), border_radius=6)
     surface.blit(img, r)
@@ -45,7 +45,7 @@ def _draw_count_pill(surface, count: int, main, dark, cx: float, cy: float) -> N
     dark 參數保留簽名相容，不再使用）。"""
     from deskbar.ui import eventcard
     label = str(count)
-    img = theme.font(18).render(label, True, theme.C["text"])
+    img = theme.text_surface(label, 18, theme.C["text"])
     w = max(img.get_width() + 14, PILL_H)
     rect = pygame.Rect(0, 0, w, PILL_H)
     rect.center = (round(cx), round(cy))

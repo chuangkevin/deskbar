@@ -10,10 +10,10 @@ def render(surface, alarm, now) -> list[Hit]:
     bg = theme.C["now"] if flash else theme.C["bg"]
     fg = theme.C["now_text"] if flash else theme.C["text"]
     surface.fill(bg)
-    img = theme.font(96).render(alarm.label, True, fg)
+    img = theme.text_surface(alarm.label, 96, fg)
     surface.blit(img, img.get_rect(center=(960, 190)))
-    img = theme.font(48).render(alarm.time, True, fg)
+    img = theme.text_surface(alarm.time, 48, fg)
     surface.blit(img, img.get_rect(center=(960, 300)))
-    img = theme.font(26).render("點擊任意處關閉", True, fg)
+    img = theme.text_surface("點擊任意處關閉", 26, fg)
     surface.blit(img, img.get_rect(center=(960, 400)))
     return [Hit(Rect(0, 0, 1920, 480), "dismiss_alarm", alarm.id)]

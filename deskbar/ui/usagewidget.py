@@ -34,14 +34,14 @@ VERY_STALE_AFTER_S = 3600    # 超過這麼久，整組轉 muted 灰（agent 可
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft", bold=False):
-    img = theme.font(size, bold=bold).render(s, True, color)
+    img = theme.text_surface(s, size, color, bold=bold)
     r = img.get_rect(**{anchor: (x, y)})
     surface.blit(img, r)
     return r
 
 
 def _center_text(surface, s, size, color, x0, w, cy):
-    img = theme.font(size).render(s, True, color)
+    img = theme.text_surface(s, size, color)
     surface.blit(img, img.get_rect(center=(x0 + w / 2, cy)))
 
 

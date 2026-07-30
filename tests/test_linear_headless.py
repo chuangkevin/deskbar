@@ -181,7 +181,7 @@ def test_swipe_flips_linear_pages_and_clamps(tmp_path, monkeypatch):
     app.settings.center_view = "linear"
     app.view = "dashboard"
     app.logical = pygame.Surface((1920, 480))
-    app._flip = lambda: None
+    app._flip = lambda *a, **k: None
     app.state.set_linear([_issue(f"S-{i}") for i in range(20)], NOW)   # 3 頁
     app.hits = []
     app._drag_start = (800, 200)

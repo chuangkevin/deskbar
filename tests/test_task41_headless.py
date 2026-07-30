@@ -44,7 +44,7 @@ def _make_app(tmp_path, monkeypatch, **kw) -> App:
     monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
     app = App(AppState(), Settings(), threading.Lock(), on_save=lambda s: None, **kw)
     app.logical = pygame.Surface((1920, 480))
-    app._flip = lambda: None
+    app._flip = lambda *a, **k: None
     return app
 
 
@@ -443,3 +443,43 @@ def test_transition_frame_renders_new_frame_only_once(tmp_path, monkeypatch):
     app._transition_start = _t.monotonic()
     app._render_transition_frame(NOW)
     assert len(calls) == 1, "過場期間新畫面只渲染一次"
+
+
+# ---------------------------------------------------------------- 髒區域旋轉
+
+@pytest.mark.parametrize("rotation", [90, 270])
+def test_flip_dirty_rotation_matches_full(tmp_path, monkeypatch, rotation):
+    """局部旋轉貼回快取的結果必須與整張重新旋轉逐 byte 相同——映射算錯會
+    整條帶貼歪，這顆測試把兩個實機角度、多個髒矩形全部鎖死。"""
+    from deskbar import transform as tr
+    app = _make_app(tmp_path, monkeypatch)
+    del app._flip                       # 還原真正的 _flip（_make_app 有 stub 掉）
+    app._dev = False
+    app.settings.rotation = rotation
+    app.screen = pygame.Surface((480, 1920))
+    monkeypatch.setattr(pygame.display, "flip", lambda: None)
+    for i in range(0, 1920, 160):       # 鋪可辨識的圖樣
+        pygame.draw.rect(app.logical, ((i * 7) % 255, (i * 13) % 255, 200),
+                         (i, (i // 160) * 24 % 456, 120, 24))
+    app._flip()                         # 全量：建立旋轉快取
+    angle = tr.pygame_rotation_angle(rotation)
+    for dirty in ((0, 0, 400, 480), (402, 52, 1118, 428), (1172, 2, 110, 48),
+                  (37, 211, 313, 97)):
+        pygame.draw.rect(app.logical, (dirty[0] % 255, 90, dirty[1] % 255),
+                         dirty)         # 弄髒該區域
+        app._flip(dirty)                # 局部旋轉貼回
+        full = pygame.transform.rotate(app.logical, angle)
+        assert pygame.image.tobytes(app._rot_cache, "RGB") == \
+            pygame.image.tobytes(full, "RGB"), f"{rotation}° dirty={dirty} 映射歪了"
+
+
+def test_text_surface_caches_and_clears_on_theme_change():
+    theme.set_theme("dark")
+    a = theme.text_surface("快取測試", 22, theme.C["text"], bold=True)
+    b = theme.text_surface("快取測試", 22, theme.C["text"], bold=True)
+    assert a is b, "同字串同款式要回同一張面"
+    c = theme.text_surface("快取測試", 22, theme.C["muted"], bold=True)
+    assert c is not a, "不同顏色是不同 key"
+    theme.set_theme("dark")             # 換主題（即使同名）要清快取
+    d = theme.text_surface("快取測試", 22, theme.C["text"], bold=True)
+    assert d is not a, "set_theme 後快取要重建"

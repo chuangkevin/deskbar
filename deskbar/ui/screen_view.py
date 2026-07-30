@@ -27,14 +27,14 @@ _COL_X = (40, 660, 1280)
 
 
 def _text_bold(surface, s, size, color, x, y, anchor="topleft"):
-    img = theme.font(size, bold=True).render(s, True, color)
+    img = theme.text_surface(s, size, color, bold=True)
     r = img.get_rect(**{anchor: (x, y)})
     surface.blit(img, r)
     return r
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft"):
-    img = theme.font(size).render(s, True, color)
+    img = theme.text_surface(s, size, color)
     r = img.get_rect(**{anchor: (x, y)})
     surface.blit(img, r)
     return r
@@ -43,7 +43,7 @@ def _text(surface, s, size, color, x, y, anchor="topleft"):
 def _btn(surface, label, rect, action, data, hits, size=26):
     pygame.draw.rect(surface, theme.C["card"], rect, border_radius=8)
     pygame.draw.rect(surface, theme.C["panel_line"], rect, 1, border_radius=8)
-    img = theme.font(size).render(label, True, theme.C["text"])
+    img = theme.text_surface(label, size, theme.C["text"])
     surface.blit(img, img.get_rect(center=rect.center))
     hits.append(Hit(Rect(rect.x, rect.y, rect.w, rect.h), action, data))
 

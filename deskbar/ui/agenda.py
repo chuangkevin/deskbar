@@ -33,7 +33,7 @@ def day_header_label(d: _date) -> str:
 
 def _draw_column_header(surface, cx: float, top: float, d: _date, is_today: bool) -> None:
     color = theme.C["now"] if is_today else theme.C["text2"]
-    img = theme.font(20).render(day_header_label(d), True, color)
+    img = theme.text_surface(day_header_label(d), 20, color)
     surface.blit(img, img.get_rect(midtop=(cx, top)))
 
 
@@ -74,7 +74,7 @@ def render_agenda(surface, events, settings, start_date: _date, n_days: int,
     in_window = [e for e in events if e.end > win_start and e.start < win_end]
 
     if not in_window:
-        img = theme.font(26).render("這段期間沒有行程", True, theme.C["muted"])
+        img = theme.text_surface("這段期間沒有行程", 26, theme.C["muted"])
         surface.blit(img, img.get_rect(center=(area.x + area.w / 2, area.y + area.h / 2)))
         return hits
 
@@ -122,7 +122,7 @@ def render_agenda(surface, events, settings, start_date: _date, n_days: int,
 
         if overflow > 0:
             label = f"＋{overflow}"
-            img = theme.font(18).render(label, True, theme.C["muted"])
+            img = theme.text_surface(label, 18, theme.C["muted"])
             ry = body_y + shown * row_h
             surface.blit(img, (x + 10, ry + row_h / 2 - img.get_height() / 2))
 
