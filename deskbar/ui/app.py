@@ -593,16 +593,18 @@ class App:
         self._last_clock_text = now.strftime("%H:%M")
 
     def _start_transition(self, direction: int = 1) -> None:
-        """cycle_span/cycle_view_mode/goto_now/goto_day 觸發時呼叫：把「現在畫面」交給
-        SlideTransition 存成過場素材。沒有真的顯示器時（測試直接呼叫 _dispatch，不經
-        _init_display）self.logical 不存在，直接跳過——過場只是視覺加分，不該讓沒有畫面
-        可存的呼叫端炸掉。direction>=0：舊畫面往左滑出／新畫面從右側滑入（前進）；
-        direction<0：方向相反（後退）。
+        """cycle_span/cycle_view_mode/goto_now/goto_day/翻頁/切中欄 觸發時呼叫：把
+        「現在畫面」交給 SlideTransition 存成過場素材。一律限定在中欄內容區滑動
+        （CENTER_SLIDE_AREA）——左右欄與頂列 chrome 釘死；目前所有過場來源都是
+        中欄內容變化，沒有全頁滑動的正當場景。沒有真的顯示器時（測試直接呼叫
+        _dispatch，不經 _init_display）self.logical 不存在，直接跳過。direction>=0：
+        舊內容往左滑出／新內容從右側滑入（前進）；direction<0：方向相反（後退）。
         """
         logical = getattr(self, "logical", None)
         if logical is not None:
             import time
-            self._transition.start(logical, direction)
+            from deskbar.ui.dashboard import CENTER_SLIDE_AREA
+            self._transition.start(logical, direction, area=CENTER_SLIDE_AREA)
             self._transition_start = time.monotonic()
 
     def _render_transition_frame(self, now) -> None:

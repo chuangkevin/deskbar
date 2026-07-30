@@ -26,6 +26,9 @@ MODE_BTN = Rect(1408, 2, 110, 48)
 CENTER_BTN = Rect(1172, 2, 110, 48)      # 行事曆↔待辦（Linear）切換
 GOTO_NOW_W, GOTO_NOW_H = 110, 40        # 「回到今天」鈕：緊貼寬度鈕左側
 TOPBAR_GAP = 16                          # 頂帶固定區塊之間的最小留白
+# 中欄內容的滑動過場區域：x 避開左欄分隔線(400)與右界線(1520)，y 從頂帶以下開始
+# ——過場只滑「內容」，左右欄與頂列按鈕是 chrome，釘死不動（2026-07-30 實機回報）。
+CENTER_SLIDE_AREA = Rect(PANEL_W + 2, 52, TL_X1 - PANEL_W - 2, 480 - 52)
 # 2026-07-27：頂欄整日行程膠囊（_render_allday／_layout_allday_chips）已移除——
 # 整日事件已在 agenda 模式的日欄與 weekgrid 的格子內顯示徽章，頂帶空間讓給窗口
 # 標籤／按鈕。迫近脈動（imminent_events/_pulse_t/_pulse_color）改用

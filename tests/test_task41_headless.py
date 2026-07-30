@@ -372,3 +372,40 @@ def test_toggle_sleep_dispatch(tmp_path, monkeypatch):
     assert app.settings.sleep_enabled is False
     app._dispatch(hit.rect.x + 5, hit.rect.y + 5)
     assert app.settings.sleep_enabled is True
+
+
+# ---------------------------------------------------------------- 區域限定過場
+
+def test_slide_transition_region_keeps_chrome_pixels():
+    """過場只滑中欄內容：區域外（時鐘/油表/頂列）像素一顆都不准動。"""
+    from deskbar.layout import Rect
+    from deskbar.ui.transitions import SlideTransition
+    area = Rect(402, 52, 1118, 428)
+    old = pygame.Surface((1920, 480)); old.fill((8, 8, 8))
+    pygame.draw.rect(old, (200, 40, 40), (500, 100, 300, 120))      # 舊中欄內容
+    new = pygame.Surface((1920, 480)); new.fill((8, 8, 8))
+    pygame.draw.rect(new, (40, 200, 40), (500, 100, 300, 120))      # 新中欄內容
+    new.set_at((100, 240), (1, 2, 3))       # 左欄記號（區域外）
+    new.set_at((1700, 240), (4, 5, 6))      # 右欄記號（區域外）
+    new.set_at((900, 20), (7, 8, 9))        # 頂列記號（區域外）
+    ref = pygame.image.tobytes(new.subsurface((0, 0, 400, 480)), "RGB")
+    t = SlideTransition()
+    t.start(old, 1, area=area)
+    out = t.frame(new, SlideTransition.DURATION / 2)
+    assert out.get_at((100, 240))[:3] == (1, 2, 3), "左欄不准動"
+    assert out.get_at((1700, 240))[:3] == (4, 5, 6), "右欄不准動"
+    assert out.get_at((900, 20))[:3] == (7, 8, 9), "頂列不准動"
+    assert pygame.image.tobytes(out.subsurface((0, 0, 400, 480)), "RGB") == ref
+    # 50% 時舊(紅)內容應該已滑到區域左半、仍看得到
+    half = pygame.image.tobytes(out.subsurface(
+        (int(area.x), int(area.y), int(area.w), int(area.h))), "RGB")
+    assert b"\xc8\x28\x28" in half, "過場中要看得到舊內容"
+    out2 = t.frame(new, SlideTransition.DURATION + 0.01)
+    assert out2 is new and not t.active(), "過場結束直接回新畫面"
+
+
+def test_app_transition_is_center_scoped(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch)
+    app._start_transition(+1)
+    assert app._transition._area is not None, "app 的過場一律中欄限定"
+    assert app._transition._area.x > 400 and app._transition._area.right <= 1520

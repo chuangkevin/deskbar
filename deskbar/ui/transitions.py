@@ -34,13 +34,25 @@ class SlideTransition:
         self._old = None
         self._direction = 1
         self._active = False
+        self._area = None
 
-    def start(self, old_surface, direction: int) -> None:
+    def start(self, old_surface, direction: int, area=None) -> None:
         """記錄過場起點。direction>=0：舊畫面往左滑出、新畫面從右側滑入（例如
         cycle_span／goto_day 等「前進」動作）；direction<0：方向相反（「後退」）。
         old_surface 當下就地複製一份快照，之後呼叫端繼續改動原本的 surface
-        （例如每格重繪 self.logical）不會影響這裡存的過場素材。"""
-        self._old = old_surface.copy()
+        （例如每格重繪 self.logical）不會影響這裡存的過場素材。
+
+        area（Rect|None）：只在這個矩形內滑動，其餘畫面釘死不動。中欄內容切換
+        （翻頁/切視圖/平移）用這個——2026-07-30 實機回報：整張畫面跟著滑，
+        時鐘與油表不該晃；每個區塊自己的行為只有自己要動。None＝整張滑
+        （保留給真正的全頁切換）。"""
+        if area is not None:
+            r = pygame.Rect(int(area.x), int(area.y), int(area.w), int(area.h))
+            self._old = old_surface.subsurface(r).copy()
+            self._area = r
+        else:
+            self._old = old_surface.copy()
+            self._area = None
         self._direction = 1 if direction >= 0 else -1
         self._active = True
 
@@ -50,13 +62,27 @@ class SlideTransition:
     def frame(self, new_surface, elapsed_s: float):
         """回傳這一幀該畫的合成結果。elapsed_s 是距離 start() 呼叫的秒數，由呼叫端
         自行量測傳入。超過 DURATION 即結束（active() 之後回 False），並直接回傳
-        new_surface 本身（不複製、不合成）。"""
+        new_surface 本身（不複製、不合成）。區域模式直接在 new_surface 的 area
+        內就地合成（區域外像素一個都不碰）並回傳 new_surface 本身。"""
         if not self._active or self._old is None:
             return new_surface
         progress = elapsed_s / self.DURATION
         if progress >= 1.0:
             self._active = False
             self._old = None
+            return new_surface
+        if self._area is not None:
+            r = self._area
+            offset = round(r.w * progress)
+            band = pygame.Surface((r.w, r.h))
+            new_band = new_surface.subsurface(r).copy()
+            if self._direction > 0:
+                band.blit(self._old, (-offset, 0))
+                band.blit(new_band, (r.w - offset, 0))
+            else:
+                band.blit(self._old, (offset, 0))
+                band.blit(new_band, (offset - r.w, 0))
+            new_surface.blit(band, r.topleft)
             return new_surface
         w, h = new_surface.get_size()
         offset = round(w * progress)
