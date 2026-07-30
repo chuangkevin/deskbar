@@ -16,7 +16,7 @@ DRAG_THRESHOLD = 24                     # px，觸控拖曳判定門檻
 SYNC_INTERVALS = [1, 3, 5, 10, 30]       # 設定頁「同步頻率」鈕的循環清單（分鐘）
 WAKE_SECONDS = 30                        # 深夜熄屏中觸摸喚醒的持續秒數
 AUTO_SWITCH_BEFORE_MIN = 15              # 迫近行程搶焦點：開始前 N 分鐘自動切回行事曆
-PAN_PREVIEW_INTERVAL = 0.08              # 跟手拖曳預覽重繪節流（≈12fps，Pi 實測負擔上限）
+PAN_BAND_INTERVAL = 1 / 30               # 跟手位移的 flip 節流（帶狀 blit 很便宜，30fps 上限即可）
 # 氛圍幀率不是常數：由 weatherfx.ambient_fps(code) 分級（雨/雷 15、雪 12、
 # 晴/雲/霧 8）——實務上 open-meteo 的每個 code 都有動態場景，氛圍模式是 24/7
 # 常態，分級幀率才是 Pi Zero 2W 上真正的省電槓桿。
@@ -60,8 +60,9 @@ class App:
         self._pressed_dirty = False     # 按壓高亮畫上去了，放手後要洗掉
         self._wake_until = 0.0          # 熄屏觸摸喚醒的截止時刻（monotonic）
         self._swallow_touch = False     # 熄屏中的第一觸＝喚醒，不當作操作
-        self.view_anchor_preview = None  # 跟手拖曳中的暫時錨點（放手才提交 view_anchor）
-        self._pan_preview_at = 0.0
+        self._pan_band = None           # 跟手拖曳：中欄帶狀快照（拖曳中 1:1 位移，放手清除）
+        self._pan_band_at = 0.0
+        self._transition_cache = None   # 過場期間的「新畫面」快照：只算一次，逐幀純合成
         self._auto_center_prev = None   # 迫近行程自動切回行事曆前，使用者原本的中欄視圖
         self._auto_center_hold = False  # 使用者在迫近期間手動切走＝這一波不再搶（實機回報：看便條被踢回）
         self._auto_center_check_at = 0.0
@@ -407,10 +408,8 @@ class App:
                 self.hits = alarm_view.render(self.logical, self.alarm_store,
                                               self.alarm_draft, now)
             else:
-                anchor = (self.view_anchor_preview if self.view_anchor_preview is not None
-                          else self.view_anchor)
                 self.hits = dashboard.render(self.logical, snap, self.settings, now, clock_anim,
-                                             anchor=anchor,
+                                             anchor=self.view_anchor,
                                              weather_t=self._weather_t(),
                                              notes_store=self.notes_store,
                                              notes_ui=self.notes_ui,
@@ -606,24 +605,31 @@ class App:
             from deskbar.ui.dashboard import CENTER_SLIDE_AREA
             self._transition.start(logical, direction, area=CENTER_SLIDE_AREA)
             self._transition_start = time.monotonic()
+            self._transition_cache = None   # 新過場：上一場的「新畫面」快照作廢
 
     def _render_transition_frame(self, now) -> None:
-        """切換過場的其中一幀：先照常畫「新」畫面進 self.logical，再交給 SlideTransition
-        依實際經過秒數合成舊畫面滑出的效果；超過 DURATION（0.2s）後直接使用新畫面本身，
-        過場結束。"""
+        """切換過場的其中一幀。「新畫面」只在過場第一幀真正渲染一次、存成快照，
+        之後每幀只做快照 blit＋帶狀合成——第一版每幀全量重繪，Pi 上一幀 100ms+，
+        0.2s 的動畫實跑 0.6s 還在抖（「卡頓感」元凶之二）。過場僅 0.2s，期間
+        時鐘/天氣凍結無感。超過 DURATION 後過場結束、丟快照。"""
         import time
-        snap = self.state.snapshot()
-        self._draw_frame(snap, now)
+        if self._transition_cache is None:
+            snap = self.state.snapshot()
+            self._draw_frame(snap, now)
+            self._transition_cache = (self.logical.copy(), snap.seq, now.minute,
+                                      now.strftime("%H:%M"))
+        else:
+            self.logical.blit(self._transition_cache[0], (0, 0))
         elapsed = time.monotonic() - self._transition_start
         composed = self._transition.frame(self.logical, elapsed)
         if composed is not self.logical:
             self.logical.blit(composed, (0, 0))
         self._flip()
-        self._last_seq = snap.seq
-        self._last_minute = now.minute
-        self._last_clock_text = now.strftime("%H:%M")
+        _frame, self._last_seq, self._last_minute, self._last_clock_text = \
+            self._transition_cache
         if not self._transition.active():
             self._transition_start = None
+            self._transition_cache = None
 
     def _handle_touch_up(self, x: int, y: int) -> None:
         """FINGERUP／MOUSEBUTTONUP 共用：判斷是點擊還是時間軸平移拖曳。"""
@@ -631,9 +637,9 @@ class App:
             # 按壓高亮畫在 logical 上了，放手後至少重繪一次洗掉
             self._pressed_dirty = False
             self._last_seq = -1
-        if self.view_anchor_preview is not None:
-            # 跟手預覽沒提交（例如手指滑回原點），洗掉暫時錨點
-            self.view_anchor_preview = None
+        if self._pan_band is not None:
+            # 跟手帶狀位移收工：丟快照、強制全量重繪（由 _pan_view 提交或復原）
+            self._pan_band = None
             self._last_seq = -1
         if self.firing:
             # 響鈴中任何觸碰＝全部關掉，不走拖曳判定、不逐顆 pop——
@@ -713,28 +719,40 @@ class App:
         with self.lock:
             self.view_anchor = new_anchor
 
-    def _maybe_pan_preview(self) -> None:
-        """拖曳中的跟手預覽：手指還沒放開就即時平移時間軸（節流 ~12fps）。
-        「放手才動」是十年前電阻屏的體感；跟手是觸控質感的分水嶺。只在
-        dashboard 行事曆中欄生效；放手時 _handle_touch_up 用同一套數學正式
-        提交。過場動畫進行中不搶著畫。"""
+    def _pan_band_preview(self) -> None:
+        """拖曳跟手：不重算版面，把「已渲染好的中欄帶」1:1 平移後 flip。
+
+        第一版跟手是拖曳中逐幀全量重繪——Pi Zero 2W 一幀 100ms+，實際 8fps
+        橡皮筋感（實機回報「非常不跟手的卡頓感」）。改成拖曳開始時快照中欄
+        帶狀畫面，之後每幀只做一次帶狀 blit（幾 ms），內容跟著手指 1:1 移動；
+        滑出範圍的邊緣先留底色，放手時 _pan_view 提交錨點、全量重繪補上。
+        只在 dashboard 行事曆中欄生效。"""
         if (self.view != "dashboard" or self._drag_start is None
                 or self._drag_last is None or self._transition_start is not None
                 or self.firing or self.card_overlay is not None):
             return
         if getattr(self.settings, "center_view", "calendar") != "calendar":
             return
-        from deskbar.ui.dashboard import TL_X0, TL_X1
+        from deskbar.ui.dashboard import CENTER_SLIDE_AREA, TL_X0
         sx, _sy = self._drag_start
         lx, _ly = self._drag_last
         if sx <= TL_X0 or abs(lx - sx) <= DRAG_THRESHOLD:
             return
         mono = time.monotonic()
-        if mono - self._pan_preview_at < PAN_PREVIEW_INTERVAL:
+        if mono - self._pan_band_at < PAN_BAND_INTERVAL:
             return
-        self._pan_preview_at = mono
-        self.view_anchor_preview = self._pan_anchor_from(lx - sx, TL_X1 - TL_X0)
-        self._render()
+        self._pan_band_at = mono
+        r = pygame.Rect(int(CENTER_SLIDE_AREA.x), int(CENTER_SLIDE_AREA.y),
+                        int(CENTER_SLIDE_AREA.w), int(CENTER_SLIDE_AREA.h))
+        if self._pan_band is None:
+            self._pan_band = self.logical.subsurface(r).copy()
+        dx = max(-r.w, min(r.w, int(lx - sx)))
+        prev_clip = self.logical.get_clip()
+        self.logical.set_clip(r)
+        self.logical.fill(theme.C["bg"], r)
+        self.logical.blit(self._pan_band, (r.x + dx, r.y))
+        self.logical.set_clip(prev_clip)
+        self._flip()
 
     def _press_feedback(self, x: int, y: int) -> None:
         """按下瞬間的視覺回饋（目標 <50ms）：命中可點元素就疊一層高亮並立即
@@ -877,7 +895,6 @@ class App:
                 if self._drag_start is not None:
                     x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
                     self._drag_last = (x, y)
-                    self._maybe_pan_preview()
             elif ev.type == pygame.FINGERUP:
                 had_input = True
                 if self._swallow_touch:
@@ -896,7 +913,6 @@ class App:
                     x, y = transform.dev_window_to_logical(
                         ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
                     self._drag_last = (x, y)
-                    self._maybe_pan_preview()
             elif ev.type == pygame.MOUSEBUTTONUP:
                 had_input = True
                 if self._swallow_touch:
@@ -905,6 +921,9 @@ class App:
                     x, y = transform.dev_window_to_logical(
                         ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
                     self._handle_touch_up(x, y)
+        if self._drag_start is not None:
+            # 跟手位移每圈只做一次（motion 事件常一圈湧進 3-5 顆，逐顆 flip 白燒）
+            self._pan_band_preview()
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))

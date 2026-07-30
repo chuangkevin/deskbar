@@ -409,3 +409,37 @@ def test_app_transition_is_center_scoped(tmp_path, monkeypatch):
     app._start_transition(+1)
     assert app._transition._area is not None, "app 的過場一律中欄限定"
     assert app._transition._area.x > 400 and app._transition._area.right <= 1520
+
+
+# ---------------------------------------------------------------- 跟手帶狀位移
+
+def test_pan_band_follows_finger_and_releases(tmp_path, monkeypatch):
+    """拖曳＝已渲染畫面 1:1 位移（不逐幀重繪——Pi 上那是 8fps 橡皮筋感）。"""
+    app = _make_app(tmp_path, monkeypatch)
+    app.logical.fill((8, 8, 8))
+    app.logical.set_at((1000, 240), (250, 10, 10))   # 中欄內容記號
+    app.logical.set_at((100, 240), (1, 2, 3))        # 左欄 chrome 記號
+    app._drag_start = (900, 200)
+    app._drag_last = (700, 200)                       # 往左拖 200px
+    app._pan_band_preview()
+    assert app._pan_band is not None, "拖曳中要建立帶狀快照"
+    assert app.logical.get_at((800, 240))[:3] == (250, 10, 10), "內容要跟手位移"
+    assert app.logical.get_at((100, 240))[:3] == (1, 2, 3), "左欄不准動"
+    app._handle_touch_up(700, 200)                    # 放手＝提交平移
+    assert app._pan_band is None and app._last_seq == -1
+    assert app.view_anchor is not None, "放手要提交錨點"
+
+
+def test_transition_frame_renders_new_frame_only_once(tmp_path, monkeypatch):
+    """過場期間「新畫面」只真正渲染一次，其餘幀純快照合成（30fps 的關鍵）。"""
+    import time as _t
+    app = _make_app(tmp_path, monkeypatch)
+    calls = []
+    app._draw_frame = lambda snap, now, clock_anim=None: calls.append(1)
+    app._start_transition(+1)
+    app._render_transition_frame(NOW)
+    app._transition_start = _t.monotonic()   # 固定 elapsed，排除測試機速度干擾
+    app._render_transition_frame(NOW)
+    app._transition_start = _t.monotonic()
+    app._render_transition_frame(NOW)
+    assert len(calls) == 1, "過場期間新畫面只渲染一次"
