@@ -110,7 +110,10 @@ def test_veil_alpha_bounds():
     assert brightness.veil_alpha(100) == 0
     assert brightness.veil_alpha(40) == 153
     assert brightness.veil_alpha(10) == round(255 * 0.9)
-    assert brightness.veil_alpha(-5) == round(255 * 0.9), "下限夾住，永不全黑"
+    # 2026-07-30 深夜熄屏改制：pct<=0 ＝睡眠時段熄屏＝全黑（觸摸喚醒），
+    # 一般亮度路徑仍由 effective() 保證最低 10%、不會誤觸全黑。
+    assert brightness.veil_alpha(0) == 255, "熄屏＝全黑"
+    assert brightness.veil_alpha(-5) == 255
 
 
 # ---------------------------------------------------------------- 頁面流程

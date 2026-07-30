@@ -20,8 +20,13 @@ def in_work_span(minute_of_day: int, start_min: int, end_min: int) -> bool:
     return minute_of_day >= start_min or minute_of_day < end_min
 
 
-def effective(settings, minute_of_day: int) -> int:
-    """當下應套用的亮度百分比（10..100）。"""
+def effective(settings, minute_of_day: int, awake: bool = False) -> int:
+    """當下應套用的亮度百分比。0＝深夜熄屏（睡眠時段內且沒有觸摸喚醒）；
+    其餘夾在 10..100。awake=True（觸摸喚醒中）時忽略睡眠時段。"""
+    if (getattr(settings, "sleep_enabled", False) and not awake
+            and in_work_span(minute_of_day, settings.sleep_start_min,
+                             settings.sleep_end_min)):
+        return 0
     if in_work_span(minute_of_day, settings.work_start_min, settings.work_end_min):
         pct = settings.brightness_day
     else:
@@ -30,7 +35,9 @@ def effective(settings, minute_of_day: int) -> int:
 
 
 def veil_alpha(pct: int) -> int:
-    """亮度 → 疊黑 alpha。100% = 0（不疊）；下限 10% 亮度 ≈ alpha 229，
-    永遠不會全黑（螢幕看起來像壞掉）。"""
+    """亮度 → 疊黑 alpha。100% = 0（不疊）；10% ≈ alpha 229；
+    0（熄屏）→ 255 全黑（觸摸喚醒 30 秒）。"""
+    if pct <= 0:
+        return 255
     pct = max(10, min(100, int(pct)))
     return round(255 * (1 - pct / 100))

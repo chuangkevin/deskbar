@@ -149,7 +149,9 @@ def linear_sync_once(state: AppState, settings,
         return
     try:
         items = linear_mod.fetch_issues(key)
-        state.set_linear(items, datetime.now(ZoneInfo("Asia/Taipei")))
+        at = datetime.now(ZoneInfo("Asia/Taipei"))
+        state.set_linear(items, at)
+        linear_mod.save_cache(items, at)
     except Exception as e:
         print(f"[deskbar] linear sync failed: {e}", file=sys.stderr)
 

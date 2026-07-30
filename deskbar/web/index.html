@@ -113,6 +113,10 @@ async function loadPrefs(){
   <div class="cal-row">下班時間 ${sel("p_we",MIN_OPTS,p.work_end_min,fm)}（此後套用下班亮度）</div>
   <div class="cal-row">上班亮度 ${sel("p_bd",pct.filter(v=>v>=10),p.brightness_day,v=>v+"%")}</div>
   <div class="cal-row">下班亮度 ${sel("p_bn",pct,p.brightness_night,v=>v+"%")}</div>
+  <div class="cal-row"><input type="checkbox" id="p_se" ${p.sleep_enabled?"checked":""}>
+   <label for="p_se">深夜熄屏（時段內全黑，觸摸喚醒 30 秒）</label></div>
+  <div class="cal-row">睡眠時段 ${sel("p_ss",MIN_OPTS,p.sleep_start_min,fm)} –
+   ${sel("p_sn",MIN_OPTS,p.sleep_end_min,fm)}</div>
   <div class="cal-row"><input type="checkbox" id="p_pe" ${p.presence_enabled?"checked":""}>
    <label for="p_pe">在場感應（需先在螢幕上完成藍牙配對）</label></div>
   <div class="cal-row">感應速度 <select id="p_pi">${spd.map(([v,n])=>
@@ -122,6 +126,8 @@ async function loadPrefs(){
    <input type="password" id="p_lk" placeholder="lin_api_… 貼上後按存">
    <button onclick="saveKey()">存 Key</button></div>
   <button onclick="savePrefs()">儲存設定</button><span id="p_msg"></span>
+  <div class="cal-row" style="margin-top:8px"><a href="/api/backup" download>下載設定備份</a>
+   （含鬧鐘與便條；SD 卡故障時可對照重建）</div>
  </div>`;
 }
 async function savePrefs(){
@@ -131,6 +137,9 @@ async function savePrefs(){
   work_end_min:+document.getElementById("p_we").value,
   brightness_day:+document.getElementById("p_bd").value,
   brightness_night:+document.getElementById("p_bn").value,
+  sleep_enabled:document.getElementById("p_se").checked,
+  sleep_start_min:+document.getElementById("p_ss").value,
+  sleep_end_min:+document.getElementById("p_sn").value,
   presence_enabled:document.getElementById("p_pe").checked,
   presence_interval_sec:iv,presence_grace_sec:grace,
   sync_interval_min:+document.getElementById("p_si").value};

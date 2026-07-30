@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 
 from deskbar import auth, config
 from deskbar.claudeusage import UsageInfo
@@ -48,9 +48,10 @@ def _to_float(v):
 
 
 def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
-              usage_state=None, notes_store=None) -> Flask:
+              usage_state=None, notes_store=None, shot_bridge=None) -> Flask:
     app = Flask("deskbar")
     web_dir = Path(__file__).parent / "web"
+    shot_lock = threading.Lock()      # /api/screenshot 一次一位（橋只有一組欄位）
 
     def _calendars_available() -> bool:
         return settings_provider is not None and settings_lock is not None \
@@ -183,10 +184,11 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
     _PREF_INT = {
         "work_start_min": (0, 1410), "work_end_min": (0, 1410),
         "brightness_day": (10, 100), "brightness_night": (10, 100),
+        "sleep_start_min": (0, 1410), "sleep_end_min": (0, 1410),
         "presence_interval_sec": (5, 600), "presence_grace_sec": (0, 3600),
         "sync_interval_min": (1, 120),
     }
-    _PREF_BOOL = {"presence_enabled"}
+    _PREF_BOOL = {"presence_enabled", "sleep_enabled"}
     _PREF_STR = {"linear_api_key": 200}      # 值=長度上限；GET 絕不回傳原文
 
     @app.get("/api/prefs")
@@ -229,7 +231,50 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             for k, v in staged.items():
                 setattr(settings_provider, k, v)
             on_save(settings_provider)
+        if usage_state is not None:
+            usage_state.bump()   # 叫醒 render 迴圈：亮度/睡眠等改動即時上畫面
         return jsonify({"ok": True})
+
+    @app.get("/api/screenshot")
+    def screenshot():
+        """目前螢幕畫面（PNG，未疊亮度黑幕的邏輯畫面）。遠端支援神器：
+        回報問題不用再拍螢幕，直接抓這支。走 want/done 事件橋請 render
+        執行緒代拍——pygame Surface 不能跨執行緒碰。"""
+        if shot_bridge is None:
+            return jsonify({"error": "not available"}), 501
+        with shot_lock:
+            shot_bridge["done"].clear()
+            shot_bridge["data"] = None
+            shot_bridge["want"].set()
+            if not shot_bridge["done"].wait(3.0):
+                shot_bridge["want"].clear()
+                return jsonify({"error": "render loop timeout"}), 504
+            data = shot_bridge["data"]
+        if not data:
+            return jsonify({"error": "capture failed"}), 500
+        return Response(data, mimetype="image/png")
+
+    @app.get("/api/backup")
+    def backup():
+        """設定備份下載（SD 卡是 Pi 的頭號死因）。打包 settings/alarms/notes
+        三份 JSON；linear_api_key 刻意剔除——備份檔會落到手機下載夾，
+        祕密不出站（比照 /api/prefs 的 linear_key_set 原則）。"""
+        import json as _json
+        cfgd = config.config_dir()
+        out = {"exported_at": datetime.now(_USAGE_TZ).isoformat(),
+               "settings": None, "alarms": None, "notes": None}
+        for key, fn in (("settings", "settings.json"), ("alarms", "alarms.json"),
+                        ("notes", "notes.json")):
+            try:
+                out[key] = _json.loads((cfgd / fn).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+        if isinstance(out["settings"], dict):
+            out["settings"].pop("linear_api_key", None)
+        resp = jsonify(out)
+        resp.headers["Content-Disposition"] = \
+            "attachment; filename=deskbar-backup.json"
+        return resp
 
     @app.post("/api/usage")
     def push_usage():
@@ -270,9 +315,11 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
 
 
 def start_web(store, port: int = 8080, settings_provider=None, settings_lock=None,
-              on_save=None, usage_state=None, notes_store=None) -> None:
+              on_save=None, usage_state=None, notes_store=None,
+              shot_bridge=None) -> None:
     app = create_app(store, settings_provider=settings_provider, settings_lock=settings_lock,
-                      on_save=on_save, usage_state=usage_state, notes_store=notes_store)
+                      on_save=on_save, usage_state=usage_state, notes_store=notes_store,
+                      shot_bridge=shot_bridge)
     t = threading.Thread(
         target=lambda: app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False),
         daemon=True)

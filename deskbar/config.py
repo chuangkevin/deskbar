@@ -58,6 +58,9 @@ class Settings:
     work_end_min: int = 1080            # 下班（分鐘制）；此後套用下班亮度
     brightness_day: int = 100           # 上班時段亮度 %（軟體疊黑實現）
     brightness_night: int = 40          # 下班時段亮度 %
+    sleep_enabled: bool = False         # 深夜熄屏（睡眠時段全黑，觸摸喚醒 30 秒）
+    sleep_start_min: int = 60           # 睡眠開始 01:00（分鐘制）
+    sleep_end_min: int = 390            # 睡眠結束 06:30
     linear_api_key: str = ""            # Linear 個人 API Key（只存裝置，不進 repo/log）
     center_view: str = "calendar"       # 中欄顯示：calendar｜linear（待辦）｜notes（便條）
 
@@ -137,6 +140,11 @@ def load_settings() -> Settings:
         work_end_min = _min_from("work_end_min", "work_end_hour", 1080)
         brightness_day = _int_in("brightness_day", 100, 10, 100)
         brightness_night = _int_in("brightness_night", 40, 10, 100)
+        sleep_enabled = raw.get("sleep_enabled", False)
+        if not isinstance(sleep_enabled, bool):
+            sleep_enabled = False
+        sleep_start_min = _int_in("sleep_start_min", 60, 0, 1439)
+        sleep_end_min = _int_in("sleep_end_min", 390, 0, 1439)
         linear_api_key = raw.get("linear_api_key", "")
         if not isinstance(linear_api_key, str):
             linear_api_key = ""
@@ -165,6 +173,9 @@ def load_settings() -> Settings:
             work_end_min=work_end_min,
             brightness_day=brightness_day,
             brightness_night=brightness_night,
+            sleep_enabled=sleep_enabled,
+            sleep_start_min=sleep_start_min,
+            sleep_end_min=sleep_end_min,
             linear_api_key=linear_api_key,
             center_view=center_view,
         )
@@ -194,6 +205,9 @@ def save_settings(s: Settings) -> None:
         "work_end_min": s.work_end_min,
         "brightness_day": s.brightness_day,
         "brightness_night": s.brightness_night,
+        "sleep_enabled": s.sleep_enabled,
+        "sleep_start_min": s.sleep_start_min,
+        "sleep_end_min": s.sleep_end_min,
         "linear_api_key": s.linear_api_key,
         "center_view": s.center_view,
         "accounts": {

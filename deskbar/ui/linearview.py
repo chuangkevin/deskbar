@@ -42,9 +42,33 @@ def _pager(surface, area, page, pages) -> None:
                                             round(area.y + area.h + 16)), 5)
 
 
+def render_mini(surface, snap, x0, y0, w, now, max_n: int = 3) -> None:
+    """右欄「前 N 件待辦」摘要（油表下方原本整片留白）：不切視圖也能瞄到
+    最重要的事——排序已是緊急優先，前三件就是當下該做的三件。沒資料就
+    什麼都不畫（維持留白，不放空狀態文案）。"""
+    items = snap.linear[:max_n]
+    if not items:
+        return
+    _text(surface, "待辦", 16, theme.C["muted"], x0, y0)
+    yy = y0 + 24
+    for it in items:
+        main = theme.col(state_rgb(it.state_color))
+        pygame.draw.circle(surface, main, (round(x0 + 6), round(yy + 12)), 5)
+        avail = w - 20
+        if it.due is not None and (it.due - now.date()).days <= 0:
+            d = (it.due - now.date()).days
+            tag = "今天" if d == 0 else f"逾{-d}天"
+            r = _text(surface, tag, 14, theme.C["warn"], x0 + w, yy + 3, "topright",
+                      bold=True)
+            avail = r.left - x0 - 26
+        title = theme.truncate_to_width(it.title, theme.font(18), avail)
+        _text(surface, title, 18, theme.C["text"], x0 + 18, yy)
+        yy += 26
+
+
 def render(surface, snap, settings, area, now, page: int = 0) -> list:
-    """回傳 hits（目前無可點元素，回空清單維持介面一致）。
-    page 由 app 持有（左右滑動翻頁），這裡夾在合法範圍內顯示。"""
+    """回傳 hits：每張卡可點（linear_detail 詳情浮層——2×4 卡牆每格標題常被
+    截斷，點開看全文）。page 由 app 持有（左右滑動翻頁），這裡夾在合法範圍。"""
     items = snap.linear
     if not getattr(settings, "linear_api_key", ""):
         _text(surface, "尚未連接 Linear", 28, theme.C["text"],
@@ -61,6 +85,9 @@ def render(surface, snap, settings, area, now, page: int = 0) -> list:
                   area.x + area.w / 2, area.y + 160, "center")
         return []
 
+    from deskbar.layout import Rect as _Rect
+    from deskbar.ui import Hit
+    hits: list = []
     cols, rows = 2, 4
     gap = 10
     cw = (area.w - gap) / cols
@@ -109,8 +136,9 @@ def render(surface, snap, settings, area, now, page: int = 0) -> list:
         if it.project and card.h >= 78:
             proj = theme.truncate_to_width(it.project, theme.font(16), card.w - 30)
             _text(surface, proj, 16, theme.C["muted"], tx, card.y + 62)
+        hits.append(Hit(_Rect(x, y, cw, ch), "linear_detail", it))
     _pager(surface, area, page, pages)
     if pages > 1:
         _text(surface, f"{page + 1}/{pages}", 16, theme.C["muted"],
               area.x + area.w, area.y + area.h + 8, "topright")
-    return []
+    return hits

@@ -14,6 +14,9 @@ from deskbar.ui.transitions import SlideTransition
 LOGICAL_W, LOGICAL_H = 1920, 480
 DRAG_THRESHOLD = 24                     # px，觸控拖曳判定門檻
 SYNC_INTERVALS = [1, 3, 5, 10, 30]       # 設定頁「同步頻率」鈕的循環清單（分鐘）
+WAKE_SECONDS = 30                        # 深夜熄屏中觸摸喚醒的持續秒數
+AUTO_SWITCH_BEFORE_MIN = 15              # 迫近行程搶焦點：開始前 N 分鐘自動切回行事曆
+PAN_PREVIEW_INTERVAL = 0.08              # 跟手拖曳預覽重繪節流（≈12fps，Pi 實測負擔上限）
 # 氛圍幀率不是常數：由 weatherfx.ambient_fps(code) 分級（雨/雷 15、雪 12、
 # 晴/雲/霧 8）——實務上 open-meteo 的每個 code 都有動態場景，氛圍模式是 24/7
 # 常態，分級幀率才是 Pi Zero 2W 上真正的省電槓桿。
@@ -21,7 +24,7 @@ SYNC_INTERVALS = [1, 3, 5, 10, 30]       # 設定頁「同步頻率」鈕的循�
 
 class App:
     def __init__(self, state, settings, settings_lock, on_save, alarm_store=None,
-                 notes_store=None):
+                 notes_store=None, shot_bridge=None):
         self.state = state
         self.settings = settings
         self.lock = settings_lock
@@ -53,6 +56,16 @@ class App:
         self.bt_ui = bt_view.new_state()         # 藍牙配對頁狀態（背景執行緒共寫）
         self._veil = None                        # 亮度疊黑快取：(size, alpha, surface)
         self.center_pages = {"linear": 0, "notes": 0}   # 待辦/便條牆目前頁碼（滑動翻頁）
+        self.shot_bridge = shot_bridge  # /api/screenshot 的跨執行緒橋（want/done/data）
+        self._pressed_dirty = False     # 按壓高亮畫上去了，放手後要洗掉
+        self._wake_until = 0.0          # 熄屏觸摸喚醒的截止時刻（monotonic）
+        self._swallow_touch = False     # 熄屏中的第一觸＝喚醒，不當作操作
+        self.view_anchor_preview = None  # 跟手拖曳中的暫時錨點（放手才提交 view_anchor）
+        self._pan_preview_at = 0.0
+        self._auto_center_prev = None   # 迫近行程自動切回行事曆前，使用者原本的中欄視圖
+        self._auto_center_hold = False  # 使用者在迫近期間手動切走＝這一波不再搶（實機回報：看便條被踢回）
+        self._auto_center_check_at = 0.0
+        self.card_overlay = None        # 待辦卡詳情浮層（LinearIssue|None）
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -103,7 +116,8 @@ class App:
         from zoneinfo import ZoneInfo
         from deskbar import brightness
         now = datetime.now(ZoneInfo("Asia/Taipei"))
-        pct = brightness.effective(self.settings, now.hour * 60 + now.minute)
+        pct = brightness.effective(self.settings, now.hour * 60 + now.minute,
+                                   awake=time.monotonic() < self._wake_until)
         alpha = brightness.veil_alpha(pct)
         if alpha <= 0:
             return None
@@ -157,6 +171,13 @@ class App:
                         self._wifi_rescan()
                     elif a == "open_screen":
                         self.view = "screen"
+                    elif a == "toggle_sleep":
+                        self.settings.sleep_enabled = not self.settings.sleep_enabled
+                        self.on_save(self.settings)
+                    elif a == "linear_detail":
+                        self.card_overlay = h.data
+                    elif a == "overlay_close":
+                        self.card_overlay = None
                     elif a == "scr_adj":
                         field, delta, lo, hi = h.data
                         cur = getattr(self.settings, field)
@@ -291,6 +312,11 @@ class App:
                         idx = order.index(cur) if cur in order else 0
                         self.settings.center_view = order[(idx + 1) % len(order)]
                         self.center_pages = {"linear": 0, "notes": 0}
+                        # 使用者手動切換＝接管：取消還原、且這一波迫近期間不再搶焦點
+                        # （沒 hold 的話 5 秒後又被抓回行事曆——本機測試實測踩到）
+                        self._auto_center_prev = None
+                        self._auto_center_hold = True
+                        self.card_overlay = None
                         self.on_save(self.settings)
                     elif a == "note_tap":
                         from deskbar.ui import notesview
@@ -381,8 +407,10 @@ class App:
                 self.hits = alarm_view.render(self.logical, self.alarm_store,
                                               self.alarm_draft, now)
             else:
+                anchor = (self.view_anchor_preview if self.view_anchor_preview is not None
+                          else self.view_anchor)
                 self.hits = dashboard.render(self.logical, snap, self.settings, now, clock_anim,
-                                             anchor=self.view_anchor,
+                                             anchor=anchor,
                                              weather_t=self._weather_t(),
                                              notes_store=self.notes_store,
                                              notes_ui=self.notes_ui,
@@ -390,6 +418,10 @@ class App:
                                              notes_page=self.center_pages["notes"])
                 if self.view == "detail" and self.detail_event is not None:
                     self.hits += detail.render(self.logical, self.detail_event)
+                elif self.card_overlay is not None:
+                    # 待辦卡詳情浮層是 modal：hits 整組換成「點任意處關閉」
+                    from deskbar.ui import cardoverlay
+                    self.hits = cardoverlay.render(self.logical, self.card_overlay, now)
 
     def _flip_center_page(self, center: str, delta: int) -> None:
         """待辦/便條牆翻頁：夾在 [0, 總頁數-1]。總頁數依當下資料量現算，
@@ -593,6 +625,14 @@ class App:
 
     def _handle_touch_up(self, x: int, y: int) -> None:
         """FINGERUP／MOUSEBUTTONUP 共用：判斷是點擊還是時間軸平移拖曳。"""
+        if self._pressed_dirty:
+            # 按壓高亮畫在 logical 上了，放手後至少重繪一次洗掉
+            self._pressed_dirty = False
+            self._last_seq = -1
+        if self.view_anchor_preview is not None:
+            # 跟手預覽沒提交（例如手指滑回原點），洗掉暫時錨點
+            self.view_anchor_preview = None
+            self._last_seq = -1
         if self.firing:
             # 響鈴中任何觸碰＝全部關掉，不走拖曳判定、不逐顆 pop——
             # (1) 手指滑過 24px 會被當拖曳而不觸發解除；(2) 多顆排隊要一顆
@@ -600,6 +640,11 @@ class App:
             self.firing.clear()
             self._drag_start = None
             self._last_seq = -1
+            return
+        if self.card_overlay is not None:
+            # 詳情浮層開著：任何手勢（含滑動）都算「點任意處關閉」，不翻頁
+            self._drag_start = None
+            self._dispatch(x, y)
             return
         if self._drag_start is None:
             self._dispatch(x, y)
@@ -612,7 +657,12 @@ class App:
         if center in ("linear", "notes") and self.view == "dashboard":
             # 待辦/便條牆：左右滑動＝翻頁（往左滑看下一頁），點擊照舊 dispatch
             if abs(dx) > DRAG_THRESHOLD and sx > TL_X0:
-                self._flip_center_page(center, +1 if dx < 0 else -1)
+                before = self.center_pages.get(center, 0)
+                direction = +1 if dx < 0 else -1
+                self._start_transition(direction)
+                self._flip_center_page(center, direction)
+                if self.center_pages.get(center, 0) == before:
+                    self._transition_start = None   # 已在邊界沒翻成，不播過場
                 self._last_seq = -1
             else:
                 self._dispatch(x, y)
@@ -623,8 +673,9 @@ class App:
         else:
             self._dispatch(x, y)
 
-    def _pan_view(self, dx_px: float, area_w: float) -> None:
-        """時間軸拖曳平移錨點：向右拖＝看過去。範圍 clamp 在資料窗口 [今天-7, 今天+30]。
+    def _pan_anchor_from(self, dx_px: float, area_w: float):
+        """dx 像素 → 平移後的新錨點（純計算，不落地）。跟手預覽與放手提交共用
+        同一套數學——預覽畫面必然等於提交結果，不會放手瞬間跳一下。
 
         v4.1：agenda 模式恢復可平移（fixwave2 曾整個關閉），但單位是「天」而非
         連續時間比例——dx 除以欄寬換算成天數、四捨五入，非零位移至少平移 1 天
@@ -652,7 +703,115 @@ class App:
                 window_len = win_end - win_start
                 shift = dx_px / area_w * window_len
                 new_anchor = anchor_or_now - shift
-            self.view_anchor = clamp_anchor(new_anchor, now, tz)
+            return clamp_anchor(new_anchor, now, tz)
+
+    def _pan_view(self, dx_px: float, area_w: float) -> None:
+        """時間軸拖曳平移錨點：向右拖＝看過去。範圍 clamp 在資料窗口 [今天-7, 今天+30]。"""
+        new_anchor = self._pan_anchor_from(dx_px, area_w)
+        with self.lock:
+            self.view_anchor = new_anchor
+
+    def _maybe_pan_preview(self) -> None:
+        """拖曳中的跟手預覽：手指還沒放開就即時平移時間軸（節流 ~12fps）。
+        「放手才動」是十年前電阻屏的體感；跟手是觸控質感的分水嶺。只在
+        dashboard 行事曆中欄生效；放手時 _handle_touch_up 用同一套數學正式
+        提交。過場動畫進行中不搶著畫。"""
+        if (self.view != "dashboard" or self._drag_start is None
+                or self._drag_last is None or self._transition_start is not None
+                or self.firing or self.card_overlay is not None):
+            return
+        if getattr(self.settings, "center_view", "calendar") != "calendar":
+            return
+        from deskbar.ui.dashboard import TL_X0, TL_X1
+        sx, _sy = self._drag_start
+        lx, _ly = self._drag_last
+        if sx <= TL_X0 or abs(lx - sx) <= DRAG_THRESHOLD:
+            return
+        mono = time.monotonic()
+        if mono - self._pan_preview_at < PAN_PREVIEW_INTERVAL:
+            return
+        self._pan_preview_at = mono
+        self.view_anchor_preview = self._pan_anchor_from(lx - sx, TL_X1 - TL_X0)
+        self._render()
+
+    def _press_feedback(self, x: int, y: int) -> None:
+        """按下瞬間的視覺回饋（目標 <50ms）：命中可點元素就疊一層高亮並立即
+        flip。體感延遲的關鍵不是總延遲，是按下當下畫面有沒有立刻回應——
+        50ms 內給高亮，即使後續重繪要 200ms，大腦也判定「有反應」。"""
+        if self.firing or getattr(self, "logical", None) is None:
+            return
+        for h in reversed(self.hits):
+            if h.rect.contains(x, y) and h.action != "noop":
+                r = pygame.Rect(int(h.rect.x), int(h.rect.y),
+                                max(1, int(h.rect.w)), max(1, int(h.rect.h)))
+                glow = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
+                color = ((0, 0, 0, 34) if theme.current_theme() == "light"
+                         else (255, 255, 255, 34))
+                pygame.draw.rect(glow, color, glow.get_rect(), border_radius=10)
+                self.logical.blit(glow, r.topleft)
+                self._pressed_dirty = True
+                self._flip()
+                return
+
+    def _screen_asleep(self) -> bool:
+        """深夜熄屏中（睡眠時段內且沒有觸摸喚醒）＝畫面全黑。"""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from deskbar import brightness
+        now = datetime.now(ZoneInfo("Asia/Taipei"))
+        return brightness.effective(
+            self.settings, now.hour * 60 + now.minute,
+            awake=time.monotonic() < self._wake_until) == 0
+
+    def _auto_center_tick(self, snap, now) -> None:
+        """迫近行程搶焦點：AUTO_SWITCH_BEFORE_MIN 分鐘內要開始的行程 → 中欄自動
+        切回行事曆（會看到迫近脈動卡）；行程開始 5 分鐘後或沒有迫近行程了，切回
+        使用者原本的視圖。使用者中途手動切換（toggle_center）即接管、本輪取消。
+        這是「智慧儀表板」跟「三個切著看的 app」的分水嶺。"""
+        if self.view != "dashboard" or self._transition_start is not None:
+            return
+        soon = False
+        for e in snap.events:
+            if e.all_day:
+                continue
+            lead_min = (e.start - now).total_seconds() / 60
+            if -5 <= lead_min <= AUTO_SWITCH_BEFORE_MIN:
+                soon = True
+                break
+        with self.lock:
+            cur = getattr(self.settings, "center_view", "calendar")
+            if not soon:
+                self._auto_center_hold = False   # 這一波過了，下一波恢復搶焦點
+            if soon and not self._auto_center_hold \
+                    and cur != "calendar" and self._auto_center_prev is None:
+                self._auto_center_prev = cur
+                self.settings.center_view = "calendar"   # 記憶體內切換，不持久化
+                switched = True
+            elif not soon and self._auto_center_prev is not None:
+                if cur == "calendar":
+                    self.settings.center_view = self._auto_center_prev
+                self._auto_center_prev = None
+                switched = True
+            else:
+                switched = False
+        if switched:
+            self._start_transition()
+            self._last_seq = -1
+
+    def _service_screenshot(self) -> None:
+        """配合 /api/screenshot：把目前邏輯畫面（未疊亮度黑幕的原畫面）編成
+        PNG 丟回橋。pygame Surface 不是執行緒安全，只能由 render 執行緒做，
+        webserver 端設 want 旗標後等 done。"""
+        import io
+        b = self.shot_bridge
+        try:
+            buf = io.BytesIO()
+            pygame.image.save(self.logical, buf, "shot.png")
+            b["data"] = buf.getvalue()
+        except Exception:
+            b["data"] = None
+        b["want"].clear()
+        b["done"].set()
 
     def _play_splash(self) -> None:
         """開機播一次 deskbar 掃光 splash（13 張 × 60ms ≈ 0.78s）；
@@ -684,42 +843,78 @@ class App:
                 clock.tick(10)
         pygame.quit()
 
+    def _touch_down(self, x: int, y: int) -> None:
+        """FINGERDOWN／MOUSEBUTTONDOWN 共用：熄屏中第一觸＝喚醒（吞掉不當操作）；
+        平常＝記下拖曳起點＋立即畫按壓高亮。"""
+        if self._screen_asleep():
+            self._wake_until = time.monotonic() + WAKE_SECONDS
+            self._swallow_touch = True
+            self._drag_start = None
+            self._last_seq = -1     # 立刻重繪＝亮回來
+            return
+        self._drag_start = (x, y)
+        self._drag_last = (x, y)
+        self._press_feedback(x, y)
+
     def _run_iteration(self, clock, running: bool) -> bool:
+        had_input = False        # 這一圈有無輸入事件：有＝後續節拍全部提速
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 running = False
             elif ev.type == pygame.KEYDOWN and ev.key == pygame.K_r:
+                had_input = True
                 self._cycle_dev_rotate()
             elif ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_q):
                 running = False
             elif ev.type == pygame.FINGERDOWN:
+                had_input = True
                 x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
-                self._drag_start = (x, y)
-                self._drag_last = (x, y)
+                self._touch_down(x, y)
             elif ev.type == pygame.FINGERMOTION:
+                had_input = True
                 if self._drag_start is not None:
                     x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
                     self._drag_last = (x, y)
+                    self._maybe_pan_preview()
             elif ev.type == pygame.FINGERUP:
-                x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
-                self._handle_touch_up(x, y)
+                had_input = True
+                if self._swallow_touch:
+                    self._swallow_touch = False
+                else:
+                    x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
+                    self._handle_touch_up(x, y)
             elif ev.type == pygame.MOUSEBUTTONDOWN:   # dev 模式滑鼠模擬觸控
+                had_input = True
                 x, y = transform.dev_window_to_logical(
                     ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
-                self._drag_start = (x, y)
-                self._drag_last = (x, y)
+                self._touch_down(x, y)
             elif ev.type == pygame.MOUSEMOTION:
                 if self._drag_start is not None:
+                    had_input = True
                     x, y = transform.dev_window_to_logical(
                         ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
                     self._drag_last = (x, y)
+                    self._maybe_pan_preview()
             elif ev.type == pygame.MOUSEBUTTONUP:
-                x, y = transform.dev_window_to_logical(
-                    ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
-                self._handle_touch_up(x, y)
+                had_input = True
+                if self._swallow_touch:
+                    self._swallow_touch = False
+                else:
+                    x, y = transform.dev_window_to_logical(
+                        ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
+                    self._handle_touch_up(x, y)
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
+        mono = time.monotonic()
+        if self.shot_bridge is not None and self.shot_bridge["want"].is_set():
+            self._service_screenshot()
+        if self._wake_until and mono >= self._wake_until:
+            self._wake_until = 0.0
+            self._last_seq = -1     # 喚醒到期，重繪一次回到黑幕
+        if mono - self._auto_center_check_at >= 5.0:
+            self._auto_center_check_at = mono
+            self._auto_center_tick(self.state.snapshot(), now)
         if self.alarm_store is not None:
             due = self.alarm_store.due(self._last_alarm_check, now)
             self._last_alarm_check = now
@@ -752,27 +947,38 @@ class App:
             clock.tick(30)
         else:
             snap = self.state.snapshot()
-            if (self.view == "dashboard"
+            if self._screen_asleep():
+                # 深夜熄屏：不燒氛圍幀、輪詢降到 2fps（整夜 15fps 畫給黑幕看
+                # 純屬浪費）；觸摸喚醒那一圈 had_input=True 立即提速。
+                if snap.seq != self._last_seq or now.minute != self._last_minute:
+                    self._render()
+                clock.tick(30 if had_input else 2)
+            elif (self.view == "dashboard"
                     and getattr(self.settings, "center_view", "") == "notes"
                     and self.notes_ui.get("pending_id")):
                 # 便條「再點一下撕掉」的 5 秒逾時回復需要重繪才看得到
                 self._render()
-                clock.tick(2)
+                clock.tick(10 if had_input else 2)
             elif self.view in ("wifi", "bt"):
-                # Wi-Fi／藍牙頁固定 5fps 重繪：掃描/連線/配對結束由背景執行緒
-                # 改 ui dict，沒有 seq 可觸發，低頻輪詢重繪畫面自然跟上。
+                # Wi-Fi／藍牙頁：掃描/連線/配對結束由背景執行緒改 ui dict，沒有
+                # seq 可觸發，靠輪詢重繪跟上。閒置 5fps；打字中提速到 20fps——
+                # 鍵盤 200ms 一格的回饋就是「十年前」體感的元凶之一。
                 self._render()
-                clock.tick(5)
+                clock.tick(20 if had_input else 5)
             elif snap.seq != self._last_seq or now.minute != self._last_minute:
                 self._render()
-                clock.tick(10)
-            elif self._ambient_active(snap):
+                clock.tick(30)
+            elif self._ambient_active(snap) and not had_input:
                 # 資料/分鐘都沒變，但天氣場景要動：左欄局部重繪，幀率按場景分級。
                 # 歷史教訓（2026-07-27「根本看不到動畫」）：這裡以前只有上面那條
                 # 全量重繪，天氣 tick 每秒都在加、畫面卻一分鐘才畫一次。
+                # had_input 時讓路給輸入處理（例如跟手預覽剛全量重繪過）。
                 self._render_ambient(snap, now)
                 from deskbar.ui import weatherfx
                 clock.tick(weatherfx.ambient_fps(snap.weather.code))
             else:
-                clock.tick(10)
+                # 純閒置輪詢從 10fps 提到 30fps：一次觸控最慢 100ms 後才被看見，
+                # 是延遲感的最大單一來源。空圈只做事件泵＋幾個判斷，30fps 的
+                # CPU 成本 <3%，換來輸入延遲上限 33ms。
+                clock.tick(30)
         return running

@@ -10,8 +10,11 @@
 """
 from __future__ import annotations
 
+import json
+import os
 import sys
-from dataclasses import dataclass
+import tempfile
+from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -85,6 +88,42 @@ def parse_issues(payload: dict) -> list:
     out.sort(key=lambda i: (_prio_rank(i.priority),
                             i.due or date.max, i.identifier))
     return out
+
+
+def save_cache(items: list, fetched_at: datetime) -> None:
+    """待辦快取落地（比照 events.json）：重開機先端出上次的牆，不用等首次
+    同步。原子寫入；失敗靜默（快取是加分項不是必需品）。"""
+    from deskbar import config
+    try:
+        data = {"fetched_at": fetched_at.isoformat(),
+                "items": [dict(asdict(i), due=i.due.isoformat() if i.due else None)
+                          for i in items]}
+        d = config.cache_dir()
+        fd, tmp = tempfile.mkstemp(dir=d, suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, d / "linear.json")
+    except OSError:
+        pass
+
+
+def load_cache() -> "tuple[list, datetime | None]":
+    from deskbar import config
+    try:
+        raw = json.loads((config.cache_dir() / "linear.json").read_text(encoding="utf-8"))
+        items = []
+        for d in raw.get("items", []):
+            due = d.get("due")
+            items.append(LinearIssue(
+                identifier=str(d["identifier"]), title=str(d["title"]),
+                state_name=str(d["state_name"]), state_type=str(d["state_type"]),
+                state_color=str(d["state_color"]), priority=int(d["priority"]),
+                due=date.fromisoformat(due) if due else None,
+                project=str(d.get("project", ""))))
+        at = datetime.fromisoformat(raw["fetched_at"])
+        return items, at
+    except (OSError, ValueError, KeyError, TypeError):
+        return [], None
 
 
 def fetch_issues(api_key: str, http_post=requests.post,

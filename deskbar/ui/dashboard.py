@@ -129,7 +129,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         hits += linearview.render(surface, snap, settings, TL_AREA, now,
                                   page=linear_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
-        return hits
+        return hits    # 中欄就是完整待辦牆，右欄摘要免了
     if center == "notes":
         from deskbar.ui import notesview
         _text(surface, "便條", 22, theme.C["text2"], TL_X0, 22)
@@ -138,6 +138,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         hits += notesview.render(surface, notes, notes_ui or notesview.new_state(),
                                  TL_AREA, now, _t.monotonic(), page=notes_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
+        _render_right_todo_mini(surface, snap, now)
         return hits
 
     lane_emails = [e for e in settings.accounts if settings.accounts[e].calendars] \
@@ -217,7 +218,16 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     # 右欄：Claude usage 油表——獨立呼叫，不吃 TL_AREA、不產生 hits（純資訊面板，
     # 跟左欄時鐘/天氣一樣不可互動），畫在最後純粹是慣例（跟中欄內容互不重疊，順序無關）。
     usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
+    _render_right_todo_mini(surface, snap, now)
     return hits
+
+
+def _render_right_todo_mini(surface, snap, now) -> None:
+    """右欄下半（油表最深畫到 y≈352，其下原本整片留白）：前 3 件待辦摘要。
+    行事曆/便條視圖也能瞄到最重要的事，不必切到待辦視圖。"""
+    if snap.linear:
+        from deskbar.ui import linearview
+        linearview.render_mini(surface, snap, USAGE_X0, 362, USAGE_W, now)
 
 
 def render_panel_only(surface, snap, settings, now, weather_t=0.0) -> None:
@@ -253,6 +263,7 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_t
         _text(surface, f"{code_text(w.code)} {round(w.temp)}° {w.label}{stale}",
               24, theme.C["text"], 24, 196)
         _text(surface, f"{round(w.tmin)}° / {round(w.tmax)}°", 20, theme.C["muted"], 24, 230)
+    _render_next_event(surface, snap, settings, now)
     if snap.syncing:
         msg = "同步中…"
         dot = theme.C["now"]
@@ -277,6 +288,53 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_t
         # 玻璃前景：蓋在左欄「全部內容」之上（含時鐘）——HTC Sense 的螢幕就是
         # 一片擋風玻璃，雨滴黏在玻璃上、雨刷從時鐘前面刷過去。
         weatherfx.draw_glass(surface, w.code, weather_t, w=PANEL_W)
+
+
+def _visible_lane_emails(snap, settings) -> list:
+    """render() 中欄泳道帳號篩選的同一套規則（含在場感應隱私簾），抽出來給
+    左欄倒數與自動切換共用——「下一個行程」永遠跟畫面上看得到的行程一致。"""
+    lane_emails = [e for e in settings.accounts if settings.accounts[e].calendars] \
+        or list(snap.statuses)
+    if settings.presence_enabled and settings.presence_hide_accounts \
+            and not snap.presence.present:
+        hidden = set(settings.presence_hide_accounts)
+        lane_emails = [e for e in lane_emails if e not in hidden]
+    return lane_emails
+
+
+def next_event(snap, settings, now):
+    """今天接下來最早開始的計時行程（尊重隱私簾），沒有回 None。"""
+    emails = set(_visible_lane_emails(snap, settings))
+    best = None
+    for e in snap.events:
+        if e.account not in emails or e.all_day:
+            continue
+        if e.start <= now or e.start.astimezone(now.tzinfo).date() != now.date():
+            continue
+        if best is None or e.start < best.start:
+            best = e
+    return best
+
+
+def _render_next_event(surface, snap, settings, now) -> None:
+    """左欄「下一個行程」倒數（y=272..330，天氣行之下、同步狀態之上）：
+    比整條時間軸更常被瞄的一行字——Apple Watch complication 的概念。
+    畫在 _render_panel 內＝氛圍幀逐幀跟著重畫，倒數分鐘數永遠是活的。"""
+    ev = next_event(snap, settings, now)
+    if ev is None:
+        return
+    mins = int((ev.start - now).total_seconds() // 60)
+    cd = f"{mins} 分鐘後" if mins < 60 else f"{mins // 60} 小時 {mins % 60:02d} 分後"
+    imminent = mins <= 15
+    r = _text(surface, "接下來", 16, theme.C["muted"], 24, 272)
+    img = theme.font(16, bold=True).render(cd, True,
+                                           theme.C["now"] if imminent
+                                           else theme.C["text2"])
+    surface.blit(img, (r.right + 12, 272))
+    title = theme.truncate_to_width(f"{ev.start.strftime('%H:%M')} {ev.title}",
+                                    theme.font(22, weight="medium"), PANEL_W - 48)
+    img = theme.font(22, weight="medium").render(title, True, theme.C["text"])
+    surface.blit(img, (24, 296))
 
 
 def _render_span_mode_buttons(surface, settings, hits):

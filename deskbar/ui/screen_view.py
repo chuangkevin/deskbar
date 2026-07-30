@@ -1,8 +1,8 @@
-"""「螢幕」設定頁：上下班時間、日/夜亮度、旋轉。
+"""「螢幕」設定頁：上下班時間、日/夜亮度、深夜熄屏時段、旋轉。
 
 下班時間一到自動套用下班亮度（軟體疊黑，見 deskbar.brightness 檔頭）；
-亮度改動即時生效（下一幀 flip 就套），方便邊調邊看。旋轉鈕從主設定頁
-搬過來——它本來就屬於螢幕範疇，也還主設定頁一排乾淨的控制列。
+睡眠時段內螢幕全黑、觸摸喚醒 30 秒。亮度改動即時生效（下一幀 flip 就套），
+方便邊調邊看。版面：3×2 六張調整卡＋底部一列（睡眠開關/旋轉/目前亮度）。
 """
 from __future__ import annotations
 
@@ -18,8 +18,12 @@ FIELDS = [
     ("work_end_min", "下班時間", "min", 30, 0, 1410),
     ("brightness_day", "上班亮度", "pct", 10, 10, 100),
     ("brightness_night", "下班亮度", "pct", 10, 10, 100),
+    ("sleep_start_min", "睡眠開始", "min", 30, 0, 1410),
+    ("sleep_end_min", "睡眠結束", "min", 30, 0, 1410),
 ]
-_CARD_W, _CARD_H, _CARD_Y = 430, 220, 96
+_CARD_W, _CARD_H = 600, 148
+_ROW_Y = (84, 244)
+_COL_X = (40, 660, 1280)
 
 
 def _text_bold(surface, s, size, color, x, y, anchor="topleft"):
@@ -46,32 +50,40 @@ def _btn(surface, label, rect, action, data, hits, size=26):
 
 def render(surface, settings) -> list:
     hits: list = []
-    _text_bold(surface, "螢幕", 32, theme.C["text"], 40, 24)
-    _text(surface, "下班時間起自動套用下班亮度", 22, theme.C["muted"], 200, 34)
-    _btn(surface, "返回", pygame.Rect(1700, 20, 180, 52), "open_settings", None, hits,
+    _text_bold(surface, "螢幕", 32, theme.C["text"], 40, 20)
+    _text(surface, "下班自動降亮度；睡眠時段熄屏、觸摸喚醒 30 秒", 22,
+          theme.C["muted"], 180, 30)
+    _btn(surface, "返回", pygame.Rect(1700, 16, 180, 52), "open_settings", None, hits,
          size=24)
 
+    sleep_dimmed = not getattr(settings, "sleep_enabled", False)
     for i, (field, title, fmt, step, lo, hi) in enumerate(FIELDS):
-        x = 40 + i * 460
-        card = pygame.Rect(x, _CARD_Y, _CARD_W, _CARD_H)
+        x, y = _COL_X[i % 3], _ROW_Y[i // 3]
+        card = pygame.Rect(x, y, _CARD_W, _CARD_H)
         pygame.draw.rect(surface, theme.C["card"], card, border_radius=10)
         pygame.draw.rect(surface, theme.C["panel_line"], card, 1, border_radius=10)
-        _text(surface, title, 24, theme.C["text2"], x + 24, _CARD_Y + 18)
+        muted_card = field.startswith("sleep_") and sleep_dimmed
+        _text(surface, title + ("（未啟用）" if muted_card else ""), 22,
+              theme.C["muted"] if muted_card else theme.C["text2"], x + 24, y + 14)
         val = getattr(settings, field)
         label = f"{val // 60:02d}:{val % 60:02d}" if fmt == "min" else f"{val}%"
-        _text(surface, label, 44, theme.C["text"], x + _CARD_W / 2, _CARD_Y + 92,
-              "center")
-        _btn(surface, "−", pygame.Rect(x + 24, _CARD_Y + 136, 150, 64),
-             "scr_adj", (field, -step, lo, hi), hits, size=34)
-        _btn(surface, "＋", pygame.Rect(x + _CARD_W - 174, _CARD_Y + 136, 150, 64),
-             "scr_adj", (field, step, lo, hi), hits, size=34)
+        _text(surface, label, 40,
+              theme.C["muted"] if muted_card else theme.C["text"],
+              x + _CARD_W / 2, y + 66, "center")
+        _btn(surface, "−", pygame.Rect(x + 20, y + _CARD_H - 60, 150, 48),
+             "scr_adj", (field, -step, lo, hi), hits, size=30)
+        _btn(surface, "＋", pygame.Rect(x + _CARD_W - 170, y + _CARD_H - 60, 150, 48),
+             "scr_adj", (field, step, lo, hi), hits, size=30)
 
-    _btn(surface, "旋轉螢幕 180°", pygame.Rect(40, 360, 300, 64), "rotate", None,
+    on = getattr(settings, "sleep_enabled", False)
+    _btn(surface, f"睡眠熄屏：{'開' if on else '關'}",
+         pygame.Rect(40, 408, 340, 56), "toggle_sleep", None, hits, size=24)
+    _btn(surface, "旋轉螢幕 180°", pygame.Rect(400, 408, 300, 56), "rotate", None,
          hits, size=24)
     from deskbar import brightness
     from datetime import datetime
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("Asia/Taipei"))
-    cur = brightness.effective(settings, now.hour * 60 + now.minute)
-    _text(surface, f"目前套用亮度：{cur}%", 22, theme.C["muted"], 380, 380)
+    cur = brightness.effective(settings, now.hour * 60 + now.minute, awake=True)
+    _text(surface, f"目前套用亮度：{cur}%", 22, theme.C["muted"], 740, 424)
     return hits
