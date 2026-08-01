@@ -115,6 +115,9 @@ async function loadPrefs(){
   <div class="cal-row">下班亮度 ${sel("p_bn",pct,p.brightness_night,v=>v+"%")}</div>
   <div class="cal-row"><input type="checkbox" id="p_wa" ${p.weather_auto_locate?"checked":""}>
    <label for="p_wa">天氣自動定位（IP，目前：${p.weather_label||"—"}）</label></div>
+  <div class="cal-row">改城市 <input type="text" id="p_city" placeholder="台北"
+    style="width:110px"><button onclick="setCity()">定位</button>
+   <span class="hint">IP 定位在雙北常差一區，手動指定最準</span></div>
   <div class="cal-row"><input type="checkbox" id="p_se" ${p.sleep_enabled?"checked":""}>
    <label for="p_se">深夜熄屏（時段內全黑，觸摸喚醒 30 秒）</label></div>
   <div class="cal-row">睡眠時段 ${sel("p_ss",MIN_OPTS,p.sleep_start_min,fm)} –
@@ -150,6 +153,21 @@ async function savePrefs(){
   headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
  document.getElementById("p_msg").textContent=r.ok?" 已儲存 ✓":" 儲存失敗";
  if(r.ok)setTimeout(loadPrefs,600);
+}
+async function setCity(){
+ const q=document.getElementById("p_city").value.trim();
+ if(!q){alert("輸入城市名，例如：台北");return}
+ const r=await fetch("https://geocoding-api.open-meteo.com/v1/search?name="+
+  encodeURIComponent(q)+"&language=zh&count=1");
+ const d=r.ok?await r.json():{};
+ if(!d.results||!d.results.length){alert("找不到這個城市");return}
+ const g=d.results[0];
+ const body={weather_auto_locate:false,weather_lat:g.latitude,weather_lon:g.longitude,
+  weather_label:String(g.name||q).slice(0,12)};
+ const rr=await fetch("/api/prefs",{method:"PATCH",
+  headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+ document.getElementById("p_msg").textContent=rr.ok?" 已定位 "+body.weather_label+" ✓（自動定位已關）":" 失敗";
+ if(rr.ok)setTimeout(loadPrefs,800);
 }
 async function saveKey(){
  const v=document.getElementById("p_lk").value.trim();

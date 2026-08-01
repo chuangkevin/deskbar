@@ -189,7 +189,11 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
         "sync_interval_min": (1, 120),
     }
     _PREF_BOOL = {"presence_enabled", "sleep_enabled", "weather_auto_locate"}
-    _PREF_STR = {"linear_api_key": 200}      # 值=長度上限；GET 絕不回傳原文
+    _PREF_STR = {"linear_api_key": 200,      # 值=長度上限；GET 絕不回傳 key 原文
+                 "weather_label": 12}
+    # 手動指定城市（IP 定位在雙北常差一個行政區——ISP 登記地 ≠ 實際位置）：
+    # 網頁用 Open-Meteo geocoding 查好座標後直接寫入，並關掉自動定位
+    _PREF_FLOAT = {"weather_lat": (-90.0, 90.0), "weather_lon": (-180.0, 180.0)}
 
     @app.get("/api/prefs")
     def get_prefs():
@@ -226,6 +230,12 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
                 if not isinstance(v, str) or len(v) > _PREF_STR[k]:
                     return jsonify({"error": f"{k} must be string"}), 400
                 staged[k] = v.strip()
+            elif k in _PREF_FLOAT:
+                lo, hi = _PREF_FLOAT[k]
+                if isinstance(v, bool) or not isinstance(v, (int, float)) \
+                        or not (lo <= v <= hi):
+                    return jsonify({"error": f"{k} out of range"}), 400
+                staged[k] = float(v)
             else:
                 return jsonify({"error": f"unknown field {k}"}), 400
         with settings_lock:
@@ -234,6 +244,13 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             on_save(settings_provider)
         if usage_state is not None:
             usage_state.bump()   # 叫醒 render 迴圈：亮度/睡眠等改動即時上畫面
+        if staged.keys() & {"weather_lat", "weather_lon", "weather_label",
+                            "weather_auto_locate"}:
+            try:
+                from deskbar import sync as _sync
+                _sync.FORCE_WX.set()   # 位置改了立刻重抓天氣，不等下一小時
+            except Exception:
+                pass
         return jsonify({"ok": True})
 
     @app.get("/api/screenshot")

@@ -102,3 +102,33 @@ def test_weather_sync_respects_auto_locate_off(tmp_path, monkeypatch):
                                          tz=TZ, today_fn=lambda: NOW.date(),
                                          http_post=None), threading.Lock())
     assert s.weather_lat == 25.046 and called, "座標不動、天氣照打"
+
+
+def test_prefs_manual_city_pin_and_force_weather(tmp_path, monkeypatch):
+    """手機網頁「改城市」：寫入座標/城市名/關自動定位，並立即觸發天氣重抓。"""
+    from deskbar import sync as sync_mod
+    from deskbar.webserver import create_app
+
+    class _FakeAlarms:
+        def list(self):
+            return []
+
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    s = Settings()
+    app = create_app(_FakeAlarms(), settings_provider=s, settings_lock=threading.Lock(),
+                     on_save=lambda _s: None, usage_state=AppState())
+    app.config["TESTING"] = True
+    c = app.test_client()
+    sync_mod.FORCE_WX.clear()
+    r = c.patch("/api/prefs", json={"weather_auto_locate": False,
+                                    "weather_lat": 25.038, "weather_lon": 121.5636,
+                                    "weather_label": "台北"})
+    assert r.status_code == 200
+    assert (s.weather_lat, s.weather_lon, s.weather_label) == (25.038, 121.5636, "台北")
+    assert s.weather_auto_locate is False
+    assert sync_mod.FORCE_WX.is_set(), "位置改了要立刻重抓天氣"
+    sync_mod.FORCE_WX.clear()
+    assert c.patch("/api/prefs", json={"weather_lat": 999}).status_code == 400
+    assert c.patch("/api/prefs", json={"weather_label": "x" * 20}).status_code == 400
+    p = c.get("/api/prefs").get_json()
+    assert p["weather_label"] == "台北" and p["weather_auto_locate"] is False
