@@ -184,19 +184,50 @@ async function loadNotes(){
  NOTES=await r.json();renderNotes();
 }
 function renderNotes(){
- document.getElementById("notes").innerHTML=NOTES.map(n=>editingNote===n.id?`
-  <div class="card"><input type="text" id="ed_${esc(n.id)}" value="${esc(n.text)}"
+ document.getElementById("notes").innerHTML=NOTES.map((n,i)=>editingNote===n.id?`
+  <div class="card note-card" data-id="${esc(n.id)}"><input type="text" id="ed_${esc(n.id)}" value="${esc(n.text)}"
     onkeydown="if(event.key==='Enter'&&!event.isComposing&&event.keyCode!==229)saveEdit('${esc(n.id)}')">
    <div class="row" style="margin-top:8px;justify-content:flex-end">
     <button onclick="saveEdit('${esc(n.id)}')">存</button>
     <button onclick="editingNote=null;renderNotes()">取消</button></div></div>`:`
-  <div class="card"><div class="row">
+  <div class="card note-card" data-id="${esc(n.id)}"><div class="row">
+   <span class="drag" style="touch-action:none;cursor:grab;padding:4px 10px 4px 2px;color:#9a9a9a;font-size:18px;user-select:none"
+    onpointerdown="dragStart(event)">☰</span>
+   <span style="color:#9a9a9a;min-width:22px;font-variant-numeric:tabular-nums">${i+1}.</span>
    <div style="flex:1;white-space:pre-wrap">${esc(n.text)}</div>
    <div style="display:flex;gap:6px"><button onclick="editingNote='${esc(n.id)}';renderNotes()">編輯</button>
    <button class="del" onclick="delNote('${esc(n.id)}')">撕掉</button></div>
   </div></div>`).join("");
  const el=document.getElementById("ed_"+editingNote);if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length)}
 }
+// 拖動排序（順序＝優先序，第 1 張＝deskbar 牆左上）。用 Pointer Events 手做
+// ——HTML5 DnD 在手機瀏覽器不動；把手 touch-action:none，其餘區域照常捲頁。
+let dragEl=null;
+function dragStart(e){
+ if(editingNote)return;
+ dragEl=e.target.closest(".note-card");
+ dragEl.style.opacity=.55;
+ e.preventDefault();
+}
+document.addEventListener("pointermove",e=>{
+ if(!dragEl)return;
+ e.preventDefault();
+ for(const el of document.querySelectorAll(".note-card")){
+  if(el===dragEl)continue;
+  const r=el.getBoundingClientRect();
+  if(e.clientY<r.top+r.height/2){el.before(dragEl);return}
+ }
+ const all=[...document.querySelectorAll(".note-card")];
+ if(all.length)all[all.length-1].after(dragEl);
+},{passive:false});
+document.addEventListener("pointerup",async()=>{
+ if(!dragEl)return;
+ dragEl.style.opacity=1;dragEl=null;
+ const order=[...document.querySelectorAll(".note-card")].map(el=>el.dataset.id);
+ await fetch("/api/notes/reorder",{method:"POST",
+  headers:{"Content-Type":"application/json"},body:JSON.stringify({order})});
+ loadNotes();
+});
 async function saveEdit(id){
  const v=document.getElementById("ed_"+id).value.trim();
  if(!v)return;

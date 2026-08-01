@@ -205,3 +205,54 @@ def test_notes_api_patch_edits_and_bumps_render(tmp_path, monkeypatch):
     assert c.patch(f"/api/notes/{nid}", json={"text": "  "}).status_code == 400
     assert c.patch("/api/notes/nope", json={"text": "x"}).status_code == 404
     assert ns.list()[0].text == "v2"
+
+
+# ---------------------------------------------------------------- 拖動排序
+
+def test_store_reorder_moves_and_persists(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    st = NotesStore()
+    a = st.add("第一張")      # 新的在前：目前順序 c, b, a
+    b = st.add("第二張")
+    c = st.add("第三張")
+    assert [n.id for n in st.list()] == [c.id, b.id, a.id]
+    assert st.reorder([a.id, c.id]) is True, "有變動要回 True"
+    assert [n.id for n in st.list()] == [a.id, c.id, b.id], \
+        "列出的照給定順序；沒列的（b）排後面維持相對順序"
+    assert st.reorder([a.id, c.id]) is False, "沒變動＝不寫檔"
+    assert st.reorder(["nope", a.id, c.id]) is False, "未知 id 忽略後仍無變動"
+    st2 = NotesStore(); st2.load()
+    assert [n.id for n in st2.list()] == [a.id, c.id, b.id], "排序要持久化"
+
+
+def test_notes_api_reorder_endpoint_and_bump(tmp_path, monkeypatch):
+    from deskbar.webserver import create_app
+
+    class _FakeAlarms:
+        def list(self):
+            return []
+
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    ns = NotesStore()
+    ids = [ns.add(f"n{i}").id for i in range(3)]     # list() = 反序 ids[2..0]
+    state = AppState()
+    app = create_app(_FakeAlarms(), notes_store=ns, usage_state=state)
+    app.config["TESTING"] = True
+    c = app.test_client()
+    seq0 = state.snapshot().seq
+    r = c.post("/api/notes/reorder", json={"order": ids})     # 反轉成 add 順序
+    assert r.status_code == 200
+    assert [n.id for n in ns.list()] == ids
+    assert state.snapshot().seq > seq0, "重排要叫醒裝置重繪（牆即時同步）"
+    seq1 = state.snapshot().seq
+    assert c.post("/api/notes/reorder", json={"order": ids}).status_code == 200
+    assert state.snapshot().seq == seq1, "沒變動不 bump"
+    assert c.post("/api/notes/reorder", json={"order": "x"}).status_code == 400
+    assert c.post("/api/notes/reorder", json={"order": [1, 2]}).status_code == 400
+
+
+def test_notesview_badge_second_page_numbers():
+    s = _surf()
+    hits = notesview.render(s, [_note(i, f"排序 {i}") for i in range(8)],
+                            notesview.new_state(), AREA, NOW, 0.0, page=1)
+    assert len(hits) == 2, "第二頁兩張（7、8 號徽章）照常可點"

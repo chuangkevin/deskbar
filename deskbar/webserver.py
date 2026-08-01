@@ -169,6 +169,20 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
         _notes_changed()
         return jsonify(asdict(n))
 
+    @app.post("/api/notes/reorder")
+    def reorder_notes():
+        """整批重排（拖曳放手後送完整 id 順序，冪等、不怕連拖多次）。"""
+        if notes_store is None:
+            return jsonify({"error": "not available"}), 501
+        d = request.get_json(force=True, silent=True) or {}
+        ids = d.get("order")
+        if not isinstance(ids, list) or len(ids) > 100 \
+                or not all(isinstance(x, str) for x in ids):
+            return jsonify({"error": "order must be a list of note ids"}), 400
+        if notes_store.reorder(ids):
+            _notes_changed()
+        return jsonify({"ok": True})
+
     @app.delete("/api/notes/<nid>")
     def delete_note(nid):
         if notes_store is None:

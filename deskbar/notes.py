@@ -90,6 +90,21 @@ class NotesStore:
                     return new
         return None
 
+    def reorder(self, ids: list) -> bool:
+        """依給定 id 順序整批重排（網頁拖動排序；順序＝優先序，牆上第一張
+        ＝第 1 優先）。未列出的 id 排在後面、維持原相對順序；未知 id 忽略。
+        回傳是否真的變動（沒變就不寫檔、呼叫端不用 bump 重繪）。"""
+        with self._lock:
+            by_id = {n.id: n for n in self._notes}
+            listed = set(x for x in ids if x in by_id)
+            new = [by_id[x] for x in ids if x in by_id] \
+                + [n for n in self._notes if n.id not in listed]
+            if [n.id for n in new] == [n.id for n in self._notes]:
+                return False
+            self._notes = new
+            self._save_locked()
+            return True
+
     def remove(self, nid: str) -> bool:
         with self._lock:
             before = len(self._notes)

@@ -109,6 +109,12 @@ def render(surface, notes: list, ui: dict, area: Rect, now: datetime,
         tape = pygame.Rect(body.w // 2 - 34, 0, 68, 10)
         pygame.draw.rect(card, _tint(color, 110), tape,
                          border_bottom_left_radius=6, border_bottom_right_radius=6)
+        # 優先序徽章（右上角，避開左上內文起點與中央膠帶）：順序＝優先序，
+        # 網頁拖動排序後這裡的編號即時跟上
+        seq = page * PAGE_SIZE + idx + 1
+        pygame.draw.circle(card, _tint(color, 190), (body.w - 22, 22), 14)
+        num = theme.text_surface(str(seq), 16, theme.C["text"], bold=True)
+        card.blit(num, num.get_rect(center=(body.w - 22, 22)))
         lines = theme.wrap_lines(n.text, theme.font(22, bold=True),
                                  body.w - pad * 2, 4)
         ty = 22
