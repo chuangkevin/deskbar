@@ -15,6 +15,7 @@ LOGICAL_W, LOGICAL_H = 1920, 480
 DRAG_THRESHOLD = 24                     # px，觸控拖曳判定門檻
 SYNC_INTERVALS = [1, 3, 5, 10, 30]       # 設定頁「同步頻率」鈕的循環清單（分鐘）
 WAKE_SECONDS = 30                        # 深夜熄屏中觸摸喚醒的持續秒數
+ALARM_AUTO_DISMISS_S = 300               # 響鈴 5 分鐘沒人理＝自動解除（不然閃一整晚）
 AUTO_SWITCH_BEFORE_MIN = 15              # 迫近行程搶焦點：開始前 N 分鐘自動切回行事曆
 PAN_BAND_INTERVAL = 1 / 30               # 跟手位移的 flip 節流（帶狀 blit 很便宜，30fps 上限即可）
 # 氛圍幀率不是常數：由 weatherfx.ambient_fps(code) 分級（雨/雷 15、雪 12、
@@ -42,6 +43,7 @@ class App:
         from deskbar.ui import notesview
         self.notes_ui = notesview.new_state()
         self.firing = []
+        self._firing_since = 0.0        # 最近一顆鬧鐘開始響的時刻（自動解除計時基準）
         self._last_alarm_check = None
         self.view_anchor = None         # datetime|None，None=跟隨現在
         self._drag_start = None         # 觸控/滑鼠按下時的邏輯座標 (x, y)
@@ -120,7 +122,8 @@ class App:
         from deskbar import brightness
         now = datetime.now(ZoneInfo("Asia/Taipei"))
         pct = brightness.effective(self.settings, now.hour * 60 + now.minute,
-                                   awake=time.monotonic() < self._wake_until)
+                                   awake=bool(self.firing)
+                                   or time.monotonic() < self._wake_until)
         alpha = brightness.veil_alpha(pct)
         if alpha <= 0:
             return None
@@ -802,7 +805,11 @@ class App:
                 return
 
     def _screen_asleep(self) -> bool:
-        """深夜熄屏中（睡眠時段內且沒有觸摸喚醒）＝畫面全黑。"""
+        """深夜熄屏中（睡眠時段內且沒有觸摸喚醒）＝畫面全黑。
+        響鈴中一律視為醒著——鬧鐘在全黑幕底下閃等於沒響，且解除的那一觸
+        不該被當成喚醒觸吞掉。"""
+        if self.firing:
+            return False
         from datetime import datetime
         from zoneinfo import ZoneInfo
         from deskbar import brightness
@@ -969,12 +976,19 @@ class App:
             self._last_alarm_check = now
             if due:
                 self.firing.extend(due)
+                self._firing_since = mono   # 新來的鬧鐘重置計時：每顆都有完整 5 分鐘
                 self._last_seq = -1
         if self.firing:
-            self._anim_start = None
-            self._render()          # 閃爍需每圈重繪
-            clock.tick(10)
-            return running
+            if mono - self._firing_since > ALARM_AUTO_DISMISS_S:
+                # 響 5 分鐘沒人理＝人不在，自動解除（實機需求：不然閃一整晚，
+                # 深夜還會一直以「響鈴=醒著」壓過熄屏）
+                self.firing.clear()
+                self._last_seq = -1
+            else:
+                self._anim_start = None
+                self._render()          # 閃爍需每圈重繪
+                clock.tick(10)
+                return running
         if self._transition_start is not None:    # 切換過場優先於翻牌動畫（兩者不會同時發生）
             self._render_transition_frame(now)
             clock.tick(30)

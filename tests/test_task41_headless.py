@@ -483,3 +483,51 @@ def test_text_surface_caches_and_clears_on_theme_change():
     theme.set_theme("dark")             # 換主題（即使同名）要清快取
     d = theme.text_surface("快取測試", 22, theme.C["text"], bold=True)
     assert d is not a, "set_theme 後快取要重建"
+
+
+# ---------------------------------------------------------------- 鬧鐘自動解除
+
+class _NoTick:
+    def tick(self, _fps):
+        pass
+
+
+def test_alarm_auto_dismisses_after_timeout(tmp_path, monkeypatch):
+    """響超過 ALARM_AUTO_DISMISS_S（5 分鐘）沒人理＝自動解除，不閃整晚。"""
+    import time as _t
+    from deskbar.alarms import Alarm
+    from deskbar.ui import app as app_mod
+    app = _make_app(tmp_path, monkeypatch)
+    app.firing = [Alarm("a1", "22:00", [], "測試", True)]
+    app._firing_since = _t.monotonic() - (app_mod.ALARM_AUTO_DISMISS_S + 1)
+    app._run_iteration(_NoTick(), True)
+    assert app.firing == [], "逾時要自動解除"
+    assert app._last_seq != -999   # smoke：迭代正常走完
+
+
+def test_alarm_keeps_firing_within_window(tmp_path, monkeypatch):
+    import time as _t
+    from deskbar.alarms import Alarm
+    app = _make_app(tmp_path, monkeypatch)
+    app.firing = [Alarm("a1", "22:00", [], "測試", True)]
+    app._firing_since = _t.monotonic() - 10
+    app._run_iteration(_NoTick(), True)
+    assert len(app.firing) == 1, "5 分鐘內要持續閃"
+
+
+def test_alarm_overrides_sleep_blackout(tmp_path, monkeypatch):
+    """深夜熄屏時段響鈴：不能在全黑幕底下閃——響鈴中視為醒著。"""
+    from deskbar.alarms import Alarm
+    app = _make_app(tmp_path, monkeypatch)
+    app.settings.sleep_enabled = True
+    app.settings.sleep_start_min = 0
+    app.settings.sleep_end_min = 1439
+    app.settings.brightness_day = 40
+    app.settings.brightness_night = 40
+    assert app._screen_asleep() is True
+    app._dim_veil((10, 10))
+    assert app._veil[1] == 255, "沒響鈴＝全黑"
+    app.firing = [Alarm("a1", "03:00", [], "早起", True)]
+    assert app._screen_asleep() is False, "響鈴中不算熄屏（解除觸不被吞）"
+    app._dim_veil((10, 10))
+    assert app._veil[1] == 153, "響鈴中亮度回到正常排程（40%），鬧鐘看得見"
