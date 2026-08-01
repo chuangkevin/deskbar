@@ -17,6 +17,17 @@ import requests
 URL = "http://ip-api.com/json/"
 _PARAMS = {"lang": "zh-TW", "fields": "status,lat,lon,city,regionName"}
 
+# ip-api 的 zh-TW 翻譯對台灣城市常缺漏（實測新北回 "New Taipei City"）——
+# 左欄是中文介面，常見城市自己對照；沒中的就照原文（截 12 字）。
+_EN2ZH = {
+    "new taipei city": "新北", "new taipei": "新北", "taipei": "台北",
+    "taoyuan": "桃園", "taoyuan district": "桃園", "zhongli": "中壢",
+    "hsinchu": "新竹", "taichung": "台中", "tainan": "台南",
+    "kaohsiung": "高雄", "keelung": "基隆", "banqiao": "板橋",
+    "chiayi": "嘉義", "changhua": "彰化", "pingtung": "屏東",
+    "yilan": "宜蘭", "hualien": "花蓮", "taitung": "台東",
+}
+
 
 def locate(http_get=requests.get) -> "tuple[float, float, str] | None":
     """回 (lat, lon, label)；label 取城市名（沒有就用行政區名），截 12 字。"""
@@ -26,6 +37,7 @@ def locate(http_get=requests.get) -> "tuple[float, float, str] | None":
             return None
         lat, lon = float(d["lat"]), float(d["lon"])
         label = str(d.get("city") or d.get("regionName") or "").strip()
+        label = _EN2ZH.get(label.lower(), label)
         return lat, lon, (label[:12] or "目前位置")
     except Exception:
         return None

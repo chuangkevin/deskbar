@@ -33,6 +33,14 @@ def test_locate_parses_and_caps_label():
     assert label == "桃園市中壢區某某里超長名稱"[:12]
 
 
+def test_locate_maps_taiwan_english_city_names():
+    def fake_get(url, params=None, timeout=None):
+        return _Resp({"status": "success", "lat": 25.07, "lon": 121.46,
+                      "city": "New Taipei City"})
+    assert geoloc.locate(http_get=fake_get)[2] == "新北", \
+        "ip-api zh-TW 對台灣城市常缺漏，常見城市要對照成中文"
+
+
 def test_locate_failure_paths_return_none():
     assert geoloc.locate(http_get=lambda *a, **k: _Resp({"status": "fail"})) is None
 
