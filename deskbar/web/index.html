@@ -113,6 +113,8 @@ async function loadPrefs(){
   <div class="cal-row">下班時間 ${sel("p_we",MIN_OPTS,p.work_end_min,fm)}（此後套用下班亮度）</div>
   <div class="cal-row">上班亮度 ${sel("p_bd",pct.filter(v=>v>=10),p.brightness_day,v=>v+"%")}</div>
   <div class="cal-row">下班亮度 ${sel("p_bn",pct,p.brightness_night,v=>v+"%")}</div>
+  <div class="cal-row"><input type="checkbox" id="p_wa" ${p.weather_auto_locate?"checked":""}>
+   <label for="p_wa">天氣自動定位（IP，目前：${p.weather_label||"—"}）</label></div>
   <div class="cal-row"><input type="checkbox" id="p_se" ${p.sleep_enabled?"checked":""}>
    <label for="p_se">深夜熄屏（時段內全黑，觸摸喚醒 30 秒）</label></div>
   <div class="cal-row">睡眠時段 ${sel("p_ss",MIN_OPTS,p.sleep_start_min,fm)} –
@@ -133,7 +135,8 @@ async function loadPrefs(){
 async function savePrefs(){
  const iv=+document.getElementById("p_pi").value;
  const grace={15:45,30:90,45:150}[iv]||150;
- const body={work_start_min:+document.getElementById("p_ws").value,
+ const body={weather_auto_locate:document.getElementById("p_wa").checked,
+  work_start_min:+document.getElementById("p_ws").value,
   work_end_min:+document.getElementById("p_we").value,
   brightness_day:+document.getElementById("p_bd").value,
   brightness_night:+document.getElementById("p_bn").value,

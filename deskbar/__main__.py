@@ -32,7 +32,10 @@ def _fake_data(state: AppState, settings) -> None:
                                 now + timedelta(minutes=10),
                                 now + timedelta(minutes=40), False, None, None))
         state.set_events(email, events, now)
-    state.set_weather(Weather(33.4, 80, 34.1, 26.3, settings.weather_label, now))
+    # dev 假天氣預設 code 80（陣雨）——刻意讓雨刷/玻璃層常駐展示；
+    # 想看別的場景：DESKBAR_FAKE_WEATHER=0 晴 / 3 陰 / 95 雷雨 / 71 雪
+    fake_code = int(os.environ.get("DESKBAR_FAKE_WEATHER", "80"))
+    state.set_weather(Weather(33.4, fake_code, 34.1, 26.3, settings.weather_label, now))
     # 假待辦（真環境由 linear_loop 同步；FAKE 模式不開同步執行緒）：
     # 兩頁的量，翻頁/詳情浮層/右欄摘要都測得到
     from deskbar.linear import LinearIssue

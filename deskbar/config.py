@@ -41,6 +41,7 @@ class Settings:
     weather_lat: float = DEFAULT_LAT
     weather_lon: float = DEFAULT_LON
     weather_label: str = DEFAULT_LABEL
+    weather_auto_locate: bool = True    # IP 定位自動跟隨裝置位置（換網路即換城市）
     start_hour: int = 8
     end_hour: int = 24
     sync_interval_min: int = 5
@@ -140,6 +141,9 @@ def load_settings() -> Settings:
         work_end_min = _min_from("work_end_min", "work_end_hour", 1080)
         brightness_day = _int_in("brightness_day", 100, 10, 100)
         brightness_night = _int_in("brightness_night", 40, 10, 100)
+        weather_auto_locate = raw.get("weather_auto_locate", True)
+        if not isinstance(weather_auto_locate, bool):
+            weather_auto_locate = True
         sleep_enabled = raw.get("sleep_enabled", False)
         if not isinstance(sleep_enabled, bool):
             sleep_enabled = False
@@ -156,6 +160,7 @@ def load_settings() -> Settings:
             weather_lat=raw.get("weather_lat", DEFAULT_LAT),
             weather_lon=raw.get("weather_lon", DEFAULT_LON),
             weather_label=raw.get("weather_label", DEFAULT_LABEL),
+            weather_auto_locate=weather_auto_locate,
             start_hour=raw.get("start_hour", 8),
             end_hour=raw.get("end_hour", 24),
             sync_interval_min=sync_interval_min,
@@ -189,6 +194,7 @@ def save_settings(s: Settings) -> None:
         "weather_lat": s.weather_lat,
         "weather_lon": s.weather_lon,
         "weather_label": s.weather_label,
+        "weather_auto_locate": s.weather_auto_locate,
         "start_hour": s.start_hour,
         "end_hour": s.end_hour,
         "sync_interval_min": s.sync_interval_min,

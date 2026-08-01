@@ -188,7 +188,7 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
         "presence_interval_sec": (5, 600), "presence_grace_sec": (0, 3600),
         "sync_interval_min": (1, 120),
     }
-    _PREF_BOOL = {"presence_enabled", "sleep_enabled"}
+    _PREF_BOOL = {"presence_enabled", "sleep_enabled", "weather_auto_locate"}
     _PREF_STR = {"linear_api_key": 200}      # 值=長度上限；GET 絕不回傳原文
 
     @app.get("/api/prefs")
@@ -201,6 +201,7 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             # 祕密欄位只回「是否已設定」，原文永不出站
             out["linear_key_set"] = bool(getattr(settings_provider,
                                                  "linear_api_key", ""))
+            out["weather_label"] = getattr(settings_provider, "weather_label", "")
         return jsonify(out)
 
     @app.patch("/api/prefs")

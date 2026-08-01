@@ -118,12 +118,39 @@ def calendar_sync_once(state: AppState, settings, deps: SyncDeps,
 def weather_sync_once(state: AppState, settings, deps: SyncDeps,
                       settings_lock: threading.Lock | None = None) -> None:
     """天氣同步不碰 settings.accounts，理論上完全不需要鎖；
-    但為求嚴謹，仍在鎖內快照 lat/lon/label 這幾個純量再放鎖去打網路。"""
+    但為求嚴謹，仍在鎖內快照 lat/lon/label 這幾個純量再放鎖去打網路。
+
+    自動定位（weather_auto_locate，預設開）：每輪先用 IP 反查位置，跟目前
+    設定差超過 ~5km（0.05°）或城市名變了才改寫並持久化——裝置搬到公司、
+    換熱點，天氣自動跟著走；IP 查詢失敗就沿用原設定，不擋天氣本身。"""
     if settings_lock is not None:
         with settings_lock:
+            auto = getattr(settings, "weather_auto_locate", True)
             lat, lon, label = settings.weather_lat, settings.weather_lon, settings.weather_label
     else:
+        auto = getattr(settings, "weather_auto_locate", True)
         lat, lon, label = settings.weather_lat, settings.weather_lon, settings.weather_label
+    if auto:
+        from deskbar import config as _cfg
+        from deskbar import geoloc
+        loc = geoloc.locate(http_get=deps.http_get)
+        if loc is not None:
+            nlat, nlon, nlabel = loc
+            if (abs(nlat - lat) > 0.05 or abs(nlon - lon) > 0.05
+                    or (nlabel and nlabel != label)):
+                lat, lon, label = nlat, nlon, nlabel
+                try:
+                    if settings_lock is not None:
+                        with settings_lock:
+                            settings.weather_lat, settings.weather_lon = nlat, nlon
+                            settings.weather_label = nlabel
+                            _cfg.save_settings(settings)
+                    else:
+                        settings.weather_lat, settings.weather_lon = nlat, nlon
+                        settings.weather_label = nlabel
+                        _cfg.save_settings(settings)
+                except OSError as e:
+                    print(f"[deskbar] geoloc save failed: {e}", file=sys.stderr)
     try:
         w = fetch_weather(lat, lon, label, http_get=deps.http_get, now_fn=deps.now_fn)
         state.set_weather(w)
