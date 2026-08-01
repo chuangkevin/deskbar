@@ -157,14 +157,22 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
 
     @app.patch("/api/notes/<nid>")
     def patch_note(nid):
+        """改內文和/或顏色（color -1=自動輪色、0..4=色盤索引）。"""
         if notes_store is None:
             return jsonify({"error": "not available"}), 501
         d = request.get_json(force=True, silent=True) or {}
-        text = d.get("text", "")
-        n = notes_store.update(nid, text if isinstance(text, str) else "")
+        text = d.get("text")
+        color = d.get("color")
+        if text is None and color is None:
+            return jsonify({"error": "text or color required"}), 400
+        if text is not None and (not isinstance(text, str) or not text.strip()):
+            return jsonify({"error": "text required"}), 400
+        if color is not None and (not isinstance(color, int)
+                                  or isinstance(color, bool)
+                                  or not (-1 <= color <= 4)):
+            return jsonify({"error": "color must be -1..4"}), 400
+        n = notes_store.patch(nid, text=text, color=color)
         if n is None:
-            if not (isinstance(text, str) and text.strip()):
-                return jsonify({"error": "text required"}), 400
             return jsonify({"error": "not found"}), 404
         _notes_changed()
         return jsonify(asdict(n))

@@ -256,3 +256,54 @@ def test_notesview_badge_second_page_numbers():
     hits = notesview.render(s, [_note(i, f"排序 {i}") for i in range(8)],
                             notesview.new_state(), AREA, NOW, 0.0, page=1)
     assert len(hits) == 2, "第二頁兩張（7、8 號徽章）照常可點"
+
+
+# ---------------------------------------------------------------- 自選顏色
+
+def test_store_patch_color_and_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    st = NotesStore()
+    n = st.add("彩色便條")
+    assert n.color == -1, "新便條預設自動輪色"
+    c = st.patch(n.id, color=3)
+    assert c.color == 3 and c.text == "彩色便條", "只改色不動文"
+    t = st.patch(n.id, text="改字")
+    assert t.text == "改字" and t.color == 3, "只改文要保留顏色"
+    both = st.patch(n.id, text="都改", color=0)
+    assert (both.text, both.color) == ("都改", 0)
+    assert st.patch(n.id, color=9) is None, "色盤索引越界拒改"
+    assert st.patch(n.id) is None, "什麼都沒給拒改"
+    st2 = NotesStore(); st2.load()
+    assert st2.list()[0].color == 0, "顏色要持久化"
+
+
+def test_store_load_old_json_without_color(tmp_path, monkeypatch):
+    import json as _json
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "notes.json").write_text(_json.dumps(
+        [{"id": "old1", "text": "舊格式", "ts": NOW.isoformat()}]),
+        encoding="utf-8")
+    st = NotesStore(); st.load()
+    assert st.list()[0].color == -1, "舊檔沒有 color 欄位＝自動輪色，不炸"
+
+
+def test_notes_api_patch_color(client):
+    nid = client.post("/api/notes", json={"text": "上色"}).get_json()["id"]
+    r = client.patch(f"/api/notes/{nid}", json={"color": 2})
+    assert r.status_code == 200 and r.get_json()["color"] == 2
+    assert client.patch(f"/api/notes/{nid}", json={"color": 9}).status_code == 400
+    assert client.patch(f"/api/notes/{nid}", json={}).status_code == 400
+    assert client.patch(f"/api/notes/{nid}",
+                        json={"color": True}).status_code == 400
+    r2 = client.patch(f"/api/notes/{nid}", json={"text": "上色改字"})
+    assert r2.get_json()["color"] == 2, "改字不掉色"
+
+
+def test_notesview_respects_chosen_color():
+    a, b = _surf(), _surf()
+    na = Note("n1", "同一張", NOW.isoformat(), 0)
+    nb = Note("n1", "同一張", NOW.isoformat(), 2)
+    notesview.render(a, [na], notesview.new_state(), AREA, NOW, 0.0)
+    notesview.render(b, [nb], notesview.new_state(), AREA, NOW, 0.0)
+    assert pygame.image.tobytes(a, "RGB") != pygame.image.tobytes(b, "RGB"), \
+        "指定不同色盤索引要畫出不同顏色"

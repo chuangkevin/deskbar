@@ -178,6 +178,16 @@ async function saveKey(){
  if(r.ok)setTimeout(loadPrefs,600);
 }
 let NOTES=[],editingNote=null;
+// 便利貼色盤（與裝置 notesview._STICKY 同一組色）；auto 輪色雜湊也與裝置同款，
+// 卡片左緣色永遠等於牆上那張的顏色
+const PAL=["#FFD65A","#FFA0B4","#78BEFF","#96E2A0","#C8AAFF"];
+function autoIdx(id){let v=0;for(const ch of String(id)){v=(Math.imul(v,131)+ch.charCodeAt(0))>>>0}return v%PAL.length}
+const noteColor=n=>PAL[(n.color>=0&&n.color<PAL.length)?n.color:autoIdx(n.id)];
+async function setColor(id,ci){
+ await fetch("/api/notes/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({color:ci})});
+ loadNotes();
+}
 async function loadNotes(){
  const r=await fetch("/api/notes");
  if(!r.ok){document.getElementById("notes").innerHTML="";return}
@@ -190,13 +200,17 @@ function renderNotes(){
    <div class="row" style="margin-top:8px;justify-content:flex-end">
     <button onclick="saveEdit('${esc(n.id)}')">存</button>
     <button onclick="editingNote=null;renderNotes()">取消</button></div></div>`:`
-  <div class="card note-card" data-id="${esc(n.id)}"><div class="row">
+  <div class="card note-card" data-id="${esc(n.id)}" style="border-left:4px solid ${noteColor(n)}"><div class="row">
    <span class="drag" style="touch-action:none;cursor:grab;padding:4px 10px 4px 2px;color:#9a9a9a;font-size:18px;user-select:none"
     onpointerdown="dragStart(event)">☰</span>
    <span style="color:#9a9a9a;min-width:22px;font-variant-numeric:tabular-nums">${i+1}.</span>
    <div style="flex:1;white-space:pre-wrap">${esc(n.text)}</div>
    <div style="display:flex;gap:6px"><button onclick="editingNote='${esc(n.id)}';renderNotes()">編輯</button>
    <button class="del" onclick="delNote('${esc(n.id)}')">撕掉</button></div>
+  </div>
+  <div style="display:flex;gap:10px;margin-top:8px;align-items:center">
+   ${PAL.map((c,ci)=>`<span onclick="setColor('${esc(n.id)}',${ci})"
+    style="width:20px;height:20px;border-radius:50%;background:${c};display:inline-block;cursor:pointer;box-sizing:border-box;border:2px solid ${n.color===ci?"#fff":"rgba(255,255,255,.15)"}"></span>`).join("")}
   </div></div>`).join("");
  const el=document.getElementById("ed_"+editingNote);if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length)}
 }

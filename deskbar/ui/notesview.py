@@ -93,48 +93,64 @@ def render(surface, notes: list, ui: dict, area: Rect, now: datetime,
     pages = page_count(len(notes))
     page = max(0, min(page, pages - 1))
     shown = notes[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+    S = 2   # 超取樣倍率：2 倍畫、旋轉時縮回 1 倍——rotozoom 的縮小濾波就是
+            # 免費的邊緣抗鋸齒（1 倍直轉的圓角與斜邊在低解析面板上鋸齒明顯，
+            # 實機驗收：「邊緣粗糙有夠不精緻」）
     for idx, n in enumerate(shown):
         col, row = idx % cols, idx // cols
         x = area.x + col * (cw + gap)
         y = area.y + row * (ch + gap)
-        color = _STICKY[_h(n.id) % len(_STICKY)]
+        ci = getattr(n, "color", -1)
+        color = _STICKY[ci] if 0 <= ci < len(_STICKY) \
+            else _STICKY[_h(n.id) % len(_STICKY)]   # 沒指定就依 id 輪色
         pending = ui["pending_id"] == n.id
-        # 便利貼本體畫在 SRCALPHA 上再微旋轉（±2°，由 id 決定、穩定不抖）
-        pad = 14
-        card = pygame.Surface((int(cw) - 8, int(ch) - 8), pygame.SRCALPHA)
+        pad = 14 * S
+        card = pygame.Surface(((int(cw) - 8) * S, (int(ch) - 8) * S),
+                              pygame.SRCALPHA)
         body = card.get_rect()
         base = _tint(color, 64 if theme.current_theme() == "dark" else 88)
-        pygame.draw.rect(card, base, body, border_radius=10)
-        pygame.draw.rect(card, _tint(color, 140), body, width=1, border_radius=10)
-        tape = pygame.Rect(body.w // 2 - 34, 0, 68, 10)
+        pygame.draw.rect(card, base, body, border_radius=10 * S)
+        pygame.draw.rect(card, _tint(color, 140), body, width=S,
+                         border_radius=10 * S)
+        tape = pygame.Rect(body.w // 2 - 34 * S, 0, 68 * S, 10 * S)
         pygame.draw.rect(card, _tint(color, 110), tape,
-                         border_bottom_left_radius=6, border_bottom_right_radius=6)
+                         border_bottom_left_radius=6 * S,
+                         border_bottom_right_radius=6 * S)
         # 優先序徽章（右上角，避開左上內文起點與中央膠帶）：順序＝優先序，
         # 網頁拖動排序後這裡的編號即時跟上
         seq = page * PAGE_SIZE + idx + 1
-        pygame.draw.circle(card, _tint(color, 190), (body.w - 22, 22), 14)
-        num = theme.text_surface(str(seq), 16, theme.C["text"], bold=True)
-        card.blit(num, num.get_rect(center=(body.w - 22, 22)))
-        lines = theme.wrap_lines(n.text, theme.font(22, bold=True),
+        pygame.draw.circle(card, _tint(color, 190),
+                           (body.w - 22 * S, 22 * S), 14 * S)
+        num = theme.text_surface(str(seq), 16 * S, theme.C["text"], bold=True)
+        card.blit(num, num.get_rect(center=(body.w - 22 * S, 22 * S)))
+        lines = theme.wrap_lines(n.text, theme.font(22 * S, bold=True),
                                  body.w - pad * 2, 4)
-        ty = 22
+        ty = 22 * S
         for line in lines:
-            img = theme.text_surface(line, 22, theme.C["text"], bold=True)
+            img = theme.text_surface(line, 22 * S, theme.C["text"], bold=True)
             card.blit(img, (pad, ty))
-            ty += 30
+            ty += 30 * S
         ts = _fmt_ts(n.ts, now)
         if ts:
-            img = theme.text_surface(ts, 16, theme.C["muted"])
-            card.blit(img, (pad, body.h - 26))
+            img = theme.text_surface(ts, 16 * S, theme.C["muted"])
+            card.blit(img, (pad, body.h - 26 * S))
         if pending:
             veil = pygame.Surface((body.w, body.h), pygame.SRCALPHA)
             veil.fill((0, 0, 0, 120))
             card.blit(veil, (0, 0))
-            img = theme.text_surface("再點一下撕掉", 22, theme.C["warn"], bold=True)
+            img = theme.text_surface("再點一下撕掉", 22 * S, theme.C["warn"],
+                                     bold=True)
             card.blit(img, img.get_rect(center=(body.w // 2, body.h // 2)))
         angle = ((_h(n.id) >> 4) % 5 - 2) * 1.0          # -2..+2 度
-        rot = pygame.transform.rotozoom(card, angle, 1.0)
-        surface.blit(rot, rot.get_rect(center=(x + cw / 2, y + ch / 2)))
+        cx, cy = x + cw / 2, y + ch / 2
+        # 柔和落影（同形黑面同角度旋轉、右下偏移）：紙貼在牆上的縱深感
+        shadow = pygame.Surface(body.size, pygame.SRCALPHA)
+        pygame.draw.rect(shadow, (0, 0, 0, 66), shadow.get_rect(),
+                         border_radius=10 * S)
+        sh = pygame.transform.rotozoom(shadow, angle, 1.0 / S)
+        surface.blit(sh, sh.get_rect(center=(cx + 3, cy + 4)))
+        rot = pygame.transform.rotozoom(card, angle, 1.0 / S)
+        surface.blit(rot, rot.get_rect(center=(cx, cy)))
         hits.append(Hit(Rect(x, y, cw, ch), "note_tap", n.id))
     if pages > 1:
         cx = area.x + area.w / 2 - (pages - 1) * 11
