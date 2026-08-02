@@ -93,9 +93,10 @@ def render(surface, notes: list, ui: dict, area: Rect, now: datetime,
     pages = page_count(len(notes))
     page = max(0, min(page, pages - 1))
     shown = notes[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
-    S = 2   # 超取樣倍率：2 倍畫、旋轉時縮回 1 倍——rotozoom 的縮小濾波就是
-            # 免費的邊緣抗鋸齒（1 倍直轉的圓角與斜邊在低解析面板上鋸齒明顯，
-            # 實機驗收：「邊緣粗糙有夠不精緻」）
+    S = 2   # 超取樣倍率：2 倍畫、smoothscale 縮回 1 倍——縮小濾波就是免費的
+            # 邊緣抗鋸齒。第一版走「微旋轉＋rotozoom」，實機兩度驗收都是
+            # 「邊緣粗糙不精緻」：SRCALPHA 邊緣在旋轉重採樣下必然起毛邊。
+            # 正擺＋smoothscale 直邊零鋸齒、圓角平滑，也更符合乾淨專業的路線。
     for idx, n in enumerate(shown):
         col, row = idx % cols, idx // cols
         x = area.x + col * (cw + gap)
@@ -138,20 +139,34 @@ def render(surface, notes: list, ui: dict, area: Rect, now: datetime,
             veil = pygame.Surface((body.w, body.h), pygame.SRCALPHA)
             veil.fill((0, 0, 0, 120))
             card.blit(veil, (0, 0))
-            img = theme.text_surface("再點一下撕掉", 22 * S, theme.C["warn"],
+            # 「✕」字元在部分 CJK 字型是豆腐方塊，提示走純文字
+            img = theme.text_surface("點右上紅鈕撕掉", 22 * S, theme.C["warn"],
                                      bold=True)
             card.blit(img, img.get_rect(center=(body.w // 2, body.h // 2)))
-        angle = ((_h(n.id) >> 4) % 5 - 2) * 1.0          # -2..+2 度
-        cx, cy = x + cw / 2, y + ch / 2
-        # 柔和落影（同形黑面同角度旋轉、右下偏移）：紙貼在牆上的縱深感
+            # ✕ 鈕蓋在徽章位置：撕除的第二段必須點中這顆小目標（誤觸防呆——
+            # 舊版整張卡都是確認目標，連點兩下就誤撕，實機驗收踩到）
+            bx, by = body.w - 22 * S, 22 * S
+            pygame.draw.circle(card, theme.C["warn"], (bx, by), 16 * S)
+            fg = (255, 255, 255)
+            pygame.draw.line(card, fg, (bx - 7 * S, by - 7 * S),
+                             (bx + 7 * S, by + 7 * S), 3 * S)
+            pygame.draw.line(card, fg, (bx + 7 * S, by - 7 * S),
+                             (bx - 7 * S, by + 7 * S), 3 * S)
+        # 正擺＋smoothscale 縮回 1 倍（見 S 的註解）；落影右下偏移給縱深
+        dst = (int(cw) - 8, int(ch) - 8)
+        px, py = round(x) + 4, round(y) + 4
         shadow = pygame.Surface(body.size, pygame.SRCALPHA)
         pygame.draw.rect(shadow, (0, 0, 0, 66), shadow.get_rect(),
                          border_radius=10 * S)
-        sh = pygame.transform.rotozoom(shadow, angle, 1.0 / S)
-        surface.blit(sh, sh.get_rect(center=(cx + 3, cy + 4)))
-        rot = pygame.transform.rotozoom(card, angle, 1.0 / S)
-        surface.blit(rot, rot.get_rect(center=(cx, cy)))
-        hits.append(Hit(Rect(x, y, cw, ch), "note_tap", n.id))
+        surface.blit(pygame.transform.smoothscale(shadow, dst), (px + 3, py + 4))
+        surface.blit(pygame.transform.smoothscale(card, dst), (px, py))
+        if pending:
+            # 後 append 的在命中判定是上層（app 端 reversed 掃描）：
+            # ✕ 區蓋過整卡的取消區
+            hits.append(Hit(Rect(x, y, cw, ch), "note_cancel", n.id))
+            hits.append(Hit(Rect(x + cw - 64, y, 64, 64), "note_del", n.id))
+        else:
+            hits.append(Hit(Rect(x, y, cw, ch), "note_arm", n.id))
     if pages > 1:
         cx = area.x + area.w / 2 - (pages - 1) * 11
         for i in range(pages):

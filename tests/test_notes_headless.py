@@ -113,7 +113,7 @@ def test_notesview_renders_sticky_cards_and_overflow():
     hits = notesview.render(s, [_note(i, f"便條內容 {i}") for i in range(8)],
                             notesview.new_state(), AREA, NOW, 0.0)
     assert len(hits) == 6, "最多 6 張上牆，其餘計數"
-    assert all(h.action == "note_tap" for h in hits)
+    assert all(h.action == "note_arm" for h in hits)
     blank = _surf()
     assert pygame.image.tobytes(s, "RGB") != pygame.image.tobytes(blank, "RGB")
 
@@ -146,28 +146,43 @@ def _make_app(tmp_path, monkeypatch) -> App:
     return app
 
 
-def test_note_tap_two_stage_tear(tmp_path, monkeypatch):
-    app = _make_app(tmp_path, monkeypatch)
+def _rerender(app):
     app.hits = dashboard.render(_surf(), app.state.snapshot(), app.settings, NOW,
                                 notes_store=app.notes_store, notes_ui=app.notes_ui)
-    hit = next(h for h in app.hits if h.action == "note_tap")
+
+
+def test_note_tear_requires_x_button(tmp_path, monkeypatch):
+    """誤觸防呆：武裝後點卡上非 ✕ 區＝取消；只有點中 ✕ 小目標才真的撕。"""
+    app = _make_app(tmp_path, monkeypatch)
+    _rerender(app)
+    hit = next(h for h in app.hits if h.action == "note_arm")
     app._dispatch(hit.rect.x + 5, hit.rect.y + 5)
-    assert app.notes_ui["pending_id"] == hit.data, "第一次點＝進入確認"
-    assert len(app.notes_store.list()) == 1, "第一次點不刪"
+    assert app.notes_ui["pending_id"] == hit.data, "第一次點＝武裝"
+    assert len(app.notes_store.list()) == 1, "武裝不刪"
+    _rerender(app)
+    cancel = next(h for h in app.hits if h.action == "note_cancel")
+    app._dispatch(cancel.rect.x + 5, cancel.rect.y + cancel.rect.h - 5)  # 左下＝遠離 ✕
+    assert app.notes_ui["pending_id"] is None, "點非 ✕ 區＝取消"
+    assert len(app.notes_store.list()) == 1, "取消不刪"
+    _rerender(app)
+    hit = next(h for h in app.hits if h.action == "note_arm")
     app._dispatch(hit.rect.x + 5, hit.rect.y + 5)
-    assert app.notes_store.list() == [], "第二次點＝撕掉"
+    _rerender(app)
+    xbtn = next(h for h in app.hits if h.action == "note_del")
+    app._dispatch(xbtn.rect.x + 5, xbtn.rect.y + 5)
+    assert app.notes_store.list() == [], "點中 ✕ 才撕"
     assert app.notes_ui["pending_id"] is None
 
 
 def test_note_tap_confirm_expires(tmp_path, monkeypatch):
     app = _make_app(tmp_path, monkeypatch)
-    app.hits = dashboard.render(_surf(), app.state.snapshot(), app.settings, NOW,
-                                notes_store=app.notes_store, notes_ui=app.notes_ui)
-    hit = next(h for h in app.hits if h.action == "note_tap")
+    _rerender(app)
+    hit = next(h for h in app.hits if h.action == "note_arm")
     app._dispatch(hit.rect.x + 5, hit.rect.y + 5)
     app.notes_ui["pending_at"] -= (notesview.PENDING_TIMEOUT_S + 1)   # 模擬逾時
+    _rerender(app)   # 逾時的武裝在重繪時自動解除 → 又回到 note_arm
     app._dispatch(hit.rect.x + 5, hit.rect.y + 5)
-    assert len(app.notes_store.list()) == 1, "逾時後的點擊＝重新進入確認，不是刪除"
+    assert len(app.notes_store.list()) == 1, "逾時後的點擊＝重新武裝，不是刪除"
     assert app.notes_ui["pending_id"] == hit.data
 
 def test_store_update_edits_text_keeps_ts(tmp_path, monkeypatch):

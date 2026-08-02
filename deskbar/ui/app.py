@@ -346,23 +346,27 @@ class App:
                         self._auto_center_hold = True
                         self.card_overlay = None
                         self.on_save(self.settings)
-                    elif a == "note_tap":
+                    elif a == "note_arm":
+                        # 撕除第一段：整卡點一下＝武裝（出現 ✕ 鈕）。第二段
+                        # 必須點中 ✕ 小目標（note_del），點卡上其他地方＝取消
+                        # ——舊版兩段都是整卡目標，連點兩下就誤撕
+                        self.notes_ui["pending_id"] = h.data
+                        self.notes_ui["pending_at"] = time.monotonic()
+                    elif a == "note_cancel":
+                        self.notes_ui["pending_id"] = None
+                    elif a == "note_del":
                         from deskbar.ui import notesview
-                        nid = h.data
                         ui = self.notes_ui
-                        if (ui["pending_id"] == nid and
+                        if (ui["pending_id"] == h.data and
                                 time.monotonic() - ui["pending_at"]
                                 <= notesview.PENDING_TIMEOUT_S):
                             if self.notes_store is not None:
                                 try:
-                                    self.notes_store.remove(nid)
+                                    self.notes_store.remove(h.data)
                                 except OSError as e:
                                     print(f"[deskbar] note remove failed: {e}",
                                           file=sys.stderr)
-                            ui["pending_id"] = None
-                        else:
-                            ui["pending_id"] = nid
-                            ui["pending_at"] = time.monotonic()
+                        ui["pending_id"] = None
                     elif a == "cycle_view_mode":
                         self._start_transition()
                         self.settings.view_mode = (

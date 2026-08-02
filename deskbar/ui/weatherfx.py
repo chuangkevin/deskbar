@@ -264,11 +264,13 @@ def _draw_sun(panel, t: float, w: int, pal: dict, minor: bool = False) -> None:
     # 光芒 sprite（烘焙錐形，12 道 30° 對稱）整張旋轉；轉角取 mod 30° 讓同相位
     # 逐位元一致。光芒要「長」——時鐘卡會蓋掉太陽本體的下半，靠伸出卡片邊緣的
     # 長光芒才看得出後面有顆太陽在轉。
-    size = int(250 * scale)
+    # 300px/alpha 190：太陽本體大半躲在時鐘卡後，存在感全靠伸出卡緣的光芒
+    # ——250/150 在實機玻璃反光下幾乎看不見（驗收：「晴天沒有效果」）。
+    size = int(300 * scale)
     rays = _sprite("rays", pal["ray"], (size, size))
     ang = -(t * _SUN_RAY_DEG_PER_S) % 30.0
     rot = pygame.transform.rotate(rays, ang)
-    rot.set_alpha(150 if not minor else 105)
+    rot.set_alpha(190 if not minor else 130)
     panel.blit(rot, (cx - rot.get_width() / 2, cy - rot.get_height() / 2))
     # 呼吸光暈（外圈 alpha 呼吸，內圈穩定），最後實心日核。
     breathe = int(24 * math.sin(t * 0.55))
@@ -286,14 +288,16 @@ def _draw_moon(panel, w: int, pal: dict) -> None:
     # 月亮不能沿用太陽的位置：太陽被時鐘卡蓋住還有長光芒撐場面，月亮沒有
     # 光芒，放 (w-52,38) 會整顆縮在末張牌卡後面、只剩一小角灰鰭。改放右上角
     # 的無牌區（牌卡右緣 x=366 之外），整顆可見，再補一圈冷色月暈。
-    cx, cy = w - 18, 30
+    # (w-18,30) 會被面板右緣切掉半顆，往內收到全顆可見（與時鐘卡右上角
+    # 微交疊＝太陽同款的「從時鐘後面探出來」構圖）。
+    cx, cy = w - 34, 34
     g = 116
     _blit(panel, _sprite("glow", pal["moon"], (g, g)), (cx - g / 2, cy - g / 2), 84)
-    moon = _sprite("moon", pal["moon"], (52, 52))
+    moon = _sprite("moon", pal["moon"], (52, 52)).copy()
+    # 弦月缺口改挖穿 alpha（SRCALPHA 上 draw 是覆寫）：舊版蓋 bg 實色圓，
+    # 但這層下面是夜空漸層不是純背景——實機看是月亮旁一個黑洞。
+    pygame.draw.circle(moon, (0, 0, 0, 0), (18, 20), 18)
     _blit(panel, moon, (cx - 26, cy - 26))
-    # 用背景色圓偏移蓋出弦月缺口——月面素材帶隕坑/邊緣減光，缺口用 bg 實色
-    # 挖（這層畫在場景最底、下面必定是純背景，會蓋掉一點月暈＝弦月暗面）。
-    pygame.draw.circle(panel, theme.C["bg"], (cx - 8, cy - 6), 18)
 
 
 def _draw_stars(panel, t: float, w: int, h: int, pal: dict, n: int) -> None:
