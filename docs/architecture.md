@@ -43,6 +43,9 @@
 | `alarm_overlay.py` | 鬧鐘觸發時的全螢幕閃爍覆疊 |
 | `flipclock.py` | 翻頁式時鐘卡片渲染與動畫 |
 | `weatherfx.py` | 左面板天氣氛圍背景層（低幀率視覺效果，不影響互動） |
+| `scenes.py` | 十個氛圍場景的選擇、輪播、裁切與 renderer lifecycle；各 `scene_*.py` renderer 僅持有目前場景素材 |
+| `scene_runtime.py` | `SceneFrame`、renderer Protocol 與 close/decoded-byte contract |
+| `scene_assets.py` | 單一 active renderer 的 lazy PNG、混光、染色/縮放快取與 48 MiB 上限 |
 | `icons.py` | 向量圖示（齒輪等，避免依賴字型檔不一定有的符號字形） |
 | `qr.py` | 設定頁 QR code 繪製（純 Python `qrcode`，不依賴 Pillow） |
 | `usagewidget.py` | 右欄 Claude Code 用量油表（三組進度條，純資訊顯示） |
@@ -53,6 +56,9 @@
 |---|---|
 | `add_account.py` | Google OAuth 桌面流程精靈：本機開瀏覽器授權，完成後把 token JSON 部署到 Pi 帳號目錄 |
 | `render_matrix.py` | 渲染驗證矩陣：載入真實/假資料，把顯示寬度×模式×錨點全排列存成 PNG，供人眼核對版面；`--theme dark\|light\|both` 切換輸出色板（`both` 額外對 6 張代表圖各補一張 `_light` 版本） |
+| `gen_scene_assets.py` | 依固定順序呼叫 `scene_bakers/`，重建全部 1240×472 場景素材 |
+| `render_scene_review.py` | 產生十場景晨/晝/夜、0/5/15 秒 motion、contact sheet 與 metrics JSON |
+| `benchmark_scenes.py` | 每場景 20 warm-up＋120 measured 的 median/p95/max、decoded bytes、RSS 報告 |
 | `usage_push_snippet.py` | 可直接複製貼進既有 usage agent（例如 claude-usage-cube/agent/cube_agent.py）的 `push_to_deskbar()` 函數，把讀好的 usage POST 給 `/api/usage` |
 | `usage_push_demo.py` | 獨立小工具：讀本機 Keychain 的 Claude Code 憑證、打官方 usage API、POST 到 deskbar，不想改既有 agent 時單獨用 |
 

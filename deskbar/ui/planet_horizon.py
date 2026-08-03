@@ -1,4 +1,4 @@
-"""Runtime compositor for the baked planetary-horizon matte paintings."""
+"""Layered orbital planet-horizon compositor with deterministic motion."""
 
 from __future__ import annotations
 
@@ -6,26 +6,22 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Final, TypedDict
+from typing import Final
 
 import pygame
 
+from deskbar.ui.scene_assets import MasterBlend, SceneAssets
+from deskbar.ui.scene_runtime import SceneFrame
+
 
 ASSET_DIR: Final = Path(__file__).resolve().parent.parent / "assets" / "scenes"
-ASSET_WIDTH: Final = 1180
+ASSET_WIDTH: Final = 1240
 VIEWPORT_WIDTH: Final = 1118
 BASE_X: Final = -(ASSET_WIDTH - VIEWPORT_WIDTH) // 2
-CLOUD_COLORS: Final = {
-    "night": (88, 126, 159),
-    "dawn": (179, 191, 203),
-    "day": (222, 231, 234),
-}
 
 
 @dataclass(frozen=True)
 class LightingBlend:
-    """Two authored masters and their real-time interpolation amount."""
-
     __slots__ = ("first", "second", "amount")
 
     first: str
@@ -33,17 +29,39 @@ class LightingBlend:
     amount: float
 
 
-class PlanetHorizonState(TypedDict, total=False):
-    """Per-scene caches rebuilt only when the minute-level lighting changes."""
+@dataclass(frozen=True)
+class PlanetMotion:
+    __slots__ = (
+        "body_x",
+        "body_y",
+        "far_cloud_x",
+        "near_cloud_x",
+        "rim_alpha",
+        "haze_alpha",
+    )
 
-    base_key: tuple[str, str, int]
-    base: pygame.Surface
-    cloud_key: tuple[int, int, int]
-    cloud_far: pygame.Surface
-    cloud_near: pygame.Surface
+    body_x: int
+    body_y: int
+    far_cloud_x: int
+    near_cloud_x: int
+    rim_alpha: float
+    haze_alpha: float
 
 
-_RAW: dict[str, pygame.Surface] = {}
+def _wave(t: float, period: float) -> float:
+    return math.sin(t * math.tau / period)
+
+
+def motion_at(t: float) -> PlanetMotion:
+    """Return the approved medium-cinematic motion contract at time ``t``."""
+    return PlanetMotion(
+        body_x=round(_wave(t, 96.0) * 16.0),
+        body_y=round(_wave(t, 73.0) * 6.0),
+        far_cloud_x=round(_wave(t, 74.0) * 28.0),
+        near_cloud_x=round(_wave(t, 49.0) * 48.0),
+        rim_alpha=1.0 + _wave(t, 16.0) * 0.08,
+        haze_alpha=1.0 + _wave(t, 21.0) * 0.10,
+    )
 
 
 def _lighting(now: datetime) -> LightingBlend:
@@ -61,60 +79,44 @@ def _lighting(now: datetime) -> LightingBlend:
     return LightingBlend("night", "night", 0.0)
 
 
-def _load(name: str) -> pygame.Surface:
-    surface = _RAW.get(name)
-    if surface is None:
-        surface = pygame.image.load(str(ASSET_DIR / f"{name}.png"))
-        if pygame.display.get_surface() is not None:
-            surface = surface.convert_alpha()
-        _RAW[name] = surface
-    return surface
+def _layer_blend(assets: SceneAssets, layer: str, lighting: LightingBlend) -> pygame.Surface:
+    return assets.blended(
+        MasterBlend(
+            f"planet_{layer}_{lighting.first}",
+            f"planet_{layer}_{lighting.second}",
+            lighting.amount,
+        )
+    )
 
 
-def _master(state: PlanetHorizonState, lighting: LightingBlend) -> pygame.Surface:
-    step = round(lighting.amount * 60.0)
-    key = (lighting.first, lighting.second, step)
-    if state.get("base_key") == key:
-        return state["base"]
-    first = _load(f"planet_horizon_{lighting.first}")
-    if lighting.first == lighting.second or step == 0:
-        base = first
-    else:
-        base = pygame.Surface(first.get_size(), pygame.SRCALPHA)
-        base.blit(first, (0, 0))
-        overlay = _load(f"planet_horizon_{lighting.second}").copy()
-        overlay.set_alpha(round(step / 60.0 * 255.0))
-        base.blit(overlay, (0, 0))
-    state["base_key"], state["base"] = key, base
-    return base
+class PlanetHorizonRenderer:
+    """Own and composite independently authored planet, cloud, rim, and haze layers."""
 
+    __slots__ = ("_assets",)
 
-def _cloud_color(lighting: LightingBlend) -> tuple[int, int, int]:
-    first = CLOUD_COLORS[lighting.first]
-    second = CLOUD_COLORS[lighting.second]
-    return tuple(round(a + (b - a) * lighting.amount) for a, b in zip(first, second))
+    def __init__(self) -> None:
+        self._assets = SceneAssets(ASSET_DIR)
 
+    @property
+    def decoded_bytes(self) -> int:
+        return self._assets.decoded_bytes
 
-def _clouds(state: PlanetHorizonState,
-            lighting: LightingBlend) -> tuple[pygame.Surface, pygame.Surface]:
-    color = _cloud_color(lighting)
-    if state.get("cloud_key") != color:
-        for state_key, asset_name in (("cloud_far", "planet_cloud_far"),
-                                      ("cloud_near", "planet_cloud_near")):
-            tinted = _load(asset_name).copy()
-            tinted.fill((*color, 255), special_flags=pygame.BLEND_RGBA_MULT)
-            state[state_key] = tinted
-        state["cloud_key"] = color
-    return state["cloud_far"], state["cloud_near"]
+    def render(self, panel: pygame.Surface, frame: SceneFrame) -> None:
+        lighting = _lighting(frame.now)
+        motion = motion_at(frame.t)
+        panel.blit(_layer_blend(self._assets, "sky", lighting), (BASE_X, 0))
+        body_position = (BASE_X + motion.body_x, motion.body_y)
+        panel.blit(_layer_blend(self._assets, "body", lighting), body_position)
+        rim = _layer_blend(self._assets, "rim", lighting)
+        rim.set_alpha(round(230 * motion.rim_alpha))
+        panel.blit(rim, body_position)
+        far_cloud = self._assets.load("planet_cloud_far")
+        panel.blit(far_cloud, (BASE_X + motion.far_cloud_x, 0))
+        haze = self._assets.load("planet_haze")
+        haze.set_alpha(round(180 * motion.haze_alpha))
+        panel.blit(haze, (BASE_X, 0))
+        near_cloud = self._assets.load("planet_cloud_near")
+        panel.blit(near_cloud, (BASE_X + motion.near_cloud_x, 0))
 
-
-def render(panel: pygame.Surface, state: PlanetHorizonState, now: datetime,
-           t: float, _dt: float, _weather_code: int | None, _seed: int) -> None:
-    """Compose one complete frame from baked masters plus slow cloud parallax."""
-    lighting = _lighting(now)
-    panel.blit(_master(state, lighting), (BASE_X, 0))
-    cloud_far, cloud_near = _clouds(state, lighting)
-    far_x = BASE_X + round(math.sin(t * 0.021) * 12.0)
-    near_x = BASE_X + round(math.sin(t * 0.013 + 1.7) * 21.0)
-    panel.blit(cloud_far, (far_x, 0))
-    panel.blit(cloud_near, (near_x, 0))
+    def close(self) -> None:
+        self._assets.close()

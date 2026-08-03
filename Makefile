@@ -13,7 +13,7 @@ dev:
 	DESKBAR_DEV=1 DESKBAR_FAKE=1 .venv/bin/python -m deskbar
 
 deploy:
-	rsync -az --delete -e "ssh -i $(KEY)" --exclude .git --exclude .venv --exclude __pycache__ --exclude .superpowers --exclude docs --exclude tests ./ $(PI):$(DEST)/
+	rsync -az --delete -e "ssh -i $(KEY)" --exclude .git --exclude .venv --exclude __pycache__ --exclude .superpowers --exclude .omo --exclude docs --exclude tests ./ $(PI):$(DEST)/
 	ssh -i $(KEY) $(PI) "bash $(DEST)/deploy/install.sh && sudo systemctl restart deskbar"
 
 add-account:

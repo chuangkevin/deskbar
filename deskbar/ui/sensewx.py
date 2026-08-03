@@ -11,9 +11,11 @@ sun_ball（亮面太陽球），中性白執行期染色。t 是單調浮點秒�
 from __future__ import annotations
 
 import math
+from pathlib import Path
+from typing import Final
 
 from deskbar.ui import theme
-from deskbar.ui.scenes import _scene_sprite
+from deskbar.ui.scene_assets import SceneAssets, TintRequest
 from deskbar.weather import code_text
 from deskbar.ui.weatherfx import (CLEAR_CODES, CLOUD_CODES, FOG_CODES,
                                   RAIN_CODES, SNOW_CODES, THUNDER_CODES)
@@ -22,6 +24,16 @@ import pygame
 
 CLOCK = pygame.Rect(24, 34, 316, 96)     # 與 _render_panel 的 flipclock 參數一致
                                          # （無冒號卡：4 卡＋中央空隙 ≈ 316px）
+ASSET_DIR: Final = Path(__file__).resolve().parent.parent / "assets" / "scenes"
+_ASSETS = SceneAssets(ASSET_DIR)
+
+
+def _scene_sprite(
+    name: str,
+    color: tuple[int, int, int],
+    size: tuple[int, int] | None = None,
+) -> pygame.Surface:
+    return _ASSETS.tinted(TintRequest(name, color, size))
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft", bold=False):
