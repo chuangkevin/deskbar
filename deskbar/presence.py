@@ -110,3 +110,45 @@ def start_presence_thread(state: "AppState", settings: "Settings",
 
     threading.Thread(target=loop, daemon=True).start()
     return True
+
+
+# ---------------------------------------------------------------- 久坐提示
+
+SEDENTARY_AFTER_S = 60 * 60   # 連續在座滿 60 分鐘 → 提示
+SEDENTARY_HINT_S = 180        # 提示顯示 3 分鐘後自行消失
+SEDENTARY_GAP_S = 5 * 60      # 短於 5 分鐘的離席（倒水/印表機）不算休息、不重置
+
+
+class SedentaryTracker:
+    """久坐追蹤（純邏輯、吃單調秒數，不做 I/O）：連續在座滿 SEDENTARY_AFTER_S
+    出提示，顯示 SEDENTARY_HINT_S 後收起並重新起算下一輪——自然形成約每小時
+    一次的節奏。離席超過 SEDENTARY_GAP_S 才算真的休息（重置計時、收回提示）；
+    更短的離開視為感應抖動或倒個水。在場來源是手機藍牙 RSSI，本質是「手機在
+    桌上」的代理——人起身通常帶手機，夠用。"""
+
+    def __init__(self):
+        self._sit_start: "float | None" = None
+        self._gap_start: "float | None" = None
+        self._hint_until = 0.0
+
+    def reset(self) -> None:
+        self._sit_start = None
+        self._gap_start = None
+        self._hint_until = 0.0
+
+    def update(self, present: bool, now: float) -> None:
+        if present:
+            self._gap_start = None
+            if self._sit_start is None:
+                self._sit_start = now
+            elif now - self._sit_start >= SEDENTARY_AFTER_S:
+                self._hint_until = now + SEDENTARY_HINT_S
+                self._sit_start = now          # 下一輪從提示起算
+        else:
+            if self._gap_start is None:
+                self._gap_start = now
+            elif now - self._gap_start >= SEDENTARY_GAP_S:
+                self.reset()                   # 真的離座：計時與提示都收掉
+
+    def hint_active(self, now: float) -> bool:
+        return now < self._hint_until

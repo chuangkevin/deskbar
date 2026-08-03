@@ -299,7 +299,7 @@ def test_flip_and_ambient_frames_share_live_weather_t(tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard, "render",
                         lambda *a, **k: seen.append(("full", k.get("weather_t", 0.0))) or [])
     monkeypatch.setattr(dashboard, "render_panel_only",
-                        lambda surface, snap, settings, now, weather_t=0.0:
+                        lambda surface, snap, settings, now, weather_t=0.0, **k:
                         seen.append(("ambient", weather_t)))
     app._anim_start = _time.monotonic()
     app._clock_prev = "13:59"

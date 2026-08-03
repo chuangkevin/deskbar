@@ -156,3 +156,66 @@ def test_start_always_spawns_even_when_mac_empty():
     settings.presence_mac = ""
     import threading
     assert presence.start_presence_thread(state, settings, threading.Lock()) is True
+
+
+# ---------------------------------------------------------------- 久坐提示
+
+from deskbar.presence import (SEDENTARY_AFTER_S, SEDENTARY_GAP_S,
+                              SEDENTARY_HINT_S, SedentaryTracker)
+
+
+def test_sedentary_fires_after_an_hour():
+    tr = SedentaryTracker()
+    tr.update(True, 0.0)
+    tr.update(True, SEDENTARY_AFTER_S - 1)
+    assert not tr.hint_active(SEDENTARY_AFTER_S - 1), "未滿一小時不提示"
+    tr.update(True, SEDENTARY_AFTER_S)
+    assert tr.hint_active(SEDENTARY_AFTER_S), "滿一小時出提示"
+    assert not tr.hint_active(SEDENTARY_AFTER_S + SEDENTARY_HINT_S + 1), \
+        "提示三分鐘後自己消失"
+
+
+def test_sedentary_short_gap_does_not_reset():
+    tr = SedentaryTracker()
+    tr.update(True, 0.0)
+    tr.update(False, 1800.0)                       # 倒水 3 分鐘
+    tr.update(True, 1800.0 + 180)
+    tr.update(True, SEDENTARY_AFTER_S)
+    assert tr.hint_active(SEDENTARY_AFTER_S), "短暫離席不重置計時"
+
+
+def test_sedentary_real_break_resets():
+    tr = SedentaryTracker()
+    tr.update(True, 0.0)
+    tr.update(False, 1800.0)
+    tr.update(False, 1800.0 + SEDENTARY_GAP_S)     # 離席滿 5 分鐘＝真休息
+    tr.update(True, 1800.0 + SEDENTARY_GAP_S + 1)  # 回座重新起算
+    tr.update(True, SEDENTARY_AFTER_S + 1)
+    assert not tr.hint_active(SEDENTARY_AFTER_S + 1), "真休息後計時重來"
+
+
+def test_sedentary_hourly_rhythm_and_reset():
+    tr = SedentaryTracker()
+    tr.update(True, 0.0)
+    tr.update(True, SEDENTARY_AFTER_S)             # 第一次提示
+    t2 = SEDENTARY_AFTER_S * 2
+    tr.update(True, t2)                            # 再滿一小時 → 第二次
+    assert tr.hint_active(t2), "約每小時一次的節奏"
+    tr.reset()
+    assert not tr.hint_active(t2), "reset 收掉提示"
+
+
+def test_sedentary_hint_renders_in_panel():
+    import pygame
+    from deskbar.store import AppState
+    from deskbar.config import Settings
+    from deskbar.ui import dashboard
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    now = datetime(2026, 8, 3, 15, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+    snap = AppState().snapshot()
+    a = pygame.Surface((1920, 480)); b = pygame.Surface((1920, 480))
+    dashboard.render_panel_only(a, snap, Settings(), now, sedentary=False)
+    dashboard.render_panel_only(b, snap, Settings(), now, sedentary=True)
+    assert pygame.image.tobytes(a, "RGB") != pygame.image.tobytes(b, "RGB"), \
+        "sedentary=True 要多畫一行提示"

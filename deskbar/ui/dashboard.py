@@ -107,7 +107,7 @@ def _agenda_label(start_date, n_days: int) -> str:
 
 def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
           weather_t=0.0, notes_store=None, notes_ui=None,
-          linear_page=0, notes_page=0) -> list[Hit]:
+          linear_page=0, notes_page=0, sedentary=False) -> list[Hit]:
     hits: list[Hit] = []
     tz = now.tzinfo
     span = settings.view_span
@@ -115,7 +115,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     win_start, win_end = view_window(span, anchor_or_now, tz,
                                      start_hour=settings.start_hour, end_hour=settings.end_hour)
 
-    _render_panel(surface, snap, settings, now, hits, clock_anim, weather_t)
+    _render_panel(surface, snap, settings, now, hits, clock_anim, weather_t,
+                  sedentary)
     pygame.draw.line(surface, theme.C["panel_line"], (PANEL_W, 0), (PANEL_W, 480))
     pygame.draw.line(surface, theme.C["panel_line"], (TL_X1, 0), (TL_X1, 480))
 
@@ -233,16 +234,19 @@ def _render_right_todo_mini(surface, snap, now) -> None:
         linearview.render_mini(surface, snap, USAGE_X0, 362, USAGE_W, now)
 
 
-def render_panel_only(surface, snap, settings, now, weather_t=0.0) -> None:
+def render_panel_only(surface, snap, settings, now, weather_t=0.0,
+                      sedentary=False) -> None:
     """氛圍幀專用（app._render_ambient）：只重畫左欄矩形（0..PANEL_W），中欄/右欄
     的像素一概不碰——資料沒變時天氣場景逐幀動起來，不需要重算整面行事曆。
     hits 丟棄：左欄可點區塊（時鐘/同步/齒輪）的位置是常量，沿用上次全量重繪
     的結果即可。PANEL_W 分隔線畫在 x=PANEL_W、fill 只蓋到 x=PANEL_W-1，不會擦掉。"""
     surface.fill(theme.C["bg"], pygame.Rect(0, 0, PANEL_W, 480))
-    _render_panel(surface, snap, settings, now, [], None, weather_t)
+    _render_panel(surface, snap, settings, now, [], None, weather_t,
+                  sedentary)
 
 
-def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_t=0.0):
+def _render_panel(surface, snap, settings, now, hits, clock_anim=None,
+                  weather_t=0.0, sedentary=False):
     """左欄（0..PANEL_W=400）：時鐘/日期/天氣/同步狀態。三欄重構把這欄從 480 縮到
     400px，時鐘改用 digit_h=96（4 卡+冒號實測總寬 342px，遠低於 360 的安全上限），
     其餘文字/圖示座標跟著往內收，確保沒有任何元素畫出 PANEL_W 之外。"""
@@ -278,6 +282,10 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None, weather_t
         else:
             msg = "等待首次同步"
         dot = theme.C["ok"] if ok else theme.C["warn"]
+    if sedentary:
+        # 久坐提示：一行安靜的字，3 分鐘後自己消失（SedentaryTracker 控時）。
+        # 不彈窗不變色——這塊螢幕在辦公室，提示只該給坐在它前面的人看見。
+        _text(surface, "坐滿一小時了，起來動一動", 18, theme.C["text2"], 24, 404)
     pygame.draw.circle(surface, dot, (32, 449), 5)
     _text(surface, msg, 18, theme.C["muted"], 46, 440)
     hits.append(Hit(Rect(20, 26, 370, 130), "open_alarms", None))

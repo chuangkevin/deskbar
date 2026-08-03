@@ -71,6 +71,9 @@ class App:
         self._auto_center_hold = False  # 使用者在迫近期間手動切走＝這一波不再搶（實機回報：看便條被踢回）
         self._auto_center_check_at = 0.0
         self.card_overlay = None        # 待辦卡詳情浮層（LinearIssue|None）
+        from deskbar.presence import SedentaryTracker
+        self.sedentary = SedentaryTracker()   # 久坐提示（公司場景：連續在座 60 分）
+        self._sed_hint_last = False           # 提示出現/消失的邊緣觸發重繪用
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -445,7 +448,9 @@ class App:
                                              notes_store=self.notes_store,
                                              notes_ui=self.notes_ui,
                                              linear_page=self.center_pages["linear"],
-                                             notes_page=self.center_pages["notes"])
+                                             notes_page=self.center_pages["notes"],
+                                             sedentary=self.sedentary.hint_active(
+                                                 time.monotonic()))
                 if self.view == "detail" and self.detail_event is not None:
                     self.hits += detail.render(self.logical, self.detail_event)
                 elif self.card_overlay is not None:
@@ -603,7 +608,9 @@ class App:
         with self.lock:
             from deskbar.ui import dashboard
             dashboard.render_panel_only(self.logical, snap, self.settings, now,
-                                        self._weather_t())
+                                        self._weather_t(),
+                                        sedentary=self.sedentary.hint_active(
+                                            time.monotonic()))
         self._flip((0, 0, dashboard.PANEL_W, LOGICAL_H))   # 只有左欄髒
 
     def _render(self, clock_anim=None) -> None:
@@ -1014,6 +1021,17 @@ class App:
             clock.tick(30)
         else:
             snap = self.state.snapshot()
+            # 久坐追蹤：每輪迴圈餵一次在場狀態；提示出現/消失那一拍主動重繪
+            # （靠 seq/分鐘變化最多晚 60 秒才畫出來，邊緣觸發才即時）
+            mono = time.monotonic()
+            if snap.presence.enabled:
+                self.sedentary.update(snap.presence.present, mono)
+            else:
+                self.sedentary.reset()
+            sed_hint = self.sedentary.hint_active(mono)
+            if sed_hint != self._sed_hint_last:
+                self._sed_hint_last = sed_hint
+                self._render()
             if self._screen_asleep():
                 # 深夜熄屏：不燒氛圍幀、輪詢降到 2fps（整夜 15fps 畫給黑幕看
                 # 純屬浪費）；觸摸喚醒那一圈 had_input=True 立即提速。
