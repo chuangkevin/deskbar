@@ -109,13 +109,19 @@ def gen_ridge(name: str, seed: int, top_frac: float, amp_frac: float,
 def gen_cumulus(name: str, seed: int, out: Path) -> None:
     """蓬鬆積雲（HTC Sense 的招牌體積雲）：fBm 密度 × 橢圓罩 → alpha，
     頂亮底暗＋邊緣受光。220×120，執行期染色縮放。"""
-    cw, ch = 220, 120
+    cw, ch = 240, 132
     den = _fbm2d(cw, ch, seed, octaves=5, base=4)
     yy, xx = np.mgrid[0:ch, 0:cw]
-    ex = (xx - cw / 2) / (cw * 0.46)
-    ey = (yy - ch * 0.58) / (ch * 0.50)
+    ex = (xx - cw / 2) / (cw * 0.42)
+    ey = (yy - ch * 0.58) / (ch * 0.46)
     r = np.sqrt(ex ** 2 + ey ** 2)
-    alpha = np.clip((den * 1.5 + (1 - r) * 0.9 - 0.95) * 2.6, 0.0, 1.0)
+    alpha = np.clip((den * 1.5 + (1 - r) * 0.9 - 0.90) * 1.8, 0.0, 1.0)
+    # 邊界羽化窗：alpha 在畫布四邊 14/10px 內強制壓到 0。沒有這個，fBm
+    # 密度碰到素材矩形邊緣被硬切——bbox 直邊在深色背景上看不出來，疊到
+    # 白色翻牌卡上就顯形成「奇怪的方塊」（實機三次驗收的真正病灶）
+    fx = np.clip(xx / 14.0, 0, 1) * np.clip((cw - 1 - xx) / 14.0, 0, 1)
+    fy = np.clip(yy / 10.0, 0, 1) * np.clip((ch - 1 - yy) / 10.0, 0, 1)
+    alpha *= (fx * fy) ** 0.8
     # 內部保留 fBm 密度起伏（一版內部全 1.0＝死白一片，把時鐘埋成白板——
     # 實機驗收「直接爛掉」），邊緣仍然蓬鬆
     alpha *= 0.80 + 0.20 * den

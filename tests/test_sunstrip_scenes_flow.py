@@ -227,3 +227,16 @@ def test_usage_widget_over_pace_draws_red():
     reds_b = sum(1 for x in range(1560, 1880, 4) for y in range(180, 220, 2)
                  if b.get_at((x, y))[:3] == warn)
     assert reds_a > 0 and reds_b == 0, "超速的那條要轉紅、正常配速不紅"
+
+
+def test_cumulus_assets_have_fully_transparent_borders():
+    """防回歸：雲素材四邊 alpha 必須全 0——fBm 密度被 bbox 硬切的直邊在
+    白色翻牌卡上會顯形成「奇怪的方塊」（2026-08-03 實機三次驗收的病灶）。"""
+    import numpy as np
+    from pathlib import Path
+    base = Path("deskbar/assets/scenes")
+    for name in ("cumulus_0", "cumulus_1"):
+        s = pygame.image.load(str(base / f"{name}.png"))
+        a = pygame.surfarray.pixels_alpha(s)
+        edges = np.concatenate([a[0, :], a[-1, :], a[:, 0], a[:, -1]])
+        assert edges.max() == 0, f"{name} 邊界 alpha 未歸零"
