@@ -119,7 +119,9 @@ def gen_cumulus(name: str, seed: int, out: Path) -> None:
     # 內部保留 fBm 密度起伏（一版內部全 1.0＝死白一片，把時鐘埋成白板——
     # 實機驗收「直接爛掉」），邊緣仍然蓬鬆
     alpha *= 0.80 + 0.20 * den
-    lum = np.clip(0.72 + 0.30 * (1 - yy / ch) + 0.18 * den - 0.16 * r, 0.0, 1.0)
+    # 亮度地板 0.86：Sense 前景雲疊在「白色」翻牌卡上，腹部太暗（一版 0.72）
+    # 在白卡上讀起來是髒灰色塊；白雲要蓬白，陰影點到為止
+    lum = np.clip(0.86 + 0.16 * (1 - yy / ch) + 0.10 * den - 0.08 * r, 0.0, 1.0)
     _save(name, lum, alpha, out)
 
 
