@@ -228,6 +228,9 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             out["linear_key_set"] = bool(getattr(settings_provider,
                                                  "linear_api_key", ""))
             out["weather_label"] = getattr(settings_provider, "weather_label", "")
+            out["scene_mode"] = getattr(settings_provider, "scene_mode", "auto")
+            out["scenes_enabled"] = list(getattr(settings_provider,
+                                                 "scenes_enabled", []))
         return jsonify(out)
 
     @app.patch("/api/prefs")
@@ -252,6 +255,17 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
                 if not isinstance(v, str) or len(v) > _PREF_STR[k]:
                     return jsonify({"error": f"{k} must be string"}), 400
                 staged[k] = v.strip()
+            elif k == "scene_mode":
+                if v not in ("auto", "manual", "force"):
+                    return jsonify({"error": "scene_mode must be auto/manual/force"}), 400
+                staged[k] = v
+            elif k == "scenes_enabled":
+                from deskbar.config import SCENE_KEYS
+                if not isinstance(v, list) or not all(
+                        isinstance(x, str) and x in SCENE_KEYS for x in v):
+                    return jsonify({"error": "scenes_enabled has unknown scene"}), 400
+                # 保序去重；全反勾退回全部（空清單無意義，config 同一約定）
+                staged[k] = tuple(k2 for k2 in SCENE_KEYS if k2 in v) or SCENE_KEYS
             elif k in _PREF_FLOAT:
                 lo, hi = _PREF_FLOAT[k]
                 if isinstance(v, bool) or not isinstance(v, (int, float)) \

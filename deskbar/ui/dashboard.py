@@ -149,7 +149,10 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     if center == "scene":
         from deskbar.ui import scenes
         hits += scenes.render(surface, scene_ui if scene_ui is not None
-                              else scenes.new_state(), now, weather_t)
+                              else scenes.new_state(), now, weather_t,
+                              enabled=getattr(settings, "scenes_enabled", None),
+                              weather_code=snap.weather.code
+                              if snap.weather else None)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
         _render_right_todo_mini(surface, snap, now)
         return _finish(surface, snap, settings, now, hits)

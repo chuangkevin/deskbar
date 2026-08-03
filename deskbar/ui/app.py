@@ -17,6 +17,7 @@ SYNC_INTERVALS = [1, 3, 5, 10, 30]       # 設定頁「同步頻率」鈕的循�
 WAKE_SECONDS = 30                        # 深夜熄屏中觸摸喚醒的持續秒數
 ALARM_AUTO_DISMISS_S = 300               # 響鈴 5 分鐘沒人理＝自動解除（不然閃一整晚）
 AUTO_SWITCH_BEFORE_MIN = 15              # 迫近行程搶焦點：開始前 N 分鐘自動切回行事曆
+FORCE_SCENE_RETURN_S = 60                # force 場景模式：點回行事曆後 N 秒自動回場景
 PAN_BAND_INTERVAL = 1 / 30               # 跟手位移的 flip 節流（帶狀 blit 很便宜，30fps 上限即可）
 # 氛圍幀率不是常數：由 weatherfx.ambient_fps(code) 分級（雨/雷 15、雪 12、
 # 晴/雲/霧 8）——實務上 open-meteo 的每個 code 都有動態場景，氛圍模式是 24/7
@@ -80,6 +81,7 @@ class App:
         self.scene_ui = scenes.new_state()     # 氛圍場景跨幀狀態（軌跡面/粒子）
         self._flow_last_target = None          # 忙/閒排程 edge-trigger 記憶
         self._flow_check_at = 0.0
+        self._force_scene_at = 0.0             # force 模式：此刻後回到場景（monotonic）
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -355,6 +357,16 @@ class App:
                         self._auto_center_hold = True
                         self.card_overlay = None
                         self.on_save(self.settings)
+                    elif a == "scene_tap":
+                        # 點場景＝回行事曆看正事；force 模式 60 秒後自動回場景。
+                        # 這整個 dispatch 鏈已在外層 with self.lock: 內（203 行），
+                        # 不得再取鎖（非重入鎖，會死結——測試卡死抓到的）。
+                        self._start_transition()
+                        self.settings.center_view = "calendar"
+                        if getattr(self.settings, "scene_mode", "auto") == "force":
+                            self._force_scene_at = time.monotonic() \
+                                + FORCE_SCENE_RETURN_S
+                        self._last_seq = -1
                     elif a == "note_arm":
                         # 撕除第一段：整卡點一下＝武裝（出現 ✕ 鈕）。第二段
                         # 必須點中 ✕ 小目標（note_del），點卡上其他地方＝取消
@@ -636,6 +648,19 @@ class App:
         self._start_transition()
         self._last_seq = -1
 
+    def _check_force_scene(self, mono: float) -> None:
+        """force 模式：中欄常駐場景。點畫面回行事曆（scene_tap 設了返回時刻），
+        時間到自動回到場景；迫近接管期間讓路。"""
+        if (self.view != "dashboard" or self._auto_center_prev is not None
+                or self._screen_asleep()
+                or getattr(self.settings, "center_view", "") == "scene"
+                or mono < self._force_scene_at):
+            return
+        with self.lock:
+            self.settings.center_view = "scene"
+        self._start_transition()
+        self._last_seq = -1
+
     def _render_ambient(self, snap, now) -> None:
         """氛圍幀：資料/分鐘都沒變時，只重畫左欄（時鐘/天氣場景）再合成輸出，
         不重算中欄行事曆與右欄油表——Pi Zero 2W 燒不起整面 15fps 全量重繪。
@@ -652,7 +677,11 @@ class App:
                 # 場景幀：中欄也要動——流場粒子畫進 logical，日光帶跟著補回
                 # （場景 fill 會蓋掉中欄段的帶），髒區擴到中欄右緣
                 from deskbar.ui import scenes, sunstrip
-                scenes.render(self.logical, self.scene_ui, now, self._weather_t())
+                scenes.render(self.logical, self.scene_ui, now, self._weather_t(),
+                              enabled=getattr(self.settings, "scenes_enabled",
+                                              None),
+                              weather_code=snap.weather.code
+                              if snap.weather else None)
                 w = snap.weather
                 sunstrip.draw(self.logical, now, self.settings.weather_lat,
                               self.settings.weather_lon,
@@ -1082,9 +1111,12 @@ class App:
                 self._render()
             # 忙/閒中欄排程：usage 增量餵活動偵測，每 15 秒評估一次目標視圖
             self.usage_activity.feed(snap.usage, mono)
-            if mono - self._flow_check_at >= 15:
+            mode = getattr(self.settings, "scene_mode", "auto")
+            if mode == "auto" and mono - self._flow_check_at >= 15:
                 self._flow_check_at = mono
                 self._check_flow_center(mono)
+            elif mode == "force":
+                self._check_force_scene(mono)
             if self._screen_asleep():
                 # 深夜熄屏：不燒氛圍幀、輪詢降到 2fps（整夜 15fps 畫給黑幕看
                 # 純屬浪費）；觸摸喚醒那一圈 had_input=True 立即提速。

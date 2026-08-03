@@ -127,6 +127,15 @@ async function loadPrefs(){
   <div class="cal-row">感應速度 <select id="p_pi">${spd.map(([v,n])=>
    `<option value="${v}" ${v===p.presence_interval_sec?"selected":""}>${n}</option>`).join("")}</select></div>
   <div class="cal-row">同步頻率 ${sel("p_si",[1,3,5,10,30],p.sync_interval_min,v=>v+" 分鐘")}</div>
+  <div class="cal-row" style="margin-top:10px"><b>氛圍場景</b>
+   <select id="p_sm">${[["auto","自動（忙時進場景、閒時回便條）"],["manual","手動（只有自己切）"],
+    ["force","強制（常駐場景，點畫面看 1 分鐘行事曆）"]].map(([v,n])=>
+    `<option value="${v}" ${v===p.scene_mode?"selected":""}>${n}</option>`).join("")}</select></div>
+  <div class="cal-row" style="display:flex;flex-wrap:wrap;gap:6px 14px">
+   ${SCENE_NAMES.map(([k,n])=>`<label style="white-space:nowrap">
+    <input type="checkbox" class="p_sc" value="${k}"
+     ${(p.scenes_enabled||[]).includes(k)?"checked":""}> ${n}</label>`).join("")}
+  </div>
   <div class="cal-row">Linear Key（${p.linear_key_set?"已設定":"未設定"}）
    <input type="password" id="p_lk" placeholder="lin_api_… 貼上後按存">
    <button onclick="saveKey()">存 Key</button></div>
@@ -135,6 +144,9 @@ async function loadPrefs(){
    （含鬧鐘與便條；SD 卡故障時可對照重建）</div>
  </div>`;
 }
+const SCENE_NAMES=[["flow","流場墨線"],["stars","星河流星"],["ridges","呼吸山稜"],
+ ["fireflies","螢火蟲"],["fish","水墨游魚"],["aurora","極光"],
+ ["train","電車窗景"],["runner","像素冒險者"],["ink","墨滴暈染"]];
 async function savePrefs(){
  const iv=+document.getElementById("p_pi").value;
  const grace={15:45,30:90,45:150}[iv]||150;
@@ -148,7 +160,9 @@ async function savePrefs(){
   sleep_end_min:+document.getElementById("p_sn").value,
   presence_enabled:document.getElementById("p_pe").checked,
   presence_interval_sec:iv,presence_grace_sec:grace,
-  sync_interval_min:+document.getElementById("p_si").value};
+  sync_interval_min:+document.getElementById("p_si").value,
+  scene_mode:document.getElementById("p_sm").value,
+  scenes_enabled:[...document.querySelectorAll(".p_sc:checked")].map(c=>c.value)};
  const r=await fetch("/api/prefs",{method:"PATCH",
   headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
  document.getElementById("p_msg").textContent=r.ok?" 已儲存 ✓":" 儲存失敗";

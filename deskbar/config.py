@@ -5,6 +5,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_LAT, DEFAULT_LON, DEFAULT_LABEL = 25.046, 121.517, "台北"
+# 氛圍場景清單（ui/scenes.py 的 registry 與此同步；config 是唯一來源，
+# 讓 webserver/web 不必 import pygame 就能驗證）
+SCENE_KEYS = ("flow", "stars", "ridges", "fireflies", "fish", "aurora",
+              "train", "runner", "ink")
 VALID_VIEW_SPANS = {"half", "day", "week", "month"}
 VALID_VIEW_MODES = {"lanes", "agenda"}
 VALID_THEMES = {"dark", "light"}
@@ -64,6 +68,8 @@ class Settings:
     sleep_end_min: int = 390            # 睡眠結束 06:30
     linear_api_key: str = ""            # Linear 個人 API Key（只存裝置，不進 repo/log）
     center_view: str = "calendar"       # 中欄顯示：calendar｜linear（待辦）｜notes（便條）
+    scene_mode: str = "auto"            # 場景進入方式：auto（忙閒排程）｜manual｜force
+    scenes_enabled: tuple = SCENE_KEYS  # 要輪播的場景（網頁勾選）
 
     def ensure_account(self, email: str) -> AccountCfg:
         if email not in self.accounts:
@@ -155,6 +161,13 @@ def load_settings() -> Settings:
         center_view = raw.get("center_view", "calendar")
         if center_view not in ("calendar", "linear", "notes", "scene"):
             center_view = "calendar"
+        scene_mode = raw.get("scene_mode", "auto")
+        if scene_mode not in ("auto", "manual", "force"):
+            scene_mode = "auto"
+        se_raw = raw.get("scenes_enabled", list(SCENE_KEYS))
+        scenes_enabled = tuple(k for k in SCENE_KEYS
+                               if isinstance(se_raw, list) and k in se_raw) \
+            or SCENE_KEYS               # 全被反勾＝退回全部（空清單無意義）
         return Settings(
             rotation=raw.get("rotation", 90),
             weather_lat=raw.get("weather_lat", DEFAULT_LAT),
@@ -183,6 +196,8 @@ def load_settings() -> Settings:
             sleep_end_min=sleep_end_min,
             linear_api_key=linear_api_key,
             center_view=center_view,
+            scene_mode=scene_mode,
+            scenes_enabled=scenes_enabled,
         )
     except (OSError, ValueError, KeyError, TypeError):
         return Settings()
@@ -216,6 +231,8 @@ def save_settings(s: Settings) -> None:
         "sleep_end_min": s.sleep_end_min,
         "linear_api_key": s.linear_api_key,
         "center_view": s.center_view,
+        "scene_mode": s.scene_mode,
+        "scenes_enabled": list(s.scenes_enabled),
         "accounts": {
             e: {"lane_label": a.lane_label, "color": a.color, "calendars": a.calendars}
             for e, a in s.accounts.items()
