@@ -281,15 +281,17 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None,
         weatherfx.draw(surface, w.code, weather_t, w=PANEL_W, night=night,
                        clouds=False, celestial=False)   # 雲與日月全由 sensewx
                                                         # 中央徽章負責
+        from deskbar.ui import sensewx
+        # 天體位置不變，但物理上在實體翻牌卡後方；卡片負責正確遮蔽。
+        sensewx.draw_celestial(surface, w.code, weather_t, night)
     anim = clock_anim if clock_anim else (now.strftime("%H:%M"), 1.0)
     from deskbar.ui import flipclock
     flipclock.draw(surface, 24, 34, now.strftime("%H:%M"), anim[0], anim[1],
                    digit_h=96)    # 4 卡+冒號實測總寬 342px，PANEL_W=400 內綽綽有餘
     if w is not None:
-        # Sense 天氣層：主角（積雲/太陽球）疊在時鐘「前面」＋大溫度排版
-        from deskbar.ui import sensewx
+        # Sense 近景天氣層：雲霧在卡片前方，日/月已在卡片後方完成。
         night = not (6 <= now.hour < 19)
-        sensewx.draw_char(surface, w.code, weather_t, night)
+        sensewx.draw_foreground(surface, w.code, weather_t, night)
         sensewx.draw_info(surface, w, now)
     wd = "週" + "一二三四五六日"[now.weekday()]
     img = theme.text_surface(f"{now.month}月{now.day}日 {wd}", 24, theme.C["text2"], bold=True)
