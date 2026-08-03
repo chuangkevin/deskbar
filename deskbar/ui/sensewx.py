@@ -44,21 +44,25 @@ def draw_char(surface, code: int, t: float, night: bool) -> None:
         return
     if code in CLOUD_CODES:
         tint = (250, 250, 252) if not night else (208, 214, 228)
-        sizes = ((252, 138), (176, 96)) if code >= 2 else ((208, 114),)
+        sizes = ((190, 104), (128, 70)) if code >= 2 else ((170, 92),)
     elif code in RAIN_CODES or code in THUNDER_CODES:
         tint = (152, 160, 176) if code in RAIN_CODES else (120, 126, 142)
-        sizes = ((252, 138), (176, 96))
+        sizes = ((190, 104), (128, 70))
     elif code in SNOW_CODES:
         tint = (232, 238, 248)
-        sizes = ((252, 138), (176, 96))
+        sizes = ((190, 104), (128, 70))
     elif code in FOG_CODES:
         return                            # 霧：weatherfx 的霧帶已是主角
     else:
         return
-    anchors = ((CLOCK.left + 96, CLOCK.bottom - 64), (CLOCK.right - 96, CLOCK.top - 26))
+    # 雲「抱」時鐘一角，不「埋」時鐘（一版 252px 大雲蓋在卡面正中，四張卡
+    # 三張被埋成白板——Sense 的雲只遮下緣/角落，數字永遠讀得到）
+    anchors = ((CLOCK.centerx - 30, CLOCK.bottom + 4),
+               (CLOCK.right - 12, CLOCK.top - 4))
     for i, (cw, ch) in enumerate(sizes):
         spr = pygame.transform.smoothscale(
             _scene_sprite(f"cumulus_{i % 2}", tint), (cw, ch))
+        spr.set_alpha(242)
         ax, ay = anchors[i % 2]
         surface.blit(spr, (ax - cw // 2 + drift * (1 if i == 0 else -0.6),
                            ay - ch // 2 + bob * (1 if i == 0 else -1)))
