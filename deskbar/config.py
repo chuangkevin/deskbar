@@ -8,7 +8,9 @@ DEFAULT_LAT, DEFAULT_LON, DEFAULT_LABEL = 25.046, 121.517, "台北"
 # 氛圍場景清單（ui/scenes.py 的 registry 與此同步；config 是唯一來源，
 # 讓 webserver/web 不必 import pygame 就能驗證）
 SCENE_KEYS = ("flow", "stars", "ridges", "fireflies", "fish", "aurora",
-              "train", "runner", "ink")
+              "train", "runner", "ink", "planet_horizon")
+# 新場景一律先產晨／晝／夜驗證圖，經使用者確認才加入這份預設輪播。
+DEFAULT_SCENES = SCENE_KEYS
 VALID_VIEW_SPANS = {"half", "day", "week", "month"}
 VALID_VIEW_MODES = {"lanes", "agenda"}
 VALID_THEMES = {"dark", "light"}
@@ -69,7 +71,7 @@ class Settings:
     linear_api_key: str = ""            # Linear 個人 API Key（只存裝置，不進 repo/log）
     center_view: str = "calendar"       # 中欄顯示：calendar｜linear（待辦）｜notes（便條）
     scene_mode: str = "auto"            # 場景進入方式：auto（忙閒排程）｜manual｜force
-    scenes_enabled: tuple = SCENE_KEYS  # 要輪播的場景（網頁勾選）
+    scenes_enabled: tuple = DEFAULT_SCENES  # 要輪播的場景（網頁勾選）
 
     def ensure_account(self, email: str) -> AccountCfg:
         if email not in self.accounts:
@@ -164,10 +166,10 @@ def load_settings() -> Settings:
         scene_mode = raw.get("scene_mode", "auto")
         if scene_mode not in ("auto", "manual", "force"):
             scene_mode = "auto"
-        se_raw = raw.get("scenes_enabled", list(SCENE_KEYS))
+        se_raw = raw.get("scenes_enabled", list(DEFAULT_SCENES))
         scenes_enabled = tuple(k for k in SCENE_KEYS
                                if isinstance(se_raw, list) and k in se_raw) \
-            or SCENE_KEYS               # 全被反勾＝退回全部（空清單無意義）
+            or DEFAULT_SCENES           # 全被反勾＝退回預設（空清單無意義）
         return Settings(
             rotation=raw.get("rotation", 90),
             weather_lat=raw.get("weather_lat", DEFAULT_LAT),

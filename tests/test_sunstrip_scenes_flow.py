@@ -191,8 +191,8 @@ def test_scene_settings_persist_and_validate(tmp_path, monkeypatch):
     assert s3.scene_mode == "auto" and s3.scenes_enabled == ("ink",)
     raw["scenes_enabled"] = []
     p.write_text(json.dumps(raw))
-    assert config.load_settings().scenes_enabled == config.SCENE_KEYS, \
-        "全反勾＝退回全部"
+    assert config.load_settings().scenes_enabled == config.DEFAULT_SCENES, \
+        "全反勾＝退回已驗收的預設輪播"
 
 
 # ---------------------------------------------------------------- usage 配速

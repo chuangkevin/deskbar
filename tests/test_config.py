@@ -67,3 +67,9 @@ def test_non_string_theme_value_falls_back_to_dark(tmp_path, monkeypatch):
     (tmp_path / "settings.json").write_text(json.dumps({"theme": 42}), encoding="utf-8")
     s = config.load_settings()
     assert s.theme == "dark"
+
+
+def test_approved_planet_horizon_is_in_default_scene_rotation():
+    assert "planet_horizon" in config.SCENE_KEYS
+    assert "planet_horizon" in config.DEFAULT_SCENES
+    assert config.Settings().scenes_enabled == config.DEFAULT_SCENES
