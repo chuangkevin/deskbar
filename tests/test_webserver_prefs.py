@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from deskbar.config import Settings
+from deskbar.config import SCENE_KEYS, Settings
 from deskbar.webserver import create_app
 
 
@@ -38,6 +38,13 @@ def test_get_prefs_returns_all_fields(client):
     assert d["brightness_day"] == 100 and d["brightness_night"] == 40
     assert d["presence_enabled"] is False
     assert d["presence_interval_sec"] == 45 and d["sync_interval_min"] == 5
+
+
+def test_phone_settings_lists_every_scene(client):
+    html = client.get("/").get_data(as_text=True)
+    missing = [key for key in SCENE_KEYS if f'["{key}",' not in html]
+    assert missing == []
+    assert '["planet_horizon","行星地平線"]' in html
 
 
 def test_patch_prefs_applies_and_saves(client):
