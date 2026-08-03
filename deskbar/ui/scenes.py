@@ -199,24 +199,39 @@ _RIDGE_SKY = {
 
 
 def _ridges(panel, d, now, t, dt, code, seed) -> None:
+    from deskbar.ui import weatherfx
     w, h = panel.get_size()
     th = theme.current_theme()
-    sky = _hour_ramp(now, *_RIDGE_SKY[th])
-    # 天空：底色朝地平線漸亮（vgrad 反轉貼在下半），晨昏帶暖
-    panel.fill(_lerp(sky, theme.C["bg"], 0.15))
-    horizon_glow = pygame.transform.flip(
-        _scene_sprite("vgrad", _lerp(sky, (255, 236, 200), 0.5)), False, True)
-    panel.blit(pygame.transform.scale(horizon_glow, (w, h // 2)), (0, h // 2))
     hh = now.hour + now.minute / 60.0
+    night = hh < 5.0 or hh >= 20.0
+    sky = _hour_ramp(now, *_RIDGE_SKY[th])
+    # 天空：頂部深、地平線亮的雙色縱向漸層（頂色 vgrad 正貼）
+    panel.fill(_lerp(sky, (255, 232, 196), 0.28 if not night else 0.06))
+    top = pygame.transform.scale(
+        _scene_sprite("vgrad", _lerp(sky, (0, 0, 20), 0.45)), (w, int(h * 0.85)))
+    panel.blit(top, (0, 0))
+    # 夜間：山上有星（重用 weatherfx 烘焙星點，含明滅）
+    if night:
+        star = weatherfx._sprite("star", (235, 238, 248))
+        for i in range(18):
+            sx = _h(i, seed, 41) * w
+            sy = _h(i, seed, 42) * h * 0.42
+            twk = math.sin(t * (0.5 + _h(i, 43)) + i)
+            a = int(120 + 100 * twk)
+            if a > 30:
+                star.set_alpha(a)
+                panel.blit(star, (round(sx), round(sy)))
     if 5.0 <= hh < 8.5 or 16.5 <= hh < 20.0:
-        # 晨昏地平光暈：太陽在山後（早晨偏左、傍晚偏右）
-        from deskbar.ui import weatherfx
+        # 晨昏：地平光暈＋放射光柱從山後透出（太陽早晨偏左、傍晚偏右）
         gx = w * 0.22 if hh < 12 else w * 0.78
-        g = weatherfx._sprite("glow", (255, 190, 120), (360, 360))
-        g.set_alpha(120)
-        panel.blit(g, (gx - 180, h * 0.42 - 180))
-    # 三層山：每層獨立染色（遠亮近暗）＋輕微朝天空 lerp（大氣透視）
-    # ＋極慢視差擺動＝「呼吸」
+        rays = weatherfx._sprite("rays", (255, 176, 96), (520, 520))
+        rays.set_alpha(64)
+        panel.blit(rays, (gx - 260, h * 0.40 - 260))
+        g = weatherfx._sprite("glow", (255, 190, 120), (420, 420))
+        g.set_alpha(150)
+        panel.blit(g, (gx - 210, h * 0.40 - 210))
+    # 三層山＋層間大氣：每層獨立染色（遠亮近暗）、極慢視差呼吸；
+    # 遠山腳跟壓一條霧帶，中景山谷鋪雲海
     for li, (name, haze, sway) in enumerate((("ridge_far", 0.30, 4.0),
                                              ("ridge_mid", 0.14, 8.0),
                                              ("ridge_near", 0.04, 14.0))):
@@ -224,13 +239,30 @@ def _ridges(panel, d, now, t, dt, code, seed) -> None:
         spr = _scene_sprite(name, col)
         dx = math.sin(t * 0.013 + li * 2.1) * sway - 31    # 素材寬 1180，區寬 1118
         panel.blit(spr, (round(dx), 0))
-    # 雲影：weatherfx 的 fBm 雲染成暗色、貼著山面漂
-    from deskbar.ui import weatherfx
+        if li == 0:
+            band = weatherfx._sprite("fog", _lerp(sky, (255, 255, 255), 0.55),
+                                     (int(w * 0.96), 90))
+            band.set_alpha(110)
+            bx = math.sin(t * 0.05 + _h(seed, 61) * 6.28) * 40
+            panel.blit(band, (round((w - band.get_width()) / 2 + bx),
+                              round(h * 0.52)))
+        elif li == 1:
+            # 雲海：寬扁霧棚沉在中景山谷（一版 430px 圓團讀起來是波卡圓點），
+            # 極慢橫漂＋呼吸透明度，頂部會被近山蓋掉＝「山浮在雲上」
+            for ci in range(2):
+                blob = weatherfx._sprite(f"cloud_{ci % 2}",
+                                         _lerp(sky, (255, 255, 255), 0.7),
+                                         (760, 130))
+                blob.set_alpha(72 + int(20 * math.sin(t * 0.11 + ci * 2.2)))
+                cx = (t * (3.5 + ci * 1.8) + _h(ci, seed, 62) * w) \
+                    % (w + 760) - 760
+                panel.blit(blob, (round(cx), round(h * (0.60 + 0.06 * ci))))
+    # 雲影掃過近山（暗斑）——光在動的證據
     for i in range(2):
         blob = weatherfx._sprite(f"cloud_{i}", (0, 0, 0), (300, 120))
-        blob.set_alpha(46)
+        blob.set_alpha(40)
         cx = (t * (6 + i * 3) + _h(i, seed) * w) % (w + 300) - 300
-        panel.blit(blob, (round(cx), round(h * (0.45 + 0.16 * i))))
+        panel.blit(blob, (round(cx), round(h * (0.70 + 0.10 * i))))
 
 
 # ---------------------------------------------------------------- fireflies 螢火蟲
