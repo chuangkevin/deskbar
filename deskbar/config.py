@@ -10,7 +10,10 @@ DEFAULT_LAT, DEFAULT_LON, DEFAULT_LABEL = 25.046, 121.517, "台北"
 SCENE_KEYS = ("flow", "stars", "ridges", "fireflies", "fish", "aurora",
               "train", "runner", "ink", "planet_horizon")
 # 新場景一律先產晨／晝／夜驗證圖，經使用者確認才加入這份預設輪播。
-DEFAULT_SCENES = SCENE_KEYS
+# 2026-08-04 電影感重製驗收：這五個通過。fireflies/fish/train/runner/ink 仍可在
+# 網頁手動勾選，但不預設輪播——目視審查認定其焦點物件是平塗向量剪影／實心多邊形，
+# 踩到 DESIGN.md §7 對 focal scenery 的禁令，待重烘素材後再入列。
+DEFAULT_SCENES = ("flow", "stars", "ridges", "aurora", "planet_horizon")
 VALID_VIEW_SPANS = {"half", "day", "week", "month"}
 VALID_VIEW_MODES = {"lanes", "agenda"}
 VALID_THEMES = {"dark", "light"}
