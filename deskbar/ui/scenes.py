@@ -26,7 +26,7 @@ import pygame
 
 from deskbar.config import SCENE_KEYS
 from deskbar.layout import Rect
-from deskbar.ui import Hit, theme
+from deskbar.ui import Hit, planet_horizon, theme
 
 # 中欄場景區：x 避開左欄(400)與右欄(1520)，y 讓出頂緣日光帶(8px)
 AREA = Rect(402, 8, 1118, 472)
@@ -516,7 +516,8 @@ def _ink(panel, d, now, t, dt, code, seed) -> None:
 
 _SCENES = {"flow": _flow, "stars": _stars, "ridges": _ridges,
            "fireflies": _fireflies, "fish": _fish, "aurora": _aurora,
-           "train": _train, "runner": _runner, "ink": _ink}
+           "train": _train, "runner": _runner, "ink": _ink,
+           "planet_horizon": planet_horizon.render}
 assert set(_SCENES) == set(SCENE_KEYS), "registry 必須與 config.SCENE_KEYS 同步"
 
 
