@@ -188,13 +188,14 @@ def _draw_sky(panel, family: str, w: int) -> None:
 
 
 def draw(surface, code: int, t: float, x0: int = 0, w: int = 400, h: int = 480,
-         night: bool = False, clouds: bool = True) -> None:
+         night: bool = False, clouds: bool = True, celestial: bool = True) -> None:
     """在 surface 的 (x0, 0)-(x0+w, h) 矩形內畫出 code 對應的天氣場景。
 
     t＝浮點秒數（見模組 docstring 的節奏鐵則）；night 由呼叫端依當下時刻判定，
     影響晴/多雲場景（太陽↔月亮星空）與天空色。code 對不到任何場景就完全不畫。
-    clouds=False：雲層讓位給前景的 Sense 積雲（sensewx 疊在時鐘上），背景
-    只畫天空/太陽/星月——兩代雲同框的突兀感就是這樣修掉的。
+    clouds=False：雲層讓位給前景的 Sense 積雲（sensewx 疊在時鐘上）；
+    celestial=False：太陽/月亮也讓位（sensewx 中央徽章有自己的日月，
+    背景再畫一顆就是兩個太陽）——星星不受此旗影響（夜空氛圍保留）。
     """
     if w <= 0 or h <= 0:
         return
@@ -221,8 +222,9 @@ def draw(surface, code: int, t: float, x0: int = 0, w: int = 400, h: int = 480,
         if night:
             if code == 1:
                 _draw_stars(panel, t, w, h, pal, n=8)
-                _draw_moon(panel, w, pal)
-        elif code in (1, 2):
+                if celestial:
+                    _draw_moon(panel, w, pal)
+        elif code in (1, 2) and celestial:
             _draw_sun(panel, t, w, pal, minor=(code == 2))
         if clouds:
             _draw_clouds(panel, code, t, w, h, pal)
@@ -230,8 +232,9 @@ def draw(surface, code: int, t: float, x0: int = 0, w: int = 400, h: int = 480,
         _draw_sky(panel, "night" if night else "clear_day", w)
         if night:
             _draw_stars(panel, t, w, h, pal, n=14)
-            _draw_moon(panel, w, pal)
-        else:
+            if celestial:
+                _draw_moon(panel, w, pal)
+        elif celestial:
             _draw_sun(panel, t, w, pal)
     # 其餘 code：刻意不畫任何東西，維持背景原樣。
 

@@ -278,8 +278,9 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None,
     if w is not None:
         from deskbar.ui import weatherfx
         night = not (6 <= now.hour < 19)   # 19:00–05:59 視為夜間：晴/多雲改月亮星空
-        weatherfx.draw(surface, w.code, weather_t, w=PANEL_W,
-                       night=night, clouds=False)   # 雲由 sensewx 前景積雲全權負責
+        weatherfx.draw(surface, w.code, weather_t, w=PANEL_W, night=night,
+                       clouds=False, celestial=False)   # 雲與日月全由 sensewx
+                                                        # 中央徽章負責
     anim = clock_anim if clock_anim else (now.strftime("%H:%M"), 1.0)
     from deskbar.ui import flipclock
     flipclock.draw(surface, 24, 34, now.strftime("%H:%M"), anim[0], anim[1],
