@@ -48,11 +48,13 @@ def _busy_state(n_days=7, long_title=True) -> AppState:
 
 
 def _scan_column_clean(surf, x_lo, x_hi, bg):
-    """回傳 [x_lo, x_hi) 這個直向窄帶內、非背景色的像素座標清單（應為空）。"""
+    """回傳 [x_lo, x_hi) 這個直向窄帶內、非背景色的像素座標清單（應為空）。
+    頂緣 BAND_H 讓給日光儀（設計上橫跨全寬的 overlay），不掃。"""
+    from deskbar.ui import sunstrip
     bad = []
     w, h = surf.get_size()
     assert 0 <= x_lo < x_hi <= w
-    for y in range(0, h, 2):
+    for y in range(sunstrip.BAND_H + 2, h, 2):
         for x in range(x_lo, x_hi):
             if surf.get_at((x, y))[:3] != bg:
                 bad.append((x, y))
@@ -154,7 +156,9 @@ def test_usage_widget_content_starts_at_or_after_usage_x0():
     surf = _surf()
     dashboard.render(surf, st.snapshot(), settings, NOW)
     bg = theme.C["bg"]
-    bad = [(x, y) for y in range(0, 480, 4) for x in range(0, dashboard.USAGE_X0, 4)
+    from deskbar.ui import sunstrip
+    bad = [(x, y) for y in range(sunstrip.BAND_H + 2, 480, 4)
+          for x in range(0, dashboard.USAGE_X0, 4)
           if x > dashboard.TL_X1 and surf.get_at((x, y))[:3] != bg]
     assert not bad, f"usage 內容不該早於 USAGE_X0={dashboard.USAGE_X0}：{bad[:10]}"
 

@@ -153,7 +153,7 @@ def load_settings() -> Settings:
         if not isinstance(linear_api_key, str):
             linear_api_key = ""
         center_view = raw.get("center_view", "calendar")
-        if center_view not in ("calendar", "linear", "notes"):
+        if center_view not in ("calendar", "linear", "notes", "scene"):
             center_view = "calendar"
         return Settings(
             rotation=raw.get("rotation", 90),

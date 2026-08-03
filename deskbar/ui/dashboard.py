@@ -107,7 +107,8 @@ def _agenda_label(start_date, n_days: int) -> str:
 
 def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
           weather_t=0.0, notes_store=None, notes_ui=None,
-          linear_page=0, notes_page=0, sedentary=False) -> list[Hit]:
+          linear_page=0, notes_page=0, sedentary=False,
+          scene_ui=None) -> list[Hit]:
     hits: list[Hit] = []
     tz = now.tzinfo
     span = settings.view_span
@@ -124,7 +125,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     # 非行事曆模式下，行事曆專屬頂帶元素（寬度/模式鈕、窗口標籤、回到今天）
     # 全部不畫。
     center = getattr(settings, "center_view", "calendar")
-    next_label = {"calendar": "待辦", "linear": "便條", "notes": "行事曆"}
+    next_label = {"calendar": "待辦", "linear": "便條", "notes": "場景",
+                  "scene": "行事曆"}
     _chip_btn(surface, next_label.get(center, "待辦"), CENTER_BTN,
               "toggle_center", hits)
     if center == "linear":
@@ -133,7 +135,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         hits += linearview.render(surface, snap, settings, TL_AREA, now,
                                   page=linear_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
-        return hits    # 中欄就是完整待辦牆，右欄摘要免了
+        return _finish(surface, snap, settings, now, hits)   # 中欄即完整待辦牆，右欄摘要免了
     if center == "notes":
         from deskbar.ui import notesview
         _text(surface, "便條", 22, theme.C["text2"], TL_X0, 22)
@@ -143,7 +145,14 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                                  TL_AREA, now, _t.monotonic(), page=notes_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
         _render_right_todo_mini(surface, snap, now)
-        return hits
+        return _finish(surface, snap, settings, now, hits)
+    if center == "scene":
+        from deskbar.ui import scenes
+        hits += scenes.render(surface, scene_ui if scene_ui is not None
+                              else scenes.new_state(), now, weather_t)
+        usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
+        _render_right_todo_mini(surface, snap, now)
+        return _finish(surface, snap, settings, now, hits)
 
     lane_emails = [e for e in settings.accounts if settings.accounts[e].calendars] \
         or list(snap.statuses)
@@ -223,6 +232,17 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     # 跟左欄時鐘/天氣一樣不可互動），畫在最後純粹是慣例（跟中欄內容互不重疊，順序無關）。
     usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
     _render_right_todo_mini(surface, snap, now)
+    return _finish(surface, snap, settings, now, hits)
+
+
+def _finish(surface, snap, settings, now, hits) -> list:
+    """所有 return 前的共同收尾：頂緣日光帶（overlay 蓋在三欄之上）。
+    日出日落用天氣快照的 open-meteo 真值，沒有才退天文計算（sunstrip._resolve）。"""
+    from deskbar.ui import sunstrip
+    w = snap.weather
+    sunstrip.draw(surface, now, settings.weather_lat, settings.weather_lon,
+                  rise=getattr(w, "sunrise", None) if w else None,
+                  sset=getattr(w, "sunset", None) if w else None)
     return hits
 
 
@@ -243,6 +263,7 @@ def render_panel_only(surface, snap, settings, now, weather_t=0.0,
     surface.fill(theme.C["bg"], pygame.Rect(0, 0, PANEL_W, 480))
     _render_panel(surface, snap, settings, now, [], None, weather_t,
                   sedentary)
+    _finish(surface, snap, settings, now, [])
 
 
 def _render_panel(surface, snap, settings, now, hits, clock_anim=None,

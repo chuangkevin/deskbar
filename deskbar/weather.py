@@ -20,6 +20,8 @@ class Weather:
     tmin: float
     label: str
     fetched_at: datetime
+    sunrise: "datetime | None" = None    # open-meteo 當日實際日出（日光儀優先用
+    sunset: "datetime | None" = None     # API 真值；斷網才退回天文計算）
 
 
 def code_text(code: int) -> str:
@@ -34,10 +36,18 @@ def fetch_weather(lat: float, lon: float, label: str, http_get=requests.get,
     resp = http_get(URL, params={
         "latitude": lat, "longitude": lon,
         "current": "temperature_2m,weather_code",
-        "daily": "temperature_2m_max,temperature_2m_min",
+        "daily": "temperature_2m_max,temperature_2m_min,sunrise,sunset",
         "timezone": "Asia/Taipei", "forecast_days": 1,
     }, timeout=20)
     body = resp.json()
+    tz = ZoneInfo("Asia/Taipei")
+
+    def _iso(key):
+        try:
+            return datetime.fromisoformat(body["daily"][key][0]).replace(tzinfo=tz)
+        except (KeyError, IndexError, TypeError, ValueError):
+            return None                  # API 沒給就留 None，日光儀退天文計算
+
     return Weather(
         temp=float(body["current"]["temperature_2m"]),
         code=int(body["current"]["weather_code"]),
@@ -45,4 +55,6 @@ def fetch_weather(lat: float, lon: float, label: str, http_get=requests.get,
         tmin=float(body["daily"]["temperature_2m_min"][0]),
         label=label,
         fetched_at=now_fn(),
+        sunrise=_iso("sunrise"),
+        sunset=_iso("sunset"),
     )

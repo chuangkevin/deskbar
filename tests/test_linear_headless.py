@@ -167,10 +167,11 @@ def test_toggle_center_dispatch_flips_and_saves(tmp_path, monkeypatch):
     app.hits = dashboard.render(_surf(), app.state.snapshot(), app.settings, NOW)
     hit = next(h for h in app.hits if h.action == "toggle_center")
     seen = []
-    for _ in range(3):
+    for _ in range(4):
         app._dispatch(hit.rect.x + 2, hit.rect.y + 2)
         seen.append(app.settings.center_view)
-    assert seen == ["linear", "notes", "calendar"], "三態循環：行事曆→待辦→便條→行事曆"
+    assert seen == ["linear", "notes", "scene", "calendar"], \
+        "四態循環：行事曆→待辦→便條→場景→行事曆"
     assert saved
 
 def test_swipe_flips_linear_pages_and_clamps(tmp_path, monkeypatch):

@@ -74,6 +74,12 @@ class App:
         from deskbar.presence import SedentaryTracker
         self.sedentary = SedentaryTracker()   # 久坐提示（公司場景：連續在座 60 分）
         self._sed_hint_last = False           # 提示出現/消失的邊緣觸發重繪用
+        from deskbar.claudeusage import UsageActivity
+        from deskbar.ui import scenes
+        self.usage_activity = UsageActivity()  # 忙/閒判定（usage 增量＝在寫 code）
+        self.scene_ui = scenes.new_state()     # 氛圍場景跨幀狀態（軌跡面/粒子）
+        self._flow_last_target = None          # 忙/閒排程 edge-trigger 記憶
+        self._flow_check_at = 0.0
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -338,7 +344,7 @@ class App:
                         self.on_save(self.settings)
                     elif a == "toggle_center":
                         self._start_transition()
-                        order = ["calendar", "linear", "notes"]
+                        order = ["calendar", "linear", "notes", "scene"]
                         cur = getattr(self.settings, "center_view", "calendar")
                         idx = order.index(cur) if cur in order else 0
                         self.settings.center_view = order[(idx + 1) % len(order)]
@@ -600,6 +606,36 @@ class App:
         from deskbar.ui import weatherfx
         return snap.weather.code in weatherfx.ANIMATED_CODES
 
+    def _scene_active(self) -> bool:
+        """中欄正在跑氛圍場景（需要中欄也吃氛圍幀）。過場中不算——過場自己
+        全量重繪。"""
+        return (self.view == "dashboard" and self._transition_start is None
+                and getattr(self.settings, "center_view", "") == "scene")
+
+    def _check_flow_center(self, mono: float) -> None:
+        """忙/閒中欄自動排程（決策在 claudeusage.flow_target）：
+        - 只在 dashboard、螢幕醒著、無迫近接管時動作
+        - edge-trigger：只在目標「變化」那一刻切一次；同一狀態內使用者手動
+          切到哪就停在哪（不會被反覆搶回）
+        - 記憶體內切換不持久化，跟迫近搶焦點同一套約定"""
+        if (self.view != "dashboard" or self._auto_center_prev is not None
+                or self._screen_asleep()):
+            return
+        from deskbar.claudeusage import flow_target
+        has_notes = bool(self.notes_store.list()) if self.notes_store else False
+        target = flow_target(self.usage_activity.scene_ready(mono),
+                             self.usage_activity.busy(mono), has_notes)
+        if target is None or target == self._flow_last_target:
+            return
+        self._flow_last_target = target
+        with self.lock:
+            if getattr(self.settings, "center_view", "calendar") == target:
+                return
+            self.settings.center_view = target
+            self.center_pages = {"linear": 0, "notes": 0}
+        self._start_transition()
+        self._last_seq = -1
+
     def _render_ambient(self, snap, now) -> None:
         """氛圍幀：資料/分鐘都沒變時，只重畫左欄（時鐘/天氣場景）再合成輸出，
         不重算中欄行事曆與右欄油表——Pi Zero 2W 燒不起整面 15fps 全量重繪。
@@ -611,7 +647,19 @@ class App:
                                         self._weather_t(),
                                         sedentary=self.sedentary.hint_active(
                                             time.monotonic()))
-        self._flip((0, 0, dashboard.PANEL_W, LOGICAL_H))   # 只有左欄髒
+            dirty = (0, 0, dashboard.PANEL_W, LOGICAL_H)   # 預設只有左欄髒
+            if self._scene_active():
+                # 場景幀：中欄也要動——流場粒子畫進 logical，日光帶跟著補回
+                # （場景 fill 會蓋掉中欄段的帶），髒區擴到中欄右緣
+                from deskbar.ui import scenes, sunstrip
+                scenes.render(self.logical, self.scene_ui, now, self._weather_t())
+                w = snap.weather
+                sunstrip.draw(self.logical, now, self.settings.weather_lat,
+                              self.settings.weather_lon,
+                              rise=getattr(w, "sunrise", None) if w else None,
+                              sset=getattr(w, "sunset", None) if w else None)
+                dirty = (0, 0, dashboard.TL_X1, LOGICAL_H)
+        self._flip(dirty)
 
     def _render(self, clock_anim=None) -> None:
         from datetime import datetime
@@ -1032,6 +1080,11 @@ class App:
             if sed_hint != self._sed_hint_last:
                 self._sed_hint_last = sed_hint
                 self._render()
+            # 忙/閒中欄排程：usage 增量餵活動偵測，每 15 秒評估一次目標視圖
+            self.usage_activity.feed(snap.usage, mono)
+            if mono - self._flow_check_at >= 15:
+                self._flow_check_at = mono
+                self._check_flow_center(mono)
             if self._screen_asleep():
                 # 深夜熄屏：不燒氛圍幀、輪詢降到 2fps（整夜 15fps 畫給黑幕看
                 # 純屬浪費）；觸摸喚醒那一圈 had_input=True 立即提速。
@@ -1053,14 +1106,19 @@ class App:
             elif snap.seq != self._last_seq or now.minute != self._last_minute:
                 self._render()
                 clock.tick(30)
-            elif self._ambient_active(snap) and not had_input:
+            elif (self._ambient_active(snap) or self._scene_active()) \
+                    and not had_input:
                 # 資料/分鐘都沒變，但天氣場景要動：左欄局部重繪，幀率按場景分級。
                 # 歷史教訓（2026-07-27「根本看不到動畫」）：這裡以前只有上面那條
                 # 全量重繪，天氣 tick 每秒都在加、畫面卻一分鐘才畫一次。
                 # had_input 時讓路給輸入處理（例如跟手預覽剛全量重繪過）。
                 self._render_ambient(snap, now)
-                from deskbar.ui import weatherfx
-                clock.tick(weatherfx.ambient_fps(snap.weather.code))
+                from deskbar.ui import scenes, weatherfx
+                fps = weatherfx.ambient_fps(snap.weather.code) \
+                    if self._ambient_active(snap) else 0
+                if self._scene_active():
+                    fps = max(fps, scenes.FPS)
+                clock.tick(fps)
             else:
                 # 純閒置輪詢從 10fps 提到 30fps：一次觸控最慢 100ms 後才被看見，
                 # 是延遲感的最大單一來源。空圈只做事件泵＋幾個判斷，30fps 的

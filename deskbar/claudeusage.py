@@ -45,3 +45,56 @@ def fmt_countdown(dt: datetime | None, now: datetime) -> str:
         return f"{days}d {hours}h"
     hours, minutes = divmod(total_minutes, 60)
     return f"{hours}h {minutes:02d}m"
+
+
+# ---------------------------------------------------------------- 忙/閒判定
+
+BUSY_WINDOW_S = 20 * 60    # 最近 N 秒內 usage 有上升＝忙（也是轉閒的遲滯窗）
+SCENE_AFTER_S = 20 * 60    # 連續忙滿 N 秒中欄才切場景（剛開工不急著換畫面）
+
+
+class UsageActivity:
+    """用 Claude usage 百分比的「上升」當使用者活動代理：在寫 code = usage
+    在動。下降是視窗重置、不算活動；agent 沒推新資料（Mac 睡了/沒開）自然
+    滑向閒。純邏輯吃單調秒數，不做 I/O。"""
+
+    def __init__(self):
+        self._pcts = None
+        self._last_active: "float | None" = None
+        self._busy_since: "float | None" = None
+
+    def feed(self, info, mono: float) -> None:
+        pcts = None if info is None else (info.session_pct, info.weekly_pct,
+                                          info.fable_pct)
+        if pcts is not None and self._pcts is not None:
+            for new, old in zip(pcts, self._pcts):
+                if new is not None and old is not None and new > old:
+                    self._last_active = mono
+                    break
+        self._pcts = pcts
+        if self.busy(mono):
+            if self._busy_since is None:
+                self._busy_since = mono
+        else:
+            self._busy_since = None
+
+    def busy(self, mono: float) -> bool:
+        return (self._last_active is not None
+                and mono - self._last_active <= BUSY_WINDOW_S)
+
+    def scene_ready(self, mono: float) -> bool:
+        return (self.busy(mono) and self._busy_since is not None
+                and mono - self._busy_since >= SCENE_AFTER_S)
+
+
+def flow_target(scene_ready: bool, busy: bool, has_notes: bool) -> "str | None":
+    """中欄自動排程的目標視圖（None＝不動）：
+    - 忙滿門檻 → 場景（行事曆是噪音，給不索取注意力的畫面）
+    - 忙但未滿 → 不動（剛開工，維持現狀）
+    - 閒 → 便條牆優先（該看待辦的東西了），沒便條看行事曆
+    迫近行程的搶焦點在 app 另一層，永遠壓過這裡。"""
+    if scene_ready:
+        return "scene"
+    if busy:
+        return None
+    return "notes" if has_notes else "calendar"
