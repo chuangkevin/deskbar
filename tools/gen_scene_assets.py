@@ -29,6 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np  # noqa: E402
 import pygame  # noqa: E402
 
+from tools.planet_horizon_assets import generate_planet_horizon_assets  # noqa: E402
+
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "deskbar" / "assets" / "scenes"
 W, H = 1180, 472           # 比場景區(1118)略寬：留 ±30px 視差擺動餘裕
 
@@ -170,6 +172,7 @@ def main() -> None:
     gen_cumulus("cumulus_0", 11, args.out)
     gen_cumulus("cumulus_1", 22, args.out)
     gen_sun_ball(args.out)
+    generate_planet_horizon_assets(args.out)
     print("完成。")
 
 
