@@ -29,42 +29,38 @@ def _text(surface, s, size, color, x, y, anchor="topleft", bold=False):
     surface.blit(img, img.get_rect(**{anchor: (x, y)}))
 
 
-def draw_char(surface, code: int, t: float, night: bool) -> None:
-    """天氣主角＝中央徽章：常駐在 HH 與 MM 之間、跨在時鐘下緣（Sense 經典
-    構圖，參考圖定案）——日/月在後、積雲在前、垂進下方資訊區。
+def _pose(t: float) -> tuple[float, float, float, float]:
+    """Return the fixed celestial anchor plus shared atmospheric motion."""
+    return CLOCK.centerx, CLOCK.bottom - 4, math.sin(t * 0.11) * 3, \
+        math.sin(t * 0.07) * 7
 
-    天氣 × 早晚矩陣：
-      晴        白晝＝太陽球＋光暈呼吸；夜＝隕坑月面
-      晴時多雲  日/月＋一朵雲前遮
-      多雲      日/月＋雙雲（參考圖的招牌 pose）
-      陰        雙灰雲、無日月
-      毛毛雨/雨 暗雲（雨絲/玻璃滴由 weatherfx 背景與玻璃層負責）
-      暴雨      更暗更大的雙雲＋搖曳加快
-      雷雨      墨雲；閃電 strobe 時整組被照亮（與 weatherfx 同一時間軸）
-      雪        霜白雲（雪花由背景層落）
-      霧        一縷薄霧橫過（背景霧帶仍是主角）
-    動態：日暈呼吸（~12s）、雲對向搖曳（~90s 往返）、整組輕微浮沉。"""
+
+def draw_celestial(surface, code: int, t: float, night: bool) -> None:
+    """Draw physically distant sun/moon at the authored fixed position."""
     from deskbar.ui import weatherfx
-    cx, cy = CLOCK.centerx, CLOCK.bottom - 4
-    bob = math.sin(t * 0.11) * 3
-    sway = math.sin(t * 0.07) * 7
+    if code not in CLEAR_CODES and code not in (1, 2):
+        return
+    cx, cy, bob, _sway = _pose(t)
+    if night:
+        moon = weatherfx._sprite("moon", (232, 232, 222), (62, 62))
+        moon.set_alpha(255)
+        surface.blit(moon, (cx - 31, cy - 42 + bob))
+    else:
+        breathe = int(96 + 44 * math.sin(t * 0.5))
+        glow = weatherfx._sprite("glow", (255, 200, 110), (190, 190))
+        glow.set_alpha(breathe)
+        surface.blit(glow, (cx - 95, cy - 90 + bob))
+        surface.blit(_scene_sprite("sun_ball", (255, 186, 66)),
+                     (cx - 80, cy - 78 + bob))
+
+
+def draw_foreground(surface, code: int, t: float, night: bool) -> None:
+    """Draw local cloud, fog, and storm matter in front of the clock plane."""
+    from deskbar.ui import weatherfx
+    if code in CLEAR_CODES:
+        return
+    cx, cy, bob, sway = _pose(t)
     heavy = code in (63, 65, 66, 67, 81, 82)
-    # ── 後層：日／月（陰天以上整片雲幕，不畫）
-    if code in CLEAR_CODES or code in (1, 2):
-        if night:
-            moon = weatherfx._sprite("moon", (232, 232, 222), (62, 62))
-            moon.set_alpha(255)
-            surface.blit(moon, (cx - 31, cy - 42 + bob))
-        else:
-            breathe = int(96 + 44 * math.sin(t * 0.5))
-            glow = weatherfx._sprite("glow", (255, 200, 110), (190, 190))
-            glow.set_alpha(breathe)
-            surface.blit(glow, (cx - 95, cy - 90 + bob))
-            surface.blit(_scene_sprite("sun_ball", (255, 186, 66)),
-                         (cx - 80, cy - 78 + bob))   # 太陽大半沉在卡緣下（參考圖）
-        if code in CLEAR_CODES:
-            return
-    # ── 前層：雲（左右兩朵對向搖曳；家族決定色調與尺寸）
     if code in FOG_CODES:
         mist = weatherfx._sprite("fog", (216, 220, 228) if not night
                                  else (176, 182, 198), (170, 48))
@@ -82,7 +78,7 @@ def draw_char(surface, code: int, t: float, night: bool) -> None:
         spec = [((150, 82), -38, 4), ((118, 66), 38, 14)]
         tc = t % weatherfx.FLASH_PERIOD_S
         if tc < 0.12 or 0.20 <= tc < 0.32:
-            tint = (234, 238, 250)              # 閃電照亮整組雲
+            tint = (234, 238, 250)
     elif code in RAIN_CODES:
         if heavy:
             tint = (122, 130, 148) if not night else (96, 104, 122)
@@ -101,6 +97,27 @@ def draw_char(surface, code: int, t: float, night: bool) -> None:
         sx = sway if i % 2 == 0 else -sway * 0.7
         surface.blit(spr, (round(cx + dx - cw // 2 + sx),
                            round(cy + dy - ch // 2 + bob * (0.6 if i else 1.0))))
+
+
+def draw_char(surface, code: int, t: float, night: bool) -> None:
+    """Compatibility compositor for callers that do not own explicit depth planes.
+
+    天氣主角＝中央徽章：常駐在 HH 與 MM 之間、跨在時鐘下緣（Sense 經典
+    構圖，參考圖定案）——日/月在後、積雲在前、垂進下方資訊區。
+
+    天氣 × 早晚矩陣：
+      晴        白晝＝太陽球＋光暈呼吸；夜＝隕坑月面
+      晴時多雲  日/月＋一朵雲前遮
+      多雲      日/月＋雙雲（參考圖的招牌 pose）
+      陰        雙灰雲、無日月
+      毛毛雨/雨 暗雲（雨絲/玻璃滴由 weatherfx 背景與玻璃層負責）
+      暴雨      更暗更大的雙雲＋搖曳加快
+      雷雨      墨雲；閃電 strobe 時整組被照亮（與 weatherfx 同一時間軸）
+      雪        霜白雲（雪花由背景層落）
+      霧        一縷薄霧橫過（背景霧帶仍是主角）
+    動態：日暈呼吸（~12s）、雲對向搖曳（~90s 往返）、整組輕微浮沉。"""
+    draw_celestial(surface, code, t, night)
+    draw_foreground(surface, code, t, night)
 
 
 def draw_info(surface, w, now) -> None:
