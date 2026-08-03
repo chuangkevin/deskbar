@@ -55,10 +55,11 @@ def draw_char(surface, code: int, t: float, night: bool) -> None:
         return                            # 霧：weatherfx 的霧帶已是主角
     else:
         return
-    # 雲「抱」時鐘一角，不「埋」時鐘（一版 252px 大雲蓋在卡面正中，四張卡
-    # 三張被埋成白板——Sense 的雲只遮下緣/角落，數字永遠讀得到）
-    anchors = ((CLOCK.centerx - 30, CLOCK.bottom + 4),
-               (CLOCK.right - 12, CLOCK.top - 4))
+    # 雲只准碰卡片「邊緣」：大雲沉到鐘下方（只疊卡底 ~20px）、小雲浮在
+    # 鐘上方（只疊卡頂 ~10px）。數字區（卡面中央）是禁區——之前三版都在
+    # 這裡跌倒：只要雲心壓到數字，白雲疊白卡＝數字被隱形橡皮擦擦掉
+    anchors = ((CLOCK.centerx - 30, CLOCK.bottom + 30),
+               (CLOCK.right - 20, CLOCK.top + 0))
     for i, (cw, ch) in enumerate(sizes):
         spr = pygame.transform.smoothscale(
             _scene_sprite(f"cumulus_{i % 2}", tint), (cw, ch))
