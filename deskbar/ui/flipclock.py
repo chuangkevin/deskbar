@@ -3,6 +3,14 @@ import pygame
 from deskbar.ui import theme
 
 RADIUS = 14
+# HTC Sense 白卡（不隨主題變——白卡黑字就是 Sense 翻牌鐘的身分證；
+# 一版用主題深卡淺字，實機驗收：「時鐘的樣式也錯誤」）
+_CARD_TOP = (250, 250, 248)
+_CARD_BOTTOM = (224, 224, 222)
+_DIGIT = (46, 46, 50)
+_SPLIT = (172, 172, 174)
+_EDGE = (146, 146, 150)
+_shadow_cache: dict = {}
 _cache: dict = {}
 
 
@@ -20,16 +28,23 @@ def _digit_card(ch: str, w: int, h: int) -> "pygame.Surface":
     s = _cache.get(key)
     if s is None:
         s = pygame.Surface((w, h), pygame.SRCALPHA)
-        # 上半亮、下半暗的翻頁卡雙折面（烤進快取，零逐幀成本）——單一平色
-        # 是「紙板道具感」的來源之一。
-        pygame.draw.rect(s, theme.C["clock_card_bottom"], pygame.Rect(0, 0, w, h),
+        # Sense 白卡：上半亮下半沉的雙折面＋頂部亮面高光帶（glossy）
+        pygame.draw.rect(s, _CARD_BOTTOM, pygame.Rect(0, 0, w, h),
                          border_radius=RADIUS)
-        pygame.draw.rect(s, theme.C["clock_card_top"], pygame.Rect(0, 0, w, h // 2),
+        pygame.draw.rect(s, _CARD_TOP, pygame.Rect(0, 0, w, h // 2),
                          border_top_left_radius=RADIUS, border_top_right_radius=RADIUS)
-        img = theme.font(int(h * 0.80), weight="light").render(ch, True, theme.C["text"])
+        img = theme.font(int(h * 0.80), weight="light").render(ch, True, _DIGIT)
         s.blit(img, img.get_rect(center=(w // 2, h // 2)))
-        pygame.draw.line(s, theme.C["clock_split"], (2, h // 2), (w - 2, h // 2), 2)
-        pygame.draw.rect(s, theme.C["panel_line"], pygame.Rect(0, 0, w, h), 1,
+        gloss = pygame.Surface((w, h // 4), pygame.SRCALPHA)
+        gloss.fill((255, 255, 255, 54))
+        mask = pygame.Surface((w, h // 4), pygame.SRCALPHA)
+        pygame.draw.rect(mask, (255, 255, 255, 255), mask.get_rect(),
+                         border_top_left_radius=RADIUS,
+                         border_top_right_radius=RADIUS)
+        gloss.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+        s.blit(gloss, (0, 0))
+        pygame.draw.line(s, _SPLIT, (2, h // 2), (w - 2, h // 2), 2)
+        pygame.draw.rect(s, _EDGE, pygame.Rect(0, 0, w, h), 1,
                          border_radius=RADIUS)
         _cache[key] = s
     return s
@@ -73,9 +88,20 @@ def draw(surface, x: int, y: int, text: str, prev: str, progress: float,
     half = digit_h // 2
     prev = prev if len(prev) == len(text) else text
     for i, ch in enumerate(text):
-        cw = w // 2 if ch == ":" else w
+        if ch == ":":
+            x += gap * 2      # Sense 時鐘 HH 與 MM 之間只留空隙，沒有冒號卡
+            continue
+        cw = w
         cur = _digit_card(ch, cw, digit_h)
-        if progress >= 1.0 or prev[i] == ch or ch == ":":
+        # 卡片落影（Sense 卡浮在場景上的縱深）
+        sh = _shadow_cache.get((cw, digit_h))
+        if sh is None:
+            sh = pygame.Surface((cw, digit_h), pygame.SRCALPHA)
+            pygame.draw.rect(sh, (0, 0, 0, 70), sh.get_rect(),
+                             border_radius=RADIUS)
+            _shadow_cache[(cw, digit_h)] = sh
+        surface.blit(sh, (x + 2, y + 4))
+        if progress >= 1.0 or prev[i] == ch:
             surface.blit(cur, (x, y))
         else:
             old = _digit_card(prev[i], cw, digit_h)

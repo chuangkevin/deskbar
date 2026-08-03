@@ -106,6 +106,37 @@ def gen_ridge(name: str, seed: int, top_frac: float, amp_frac: float,
     _save(name, g, alpha, out)
 
 
+def gen_cumulus(name: str, seed: int, out: Path) -> None:
+    """蓬鬆積雲（HTC Sense 的招牌體積雲）：fBm 密度 × 橢圓罩 → alpha，
+    頂亮底暗＋邊緣受光。220×120，執行期染色縮放。"""
+    cw, ch = 220, 120
+    den = _fbm2d(cw, ch, seed, octaves=5, base=4)
+    yy, xx = np.mgrid[0:ch, 0:cw]
+    ex = (xx - cw / 2) / (cw * 0.46)
+    ey = (yy - ch * 0.58) / (ch * 0.50)
+    r = np.sqrt(ex ** 2 + ey ** 2)
+    alpha = np.clip((den * 1.5 + (1 - r) * 0.9 - 0.95) * 2.6, 0.0, 1.0)
+    lum = np.clip(0.72 + 0.30 * (1 - yy / ch) + 0.18 * den - 0.16 * r, 0.0, 1.0)
+    _save(name, lum, alpha, out)
+
+
+def gen_sun_ball(out: Path) -> None:
+    """亮面太陽球：實心圓＋上緣高光＋外圈光暈（中性白，執行期染橘）。"""
+    n = 160
+    yy, xx = np.mgrid[0:n, 0:n]
+    r = np.sqrt((xx - n / 2) ** 2 + (yy - n / 2) ** 2)
+    core_r = 44.0
+    core = np.clip((core_r - r) / 2.0, 0.0, 1.0)          # 軟邊實心球
+    glow = np.clip(1.0 - (r - core_r) / 34.0, 0.0, 1.0) ** 2 * 0.55
+    alpha = np.clip(core + np.where(r > core_r, glow, 0.0), 0.0, 1.0)
+    gloss = np.clip(1.0 - np.sqrt((xx - n / 2) ** 2
+                                  + (yy - n * 0.36) ** 2) / (core_r * 0.9),
+                    0.0, 1.0) * 0.35
+    lum = np.clip(0.86 + gloss - np.clip((r / core_r - 0.55), 0, 1) * 0.18,
+                  0.0, 1.0) * (core > 0) + (core <= 0) * 0.95
+    _save("sun_ball", lum, alpha, out)
+
+
 def gen_vgrad(out: Path) -> None:
     a = np.linspace(1.0, 0.0, H)[:, None].repeat(8, axis=1)
     _save("vgrad", np.ones((H, 8)), a, out)
@@ -123,6 +154,9 @@ def main() -> None:
     gen_ridge("ridge_mid", 202, 0.44, 0.30, 0.16, 7, args.out)
     gen_ridge("ridge_near", 303, 0.62, 0.30, 0.20, 10, args.out)
     gen_vgrad(args.out)
+    gen_cumulus("cumulus_0", 11, args.out)
+    gen_cumulus("cumulus_1", 22, args.out)
+    gen_sun_ball(args.out)
     print("完成。")
 
 
