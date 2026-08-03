@@ -19,7 +19,7 @@ from datetime import datetime
 
 import pygame
 
-from deskbar.claudeusage import fmt_countdown
+from deskbar.claudeusage import WINDOW_S, fmt_countdown, over_pace, pace_pct
 from deskbar.ui import theme
 
 TITLE_Y = 60
@@ -45,16 +45,18 @@ def _center_text(surface, s, size, color, x0, w, cy):
     surface.blit(img, img.get_rect(center=(x0 + w / 2, cy)))
 
 
-def _level_color(pct: float):
-    # 正常用量一律 Claude 珊瑚橘（per-theme：淺色版用較深的焦橘保飽和度）；
-    # 只有爆量（>85%）轉紅示警。
-    if pct > 85:
+def _level_color(pct: float, over: bool = False):
+    # 正常用量一律 Claude 珊瑚橘；轉紅有兩個門：爆量（>85%）或「燒太快」
+    # ——用量進度超過視窗的時間進度（claudeusage.over_pace 線性配速，
+    # 例：weekly 才過 2 天就燒掉 50% ＝紅）。
+    if over or pct > 85:
         return theme.C["warn"]
     return theme.C["usage_bar"]
 
 
 def _draw_group(surface, x0: float, w: float, y: float, label: str,
-                pct: float | None, resets_at, now: datetime, muted: bool = False) -> None:
+                pct: float | None, resets_at, now: datetime, muted: bool = False,
+                window_s: float | None = None) -> None:
     label_color = theme.C["muted"] if muted else theme.C["text2"]
     pct_color = theme.C["muted"] if muted else theme.C["text"]
     _text(surface, label, 18, label_color, x0, y)
@@ -70,12 +72,23 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
     pygame.draw.rect(surface, theme.C["panel_line"],
                      pygame.Rect(round(bar_x), round(bar_y), round(bar_w), BAR_H),
                      width=1, border_radius=BAR_RADIUS)
+    over = (not muted and window_s is not None
+            and over_pace(pct, resets_at, now, window_s))
     if pct is not None and pct > 0:
         fill_w = max(0.0, min(bar_w, bar_w * pct / 100))
-        fill_color = theme.C["muted"] if muted else _level_color(pct)
+        fill_color = theme.C["muted"] if muted else _level_color(pct, over)
         pygame.draw.rect(surface, fill_color,
                          pygame.Rect(round(bar_x), round(bar_y), round(fill_w), BAR_H),
                          border_radius=BAR_RADIUS)
+    # 配速刻度：此刻「應該」燒到哪的細豎線——條在刻度左邊＝有餘裕，
+    # 右邊＝超支（同時整條轉紅）
+    if window_s is not None and not muted:
+        pace = pace_pct(resets_at, now, window_s)
+        if pace is not None:
+            px = bar_x + bar_w * pace / 100
+            pygame.draw.line(surface, theme.C["text2"],
+                             (round(px), round(bar_y - 3)),
+                             (round(px), round(bar_y + BAR_H + 3)), 1)
 
     # 不用「↻」之類的符號字形當前綴——比照 deskbar.ui.icons 的教訓（字型檔不一定
     # 內建該字符，會畫成方塊），純文字「剩 …」在任何字型下都穩定可讀。
@@ -101,13 +114,16 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360) -> N
         _text(surface, f"({mins} 分前)", 16, theme.C["muted"], x0 + w - 8, TITLE_Y, "topright")
 
     groups = [
-        ("5H SESSION", usage.session_pct, usage.session_resets_at),
-        ("本週", usage.weekly_pct, usage.weekly_resets_at),
+        ("5H SESSION", usage.session_pct, usage.session_resets_at,
+         WINDOW_S["session"]),
+        ("本週", usage.weekly_pct, usage.weekly_resets_at, WINDOW_S["weekly"]),
     ]
     if usage.fable_pct is not None:
-        groups.append(("FABLE", usage.fable_pct, usage.fable_resets_at))
+        groups.append(("FABLE", usage.fable_pct, usage.fable_resets_at,
+                       WINDOW_S["fable"]))
 
     y = GROUP_START_Y
-    for label, pct, resets_at in groups:
-        _draw_group(surface, x0, w, y, label, pct, resets_at, now, muted=muted)
+    for label, pct, resets_at, win in groups:
+        _draw_group(surface, x0, w, y, label, pct, resets_at, now, muted=muted,
+                    window_s=win)
         y += GROUP_STEP

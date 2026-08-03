@@ -148,45 +148,89 @@ def _stars(panel, d, now, t, dt, code, seed) -> None:
 
 
 # ---------------------------------------------------------------- ridges 呼吸山稜
+# v2：烘焙材質（tools/gen_scene_assets.py）。v1 用實心多邊形直畫，實機驗收
+# 「醜死了」——重蹈 weatherfx 一版的覆轍；山體的岩理/稜線光/軟邊全在離線
+# fBm 烘焙裡，執行期只染色＋視差。
 
-_RIDGE_PAL = {          # (夜, 晨, 晝, 昏) × 三層由遠到近——山永遠是藍紫系，
-    "dark": (((52, 60, 96), (148, 120, 150), (110, 130, 156), (160, 110, 130)),
-             ((38, 44, 74), (108, 88, 124), (84, 102, 128), (112, 80, 108)),
-             ((26, 30, 52), (70, 56, 90), (60, 74, 98), (72, 52, 82))),
-    "light": (((176, 182, 202), (222, 186, 176), (168, 186, 206), (216, 176, 168)),
-              ((150, 158, 184), (196, 156, 158), (140, 160, 186), (190, 148, 152)),
-              ((122, 132, 162), (166, 126, 138), (112, 134, 164), (158, 120, 136))),
-}       # 暖色只出現在晨昏的「遠山染霞」，近山始終沉穩（第一版全層轉棕＝土丘）
+from pathlib import Path as _Path
+
+_SCENE_ASSET_DIR = _Path(__file__).resolve().parent.parent / "assets" / "scenes"
+_asset_raw: dict = {}
+_asset_tinted: dict = {}
 
 
-def _ridge_y(x: float, li: int, seed: int, w: int, h: int, t: float) -> float:
-    base = h * (0.52 + 0.16 * li)
-    amp = h * (0.10 + 0.05 * li)
-    s = seed + li * 31
-    y = base \
-        + amp * math.sin(x * 0.006 + _h(s, 1) * 6.28) * 0.6 \
-        + amp * math.sin(x * 0.017 + _h(s, 2) * 6.28) * 0.3 \
-        + amp * math.sin(x * 0.041 + _h(s, 3) * 6.28) * 0.12 \
-        + math.sin(t * 0.05 + li) * 2.0          # 極慢的「呼吸」起伏
-    return y
+def _clear_asset_cache() -> None:
+    _asset_tinted.clear()
+
+
+theme.register_cache_clear(_clear_asset_cache)
+
+
+def _scene_sprite(name: str, color, alpha_mul: float = 1.0):
+    """烘焙素材的染色變體（乘法染色保留明暗；同 weatherfx._sprite 路數）。"""
+    key = (name, color, round(alpha_mul, 2), theme.current_theme())
+    s = _asset_tinted.get(key)
+    if s is None:
+        raw = _asset_raw.get(name)
+        if raw is None:
+            raw = pygame.image.load(str(_SCENE_ASSET_DIR / f"{name}.png"))
+            _asset_raw[name] = raw
+        s = raw.copy()
+        s.fill((*color, round(255 * alpha_mul)),
+               special_flags=pygame.BLEND_RGBA_MULT)
+        _asset_tinted[key] = s
+    return s
+
+
+# 每層 × (夜, 晨, 晝, 昏) 的山體染色：水墨層次「遠亮近暗」，近山近乎剪影
+# ——素材中性白帶明暗，乘法染色保留稜線光與岩理
+_RIDGE_TINT = {
+    "dark": ((( 84,  96, 134), (232, 190, 196), (176, 196, 220), (236, 178, 170)),
+             (( 56,  66, 100), (168, 124, 150), (120, 146, 180), (160, 108, 124)),
+             (( 28,  34,  56), ( 70,  60,  96), ( 54,  72, 100), ( 64,  52,  84))),
+    "light": (((172, 180, 206), (240, 204, 202), (200, 214, 232), (238, 196, 188)),
+              ((134, 146, 178), (200, 158, 172), (152, 172, 200), (194, 148, 156)),
+              (( 88,  98, 130), (120, 102, 134), (100, 116, 146), (112,  94, 122))),
+}
+_RIDGE_SKY = {
+    "dark": ((26, 32, 60), (168, 104, 112), (110, 146, 188), (152, 88, 96)),
+    "light": ((196, 202, 220), (246, 212, 184), (208, 226, 244), (242, 202, 178)),
+}
 
 
 def _ridges(panel, d, now, t, dt, code, seed) -> None:
     w, h = panel.get_size()
-    pal = _RIDGE_PAL[theme.current_theme()]
-    sky = _hour_ramp(now, *([_lerp(pal[0][i], theme.C["bg"], 0.55)
-                             for i in range(4)]))
-    panel.fill(_lerp(theme.C["bg"], sky, 0.5))
-    for li in range(3):
-        col = _hour_ramp(now, *pal[li])
-        pts = [(x, _ridge_y(x, li, seed, w, h, t)) for x in range(0, w + 16, 16)]
-        pygame.draw.polygon(panel, col, pts + [(w, h), (0, h)])
-    # 雲影：兩團暗斑貼著近山飄
-    shade = pygame.Surface((260, 90), pygame.SRCALPHA)
-    pygame.draw.ellipse(shade, (0, 0, 0, 42), shade.get_rect())
+    th = theme.current_theme()
+    sky = _hour_ramp(now, *_RIDGE_SKY[th])
+    # 天空：底色朝地平線漸亮（vgrad 反轉貼在下半），晨昏帶暖
+    panel.fill(_lerp(sky, theme.C["bg"], 0.15))
+    horizon_glow = pygame.transform.flip(
+        _scene_sprite("vgrad", _lerp(sky, (255, 236, 200), 0.5)), False, True)
+    panel.blit(pygame.transform.scale(horizon_glow, (w, h // 2)), (0, h // 2))
+    hh = now.hour + now.minute / 60.0
+    if 5.0 <= hh < 8.5 or 16.5 <= hh < 20.0:
+        # 晨昏地平光暈：太陽在山後（早晨偏左、傍晚偏右）
+        from deskbar.ui import weatherfx
+        gx = w * 0.22 if hh < 12 else w * 0.78
+        g = weatherfx._sprite("glow", (255, 190, 120), (360, 360))
+        g.set_alpha(120)
+        panel.blit(g, (gx - 180, h * 0.42 - 180))
+    # 三層山：每層獨立染色（遠亮近暗）＋輕微朝天空 lerp（大氣透視）
+    # ＋極慢視差擺動＝「呼吸」
+    for li, (name, haze, sway) in enumerate((("ridge_far", 0.30, 4.0),
+                                             ("ridge_mid", 0.14, 8.0),
+                                             ("ridge_near", 0.04, 14.0))):
+        col = _lerp(_hour_ramp(now, *_RIDGE_TINT[th][li]), sky, haze)
+        spr = _scene_sprite(name, col)
+        dx = math.sin(t * 0.013 + li * 2.1) * sway - 31    # 素材寬 1180，區寬 1118
+        panel.blit(spr, (round(dx), 0))
+    # 雲影：weatherfx 的 fBm 雲染成暗色、貼著山面漂
+    from deskbar.ui import weatherfx
     for i in range(2):
-        cx = (t * (7 + i * 4) + _h(i, seed) * w) % (w + 260) - 260
-        panel.blit(shade, (round(cx), round(h * 0.62 + i * 40)))
+        blob = weatherfx._sprite(f"cloud_{i}", (0, 0, 0), (300, 120))
+        blob.set_alpha(46)
+        cx = (t * (6 + i * 3) + _h(i, seed) * w) % (w + 300) - 300
+        panel.blit(blob, (round(cx), round(h * (0.45 + 0.16 * i))))
 
 
 # ---------------------------------------------------------------- fireflies 螢火蟲

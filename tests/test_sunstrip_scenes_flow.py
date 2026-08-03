@@ -193,3 +193,37 @@ def test_scene_settings_persist_and_validate(tmp_path, monkeypatch):
     p.write_text(json.dumps(raw))
     assert config.load_settings().scenes_enabled == config.SCENE_KEYS, \
         "全反勾＝退回全部"
+
+
+# ---------------------------------------------------------------- usage 配速
+
+def test_usage_pace_and_over_pace():
+    from deskbar.claudeusage import WINDOW_S, over_pace, pace_pct
+    week = WINDOW_S["weekly"]
+    resets = NOW + timedelta(days=5)                 # 已過 2/7
+    pace = pace_pct(resets, NOW, week)
+    assert abs(pace - 200 / 7) < 0.5, "過了兩天＝配速約 28.6%"
+    assert over_pace(50.0, resets, NOW, week), "兩天燒 50% ＝超速轉紅"
+    assert not over_pace(20.0, resets, NOW, week), "低於配速不轉紅"
+    assert not over_pace(31.0, resets, NOW, week), "配速+5 緩衝內不轉紅"
+    fresh = NOW + timedelta(days=7)                  # 視窗剛重置
+    assert not over_pace(4.0, fresh, NOW, week), "剛重置的小額使用不該嚇人"
+    assert not over_pace(50.0, None, NOW, week), "沒 resets_at 就不判"
+
+
+def test_usage_widget_over_pace_draws_red():
+    from deskbar.claudeusage import UsageInfo
+    from deskbar.ui import theme, usagewidget
+    over = UsageInfo(10.0, NOW + timedelta(hours=4), 50.0,
+                     NOW + timedelta(days=5), None, None, NOW)
+    ok = UsageInfo(10.0, NOW + timedelta(hours=4), 20.0,
+                   NOW + timedelta(days=5), None, None, NOW)
+    a, b = pygame.Surface((1920, 480)), pygame.Surface((1920, 480))
+    usagewidget.render(a, over, NOW)
+    usagewidget.render(b, ok, NOW)
+    warn = theme.C["warn"]
+    reds_a = sum(1 for x in range(1560, 1880, 4) for y in range(180, 220, 2)
+                 if a.get_at((x, y))[:3] == warn)
+    reds_b = sum(1 for x in range(1560, 1880, 4) for y in range(180, 220, 2)
+                 if b.get_at((x, y))[:3] == warn)
+    assert reds_a > 0 and reds_b == 0, "超速的那條要轉紅、正常配速不紅"

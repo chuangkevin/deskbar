@@ -47,6 +47,28 @@ def fmt_countdown(dt: datetime | None, now: datetime) -> str:
     return f"{hours}h {minutes:02d}m"
 
 
+# ---------------------------------------------------------------- 配速判定
+
+# 各視窗長度（秒）：5 小時 session、7 天週限額、7 天 Fable 週限額
+WINDOW_S = {"session": 5 * 3600, "weekly": 7 * 86400, "fable": 7 * 86400}
+PACE_GRACE_PCT = 5.0     # 容許超前配速的緩衝（百分點）：視窗剛開的小額使用不該轉紅
+
+
+def pace_pct(resets_at, now, window_s: float) -> "float | None":
+    """視窗的時間進度 0..100＝此刻的「線性配速預算」：weekly 過了 2/7 的
+    時間，配速就是 28.6%。resets_at 缺（agent 沒給）回 None。"""
+    if resets_at is None:
+        return None
+    remaining = max(0.0, min(window_s, (resets_at - now).total_seconds()))
+    return (1.0 - remaining / window_s) * 100.0
+
+
+def over_pace(pct, resets_at, now, window_s: float) -> bool:
+    """用量進度超過時間進度（含緩衝）＝燒太快，油表轉紅。"""
+    p = pace_pct(resets_at, now, window_s)
+    return pct is not None and p is not None and pct > p + PACE_GRACE_PCT
+
+
 # ---------------------------------------------------------------- 忙/閒判定
 
 BUSY_WINDOW_S = 20 * 60    # 最近 N 秒內 usage 有上升＝忙（也是轉閒的遲滯窗）

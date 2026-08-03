@@ -74,11 +74,12 @@ def _bar_fill_pixel(surf, group_index=0):
 
 
 def test_bar_color_normal_use_is_claude_orange():
-    # 正常用量（含 50%、75%）一律 Claude 珊瑚橘，不再分綠/黃段
-    for pct in (50.0, 75.0, 85.0):
+    # 配速內的正常用量一律 Claude 珊瑚橘（2026-08-03 起新增線性配速判定：
+    # 用量進度 > 時間進度＋5pt 緩衝＝紅，所以這裡的 pct 都取在配速線以下）
+    for pct in (20.0, 40.0, 55.0):
         surf = _surf()
         usagewidget.render(surf, _usage(session_pct=pct), NOW, 1540, 360)
-        assert _bar_fill_pixel(surf) == theme.C["usage_bar"]
+        assert _bar_fill_pixel(surf) == theme.C["usage_bar"], pct
 
 
 def test_bar_color_warn_tier_above_85_percent():
