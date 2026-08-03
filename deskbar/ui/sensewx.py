@@ -61,9 +61,10 @@ def draw_char(surface, code: int, t: float, night: bool) -> None:
     anchors = ((CLOCK.centerx - 30, CLOCK.bottom + 30),
                (CLOCK.right - 20, CLOCK.top + 0))
     for i, (cw, ch) in enumerate(sizes):
-        spr = pygame.transform.smoothscale(
-            _scene_sprite(f"cumulus_{i % 2}", tint), (cw, ch))
-        spr.set_alpha(242)
+        # 尺寸走 _scene_sprite 快取；不用 set_alpha——cocoa 上 surface-alpha
+        # 疊 per-pixel alpha 的組合就是「方塊」病灶之一，而 242/255 的差別
+        # 根本看不出來
+        spr = _scene_sprite(f"cumulus_{i % 2}", tint, (cw, ch))
         ax, ay = anchors[i % 2]
         surface.blit(spr, (ax - cw // 2 + drift * (1 if i == 0 else -0.6),
                            ay - ch // 2 + bob * (1 if i == 0 else -1)))

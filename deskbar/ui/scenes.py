@@ -166,18 +166,23 @@ def _clear_asset_cache() -> None:
 theme.register_cache_clear(_clear_asset_cache)
 
 
-def _scene_sprite(name: str, color, alpha_mul: float = 1.0):
-    """烘焙素材的染色變體（乘法染色保留明暗；同 weatherfx._sprite 路數）。"""
-    key = (name, color, round(alpha_mul, 2), theme.current_theme())
+def _scene_sprite(name: str, color, size=None):
+    """烘焙素材的「染色×尺寸」變體（乘法染色保留明暗；同 weatherfx._sprite）。
+    載入即 convert_alpha()：macOS 視窗（cocoa）上未轉換格式的表面在
+    set_alpha/縮放組合下會走到把 per-pixel alpha 打平的合成路徑——實機
+    四次「奇怪的方塊」驗收、headless 卻永遠重現不了，就是這個平台差。
+    縮放也烤進快取（每幀 smoothscale 同一顆 sprite 純屬浪費）。"""
+    key = (name, color, size, theme.current_theme())
     s = _asset_tinted.get(key)
     if s is None:
         raw = _asset_raw.get(name)
         if raw is None:
             raw = pygame.image.load(str(_SCENE_ASSET_DIR / f"{name}.png"))
+            if pygame.display.get_surface() is not None:
+                raw = raw.convert_alpha()
             _asset_raw[name] = raw
-        s = raw.copy()
-        s.fill((*color, round(255 * alpha_mul)),
-               special_flags=pygame.BLEND_RGBA_MULT)
+        s = pygame.transform.smoothscale(raw, size) if size else raw.copy()
+        s.fill((*color, 255), special_flags=pygame.BLEND_RGBA_MULT)
         _asset_tinted[key] = s
     return s
 
