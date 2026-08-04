@@ -9,6 +9,8 @@ import numpy as np
 import pygame
 
 from deskbar.ui import planet_horizon, scenes
+from deskbar.ui.scene_flow import FlowRenderer, _stream_pose
+from deskbar.ui.scene_runtime import SceneFrame
 
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -44,6 +46,16 @@ def _changed_ratio(first: bytes, second: bytes) -> float:
     a = np.frombuffer(first, dtype=np.uint8).reshape(472, 1118, 3).astype(np.int16)
     b = np.frombuffer(second, dtype=np.uint8).reshape(472, 1118, 3).astype(np.int16)
     return float((np.max(np.abs(a - b), axis=2) > 12).mean())
+
+
+def _render_flow_sequence(times: tuple[float, ...], dt: float) -> bytes:
+    renderer = FlowRenderer()
+    panel = pygame.Surface((1118, 472))
+    for t in times:
+        renderer.render(panel, SceneFrame(NOW, t, dt, 1, 810616))
+    rendered = pygame.image.tobytes(panel, "RGB")
+    renderer.close()
+    return rendered
 
 
 def test_planet_and_flow_assets_meet_dimensions_and_alpha_contracts() -> None:
@@ -101,3 +113,26 @@ def test_planet_lighting_anchors_are_distinct() -> None:
 
     # Then
     assert len(set(frames)) == 3
+
+
+def test_flow_frame_is_independent_of_render_history_and_dt() -> None:
+    # Given / When
+    direct = _render_flow_sequence((15.0,), 1.0 / 20.0)
+    sparse = _render_flow_sequence((0.0, 5.0, 15.0), 0.25)
+    dense = _render_flow_sequence(
+        tuple(index / 20.0 for index in range(301)),
+        1.0 / 20.0,
+    )
+
+    # Then
+    assert direct == sparse == dense
+
+
+def test_flow_wrap_endpoints_stay_outside_the_visible_crop() -> None:
+    # Given / When
+    start = _stream_pose(0.0, 1118, 472)
+    end = _stream_pose(1.0, 1118, 472)
+
+    # Then
+    assert start[0] < -120
+    assert end[0] > 1118 + 120

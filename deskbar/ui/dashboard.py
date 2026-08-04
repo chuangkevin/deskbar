@@ -286,8 +286,8 @@ def _render_panel(surface, snap, settings, now, hits, clock_anim=None,
         sensewx.draw_celestial(surface, w.code, weather_t, night)
     anim = clock_anim if clock_anim else (now.strftime("%H:%M"), 1.0)
     from deskbar.ui import flipclock
-    flipclock.draw(surface, 24, 34, now.strftime("%H:%M"), anim[0], anim[1],
-                   digit_h=96)    # 4 卡+冒號實測總寬 342px，PANEL_W=400 內綽綽有餘
+    flipclock.draw(surface, 42, 34, now.strftime("%H:%M"), anim[0], anim[1],
+                   digit_h=96)    # 4 卡＋中央空隙共 316px，正好置中 PANEL_W=400
     if w is not None:
         # Sense 近景天氣層：雲霧在卡片前方，日/月已在卡片後方完成。
         night = not (6 <= now.hour < 19)

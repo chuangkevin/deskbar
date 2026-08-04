@@ -61,6 +61,26 @@ def test_fish_and_ink_assets_have_authored_canvas_and_clean_edges() -> None:
             assert edges.max() == 0, name
 
 
+def test_fish_sprites_have_top_down_vertical_silhouettes() -> None:
+    fish_rects = ((237, 71, 220, 330), (783, 71, 220, 330))
+    for frame in range(3):
+        alpha = pygame.surfarray.array_alpha(
+            pygame.image.load(str(ASSET_DIR / f"fish_sprite_{frame}.png"))
+        )
+        for x, y, width, height in fish_rects:
+            visible = np.argwhere(alpha[x:x + width, y:y + height] > 8)
+            assert np.ptp(visible[:, 1]) > np.ptp(visible[:, 0]) * 1.35
+
+
+def test_ink_runtime_source_tiles_have_no_alpha_at_crop_bounds() -> None:
+    for index in range(3):
+        surface = pygame.image.load(str(ASSET_DIR / f"ink_bloom_{index}.png"))
+        tile = pygame.surfarray.array_alpha(surface)[460:780, 76:396]
+        border = np.concatenate((tile[:4, :].ravel(), tile[-4:, :].ravel(),
+                                 tile[:, :4].ravel(), tile[:, -4:].ravel()))
+        assert border.max() == 0, index
+
+
 def test_fish_and_ink_material_motion_lighting_determinism_and_memory() -> None:
     for kind, motion_range in (("fish", (0.015, 0.28)), ("ink", (0.02, 0.35))):
         first, decoded = _render(kind, NOW, 0.0)

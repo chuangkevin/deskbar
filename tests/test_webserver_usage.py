@@ -63,6 +63,25 @@ def test_post_usage_allows_all_null_fields(alarm_store):
     assert usage.fable_resets_at is None
 
 
+def test_post_usage_preserves_cached_fetched_at(alarm_store):
+    state = AppState()
+    client = create_app(alarm_store, usage_state=state).test_client()
+    payload = dict(VALID_PAYLOAD, fetched_at="2026-08-04T01:23:45+00:00")
+
+    assert client.post("/api/usage", json=payload).status_code == 204
+    assert state.snapshot().usage.fetched_at == datetime.fromisoformat(
+        "2026-08-04T01:23:45+00:00"
+    )
+
+
+def test_post_usage_rejects_invalid_fetched_at(alarm_store):
+    state = AppState()
+    client = create_app(alarm_store, usage_state=state).test_client()
+    payload = dict(VALID_PAYLOAD, fetched_at="yesterday-ish")
+
+    assert client.post("/api/usage", json=payload).status_code == 400
+
+
 def test_post_usage_pct_boundaries_zero_and_hundred_are_valid(alarm_store):
     state = AppState()
     client = create_app(alarm_store, usage_state=state).test_client()

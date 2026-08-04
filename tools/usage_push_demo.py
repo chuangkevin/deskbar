@@ -1,23 +1,9 @@
-"""獨立小工具：讀本機 macOS Keychain 的 Claude Code 憑證、打官方 usage API，
-POST 到 deskbar 的 /api/usage。不想改既有 agent（例如
-claude-usage-cube/agent/cube_agent.py）、或單純想單獨驗證推送路徑通不通時，
-跑這支就好。
+"""Fetch Claude Code usage on the Mac and reliably push it to deskbar.
 
-用法：
-    .venv/bin/python tools/usage_push_demo.py --url http://deskbar.local:8080/api/usage
-    .venv/bin/python tools/usage_push_demo.py --url http://deskbar.local:8080/api/usage \\
-        --token <跟 Pi 上 DESKBAR_PUSH_TOKEN 一樣的字串>
-    .venv/bin/python tools/usage_push_demo.py --url ... --loop     # 常駐，每 60 秒一輪
-
-前置：這台 Mac 要登入過 Claude Code——Keychain 服務名稱「Claude Code-credentials」
-底下要有憑證，跟 claude-usage-cube/agent/cube_agent.py 讀的是同一份。
-
-跟 tools/usage_push_snippet.py 的差異：這支自己完整處理「讀憑證→打 API→推送」
-一條龍，獨立執行不需要嵌進任何既有腳本；usage_push_snippet.py 只有最後一步
-（推送），給已經有自己 usage 抓取邏輯的人直接複製函數用。
-
-失敗一律用 SystemExit 帶清楚訊息中止（單次模式）或印出來跳過本輪
-（--loop 模式），不吞成無聲的空白畫面。
+The loop deliberately separates the two network jobs: Anthropic is queried at most every
+five minutes, while the last timestamped snapshot is re-pushed to deskbar every minute.
+This restores the widget after a Pi restart without hammering Anthropic or making cached
+data look fresh. HTTP 429 responses use exponential backoff.
 """
 from __future__ import annotations
 
@@ -25,68 +11,96 @@ import argparse
 import json
 import subprocess
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
 
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 USAGE_BETA_HEADER = "oauth-2025-04-20"
-# 官方 usage API 對沒有瀏覽器 UA 的請求較容易觸發風控，比照 cube_agent.py 帶一個
-# 常見瀏覽器 UA 字串。
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+CACHE_PATH = Path.home() / ".deskbar-agent" / "usage_cache.json"
+DEFAULT_FETCH_INTERVAL = 300.0
+DEFAULT_PUSH_INTERVAL = 60.0
+INITIAL_RATE_LIMIT_BACKOFF = 900.0
+MAX_RATE_LIMIT_BACKOFF = 3600.0
+
+
+class RateLimitedError(RuntimeError):
+    def __init__(self, retry_after: float | None) -> None:
+        super().__init__("Anthropic usage API rate limited")
+        self.retry_after = retry_after
 
 
 def load_access_token() -> str:
-    """讀 macOS Keychain 的 Claude Code 憑證。讀不到／過期都直接報錯中止——這支
-    是單次診斷/示範工具，不像常駐 agent 那樣該悄悄跳過。"""
-    r = subprocess.run(
+    result = subprocess.run(
         ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
-        capture_output=True, text=True, timeout=30)
-    if r.returncode != 0:
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
         raise SystemExit(
-            f"讀不到 Keychain 項目「{KEYCHAIN_SERVICE}」——這台 Mac 登入過 Claude Code 嗎？\n"
-            f"stderr: {r.stderr.strip()}")
+            f"讀不到 Keychain 項目「{KEYCHAIN_SERVICE}」：{result.stderr.strip()}"
+        )
     try:
-        oauth = json.loads(r.stdout.strip()).get("claudeAiOauth", {})
-    except json.JSONDecodeError as e:
-        raise SystemExit(f"Keychain 內容不是預期的 JSON：{e}")
+        oauth = json.loads(result.stdout.strip()).get("claudeAiOauth", {})
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"Keychain 內容不是預期的 JSON：{error}")
     token = oauth.get("accessToken")
     if not token:
         raise SystemExit("Keychain 資料裡沒有 accessToken 欄位")
     expires_at = oauth.get("expiresAt", 0)
     if expires_at and expires_at / 1000 < time.time():
-        raise SystemExit("token 已過期——開一下 Claude Code 讓它自動續期後再重跑")
+        raise SystemExit("token 已過期，請執行一次 Claude Code 以刷新登入")
     return token
+
+
+def _retry_after(response: requests.Response) -> float | None:
+    value = response.headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return None
 
 
 def fetch_usage(token: str) -> dict:
     try:
-        resp = requests.get(USAGE_URL, headers={
-            "Authorization": f"Bearer {token}",
-            "anthropic-beta": USAGE_BETA_HEADER,
-            "User-Agent": UA,
-        }, timeout=20)
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        raise SystemExit(f"打 usage API 失敗：{e}")
+        response = requests.get(
+            USAGE_URL,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "anthropic-beta": USAGE_BETA_HEADER,
+                "User-Agent": UA,
+            },
+            timeout=20,
+        )
+    except requests.RequestException as error:
+        raise SystemExit(f"打 usage API 失敗：{error}")
+    if response.status_code == 429:
+        raise RateLimitedError(_retry_after(response))
     try:
-        return resp.json()
-    except ValueError as e:
-        raise SystemExit(f"usage API 回應不是合法 JSON：{e}")
+        response.raise_for_status()
+    except requests.RequestException as error:
+        raise SystemExit(f"打 usage API 失敗：{error}")
+    try:
+        return response.json()
+    except ValueError as error:
+        raise SystemExit(f"usage API 回應不是合法 JSON：{error}")
 
 
 def build_payload(usage: dict) -> dict:
-    """把官方 usage API 回應轉成 deskbar POST /api/usage 要的形狀。fable 資料藏在
-    limits 裡 kind=="weekly_scoped" 的項目（跟 claude-usage-cube/agent/cube_agent.py
-    的解析邏輯一致）。"""
     five_hour = usage.get("five_hour") or {}
     seven_day = usage.get("seven_day") or {}
     fable_pct, fable_resets_at = None, None
-    for lim in usage.get("limits") or []:
-        if lim.get("kind") == "weekly_scoped":
-            fable_pct = lim.get("percent")
-            fable_resets_at = lim.get("resets_at")
+    for limit in usage.get("limits") or []:
+        if limit.get("kind") == "weekly_scoped":
+            fable_pct = limit.get("percent")
+            fable_resets_at = limit.get("resets_at")
             break
     return {
         "session_pct": five_hour.get("utilization"),
@@ -95,46 +109,114 @@ def build_payload(usage: dict) -> dict:
         "weekly_resets_at": seven_day.get("resets_at"),
         "fable_pct": fable_pct,
         "fable_resets_at": fable_resets_at,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def load_cache(path: Path = CACHE_PATH) -> dict | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def save_cache(payload: dict, path: Path = CACHE_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 def push(payload: dict, url: str, token: str | None) -> None:
     headers = {"X-Deskbar-Token": token} if token else {}
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=5)
-    except requests.RequestException as e:
-        raise SystemExit(f"推送到 deskbar 失敗：{e}")
-    if resp.status_code != 204:
-        raise SystemExit(f"deskbar 回應非預期：HTTP {resp.status_code} {resp.text[:200]}")
+        response = requests.post(url, json=payload, headers=headers, timeout=5)
+    except requests.RequestException as error:
+        raise SystemExit(f"推送到 deskbar 失敗：{error}")
+    if response.status_code != 204:
+        raise SystemExit(
+            f"deskbar 回應非預期：HTTP {response.status_code} {response.text[:200]}"
+        )
 
 
-def one_cycle(url: str, token: str | None) -> None:
+def _summary(payload: dict) -> str:
+    return (
+        f"5h {payload.get('session_pct')}%  週 {payload.get('weekly_pct')}%  "
+        f"fable {payload.get('fable_pct')}%"
+    )
+
+
+def one_cycle(url: str, token: str | None) -> dict:
     payload = build_payload(fetch_usage(load_access_token()))
+    save_cache(payload)
     push(payload, url, token)
-    print(f"已推送：5h {payload['session_pct']}%  週 {payload['weekly_pct']}%  "
-         f"fable {payload['fable_pct']}%")
+    print(f"已抓取並推送：{_summary(payload)}")
+    return payload
+
+
+def run_loop(
+    url: str,
+    token: str | None,
+    fetch_interval: float,
+    push_interval: float,
+) -> None:
+    cached = load_cache()
+    next_fetch = 0.0
+    next_push = 0.0
+    rate_limit_backoff = INITIAL_RATE_LIMIT_BACKOFF
+    print(
+        f"常駐模式啟動（Anthropic {fetch_interval:g} 秒、deskbar {push_interval:g} 秒）"
+    )
+    while True:
+        now = time.monotonic()
+        if cached is not None and now >= next_push:
+            try:
+                push(cached, url, token)
+                print(f"已補送快取：{_summary(cached)}")
+            except SystemExit as error:
+                print(f"快取推送失敗：{error}")
+            next_push = now + push_interval
+
+        now = time.monotonic()
+        if now >= next_fetch:
+            try:
+                cached = one_cycle(url, token)
+                next_fetch = now + fetch_interval
+                next_push = now + push_interval
+                rate_limit_backoff = INITIAL_RATE_LIMIT_BACKOFF
+            except RateLimitedError as error:
+                wait = max(rate_limit_backoff, error.retry_after or 0.0)
+                next_fetch = now + wait
+                rate_limit_backoff = min(rate_limit_backoff * 2.0,
+                                         MAX_RATE_LIMIT_BACKOFF)
+                print(f"Anthropic 429，{round(wait)} 秒後再抓；期間補送本機快取")
+            except SystemExit as error:
+                next_fetch = now + fetch_interval
+                print(f"抓取失敗：{error}；期間補送本機快取")
+
+        next_event = min(next_fetch, next_push if cached is not None else next_fetch)
+        time.sleep(max(1.0, min(5.0, next_event - time.monotonic())))
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--url", required=True, help="deskbar 的 /api/usage 完整網址")
-    ap.add_argument("--token", default=None,
-                    help="對應 Pi 上 DESKBAR_PUSH_TOKEN 環境變數（若有設定）")
-    ap.add_argument("--loop", action="store_true", help="常駐模式，每 60 秒推一次")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--url", required=True, help="deskbar /api/usage 完整網址")
+    parser.add_argument("--token", default=None, help="選填 X-Deskbar-Token")
+    parser.add_argument("--loop", action="store_true", help="常駐可靠推送模式")
+    parser.add_argument("--fetch-interval", type=float,
+                        default=DEFAULT_FETCH_INTERVAL)
+    parser.add_argument("--push-interval", type=float,
+                        default=DEFAULT_PUSH_INTERVAL)
+    args = parser.parse_args()
 
-    if not args.loop:
+    if args.loop:
+        run_loop(args.url, args.token, args.fetch_interval, args.push_interval)
+    else:
         one_cycle(args.url, args.token)
-        return
-
-    print("常駐模式啟動（每 60 秒一輪，Ctrl+C 結束）")
-    while True:
-        try:
-            one_cycle(args.url, args.token)
-        except SystemExit as e:
-            print(f"跳過本輪：{e}")
-        time.sleep(60)
 
 
 if __name__ == "__main__":

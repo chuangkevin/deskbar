@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pygame
 
-from deskbar.ui import scene_runner, scenes
+from deskbar.ui import scene_runner, scene_train, scenes
 
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -42,19 +42,29 @@ def _render(kind: str, t: float) -> tuple[bytes, int]:
     return pygame.image.tobytes(crop, "RGB"), state["renderer"].decoded_bytes
 
 
+def _render_progressed_runner(seconds: float) -> tuple[bytes, int]:
+    surface = pygame.Surface((1920, 480))
+    state = scenes.new_state()
+    for frame in range(round(seconds * 20) + 1):
+        scenes.render(surface, state, NOW, frame / 20.0, enabled=("runner",), weather_code=1)
+    crop = surface.subsurface((402, 8, 1118, 472))
+    return pygame.image.tobytes(crop, "RGB"), state["renderer"].decoded_bytes
+
+
 def _motion_ratio(first: bytes, second: bytes) -> float:
     a = np.frombuffer(first, np.uint8).reshape(472, 1118, 3).astype(np.int16)
     b = np.frombuffer(second, np.uint8).reshape(472, 1118, 3).astype(np.int16)
     return float((np.max(np.abs(a - b), axis=2) > 12).mean())
 
 
-def test_pixel_assets_use_authored_canvas_clean_edges_and_nearest_scaling() -> None:
+def test_train_and_runner_assets_use_authored_canvas_and_clean_edges() -> None:
     for name in (*BASES, *OVERLAYS):
         surface = pygame.image.load(str(ASSET_DIR / f"{name}.png"))
         assert surface.get_size() == (1240, 472)
         rgb = pygame.surfarray.array3d(surface)
-        assert np.array_equal(rgb[0::2, 0::2], rgb[1::2, 0::2]), name
-        assert np.array_equal(rgb[0::2, 0::2], rgb[0::2, 1::2]), name
+        if name.startswith("runner_"):
+            assert np.array_equal(rgb[0::2, 0::2], rgb[1::2, 0::2]), name
+            assert np.array_equal(rgb[0::2, 0::2], rgb[0::2, 1::2]), name
         alpha = pygame.surfarray.array_alpha(surface)
         if "_base_" in name:
             assert alpha.min() == 255
@@ -63,26 +73,132 @@ def test_pixel_assets_use_authored_canvas_clean_edges_and_nearest_scaling() -> N
             assert edges.max() == 0, name
 
 
+def test_train_uses_antialiased_scaling_instead_of_2x2_pixel_blocks() -> None:
+    rgb = pygame.surfarray.array3d(
+        pygame.image.load(str(ASSET_DIR / "train_near.png"))
+    )
+    assert not np.array_equal(rgb[0::2, 0::2], rgb[1::2, 0::2])
+
+
+def test_train_lighting_tracks_local_date_and_subminute_time() -> None:
+    night = scene_train._lighting(datetime(2026, 8, 4, 2, tzinfo=ZoneInfo("Asia/Taipei")))
+    day = scene_train._lighting(datetime(2026, 8, 4, 12, tzinfo=ZoneInfo("Asia/Taipei")))
+    dawn_first = scene_train._lighting(
+        datetime(2026, 8, 4, 5, 0, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+    )
+    dawn_later = scene_train._lighting(
+        datetime(2026, 8, 4, 5, 0, 30, tzinfo=ZoneInfo("Asia/Taipei"))
+    )
+
+    assert night == ("night", "night", 0.0)
+    assert day == ("day", "day", 0.0)
+    assert dawn_first[:2] == dawn_later[:2] == ("night", "dawn")
+    assert dawn_later[2] > dawn_first[2]
+
+
+def test_train_layers_cover_and_repeat_at_authored_cycle() -> None:
+    for name in ("train_far", "train_mid", "train_near"):
+        layer = pygame.image.load(str(ASSET_DIR / f"{name}.png"))
+        first = pygame.Surface((1118, 472), pygame.SRCALPHA)
+        repeated = pygame.Surface((1118, 472), pygame.SRCALPHA)
+        scene_train._blit_wrapped(first, layer, 0.0)
+        scene_train._blit_wrapped(repeated, layer, float(scene_train.TILE_PERIOD))
+        assert pygame.image.tobytes(first, "RGBA") == pygame.image.tobytes(repeated, "RGBA")
+
+    for distance in (0.0, scene_train.TILE_PERIOD / 2, scene_train.TILE_PERIOD - 1.0):
+        layer = pygame.image.load(str(ASSET_DIR / "train_near.png"))
+        tiled = pygame.Surface((1118, 472), pygame.SRCALPHA)
+        scene_train._blit_wrapped(tiled, layer, distance)
+        assert pygame.surfarray.array_alpha(tiled)[:, 420].min() > 0
+
+
+def test_train_foreground_moves_on_every_20fps_frame() -> None:
+    frames = [_render("train", frame / 20.0)[0] for frame in range(4)]
+    arrays = [
+        np.frombuffer(frame, np.uint8).reshape(472, 1118, 3)[320:450]
+        for frame in frames
+    ]
+    ratios = [
+        float((np.max(np.abs(first.astype(np.int16) - second), axis=2) > 12).mean())
+        for first, second in zip(arrays, arrays[1:])
+    ]
+    assert min(ratios) >= 0.02, ratios
+
+
 def test_train_and_runner_palette_motion_determinism_and_memory() -> None:
     for kind in ("train", "runner"):
         first, decoded = _render(kind, 0.0)
         repeated, repeated_decoded = _render(kind, 0.0)
-        later, _ = _render(kind, 15.0)
+        later, _ = _render_progressed_runner(5.0) if kind == "runner" else _render(kind, 15.0)
         array = np.frombuffer(first, np.uint8).reshape(472, 1118, 3)
         sampled = array[::8, ::8].reshape(-1, 3)
         assert first == repeated
         assert decoded == repeated_decoded
         assert decoded <= 48 * 1024 * 1024
-        assert len(np.unique(sampled, axis=0)) >= 48
+        color_count = len(np.unique(sampled, axis=0))
+        if kind == "runner":
+            assert 12 <= color_count <= 24
+        else:
+            assert color_count >= 48
         ratio = _motion_ratio(first, later)
         assert 0.05 <= ratio <= 0.45, (kind, ratio)
 
 
-def test_runner_obstacle_schedule_is_deterministic() -> None:
-    first = [scene_runner.obstacle_phase(float(second), 810616) for second in range(60)]
-    second = [scene_runner.obstacle_phase(float(second), 810616) for second in range(60)]
-    assert first == second
-    assert len(set(first)) > 8
+def test_runner_cannot_pass_through_pipe() -> None:
+    pipe_x, _height = scene_runner.PIPES[0]
+    state = scene_runner.RunnerState(x=pipe_x - scene_runner.PLAYER_WIDTH - 2)
+    scene_runner.advance_runner(state, 0.2, auto_jump=False)
+    assert state.x == pipe_x - scene_runner.PLAYER_WIDTH
+    assert state.phase == "running"
+
+
+def test_runner_side_collision_with_enemy_causes_death_and_reset() -> None:
+    state = scene_runner.RunnerState()
+    enemy = state.enemies[0]
+    state.x = enemy.x - scene_runner.PLAYER_WIDTH + 4
+    scene_runner.advance_runner(state, 0.05, auto_jump=False)
+    assert state.phase == "dead"
+    assert state.deaths == 1
+
+    for _ in range(120):
+        scene_runner.advance_runner(state, 1 / 60, auto_jump=False)
+    assert state.phase == "running"
+    assert state.x < 200
+    assert state.y == scene_runner.GROUND_Y - scene_runner.PLAYER_HEIGHT
+
+
+def test_runner_stomps_enemy_and_bounces() -> None:
+    state = scene_runner.RunnerState(on_ground=False)
+    enemy = state.enemies[0]
+    state.x = enemy.x
+    state.y = scene_runner.GROUND_Y - 32 - scene_runner.PLAYER_HEIGHT - 3
+    state.vy = 180.0
+    scene_runner.advance_runner(state, 0.05, auto_jump=False)
+    assert not enemy.alive
+    assert state.phase == "running"
+    assert state.vy < 0
+
+
+def test_runner_hits_question_block_from_below() -> None:
+    block_x, block_y, _kind = scene_runner.BLOCKS[1]
+    state = scene_runner.RunnerState(
+        x=float(block_x),
+        y=float(block_y + 34),
+        vy=-260.0,
+        on_ground=False,
+    )
+    scene_runner.advance_runner(state, 0.05, auto_jump=False)
+    assert 1 in state.used_blocks
+    assert state.y >= block_y + 32
+    assert state.vy >= 0.0
+
+
+def test_runner_auto_player_completes_entire_level() -> None:
+    state = scene_runner.RunnerState()
+    for _ in range(60 * 40):
+        scene_runner.advance_runner(state, 1 / 60)
+    assert state.finishes == 1
+    assert state.deaths == 0
 
 
 def test_pixel_runtime_performs_no_scaling() -> None:

@@ -16,6 +16,7 @@ from deskbar.ui.scene_runtime import SceneFrame
 
 ASSET_DIR: Final = Path(__file__).resolve().parent.parent / "assets" / "scenes"
 BASE_X: Final = -(1240 - 1118) // 2
+FOG_WRAP: Final = 112.0
 TINTS: Final[dict[str, dict[str, Color]]] = {
     "far": {"night": (76, 96, 128), "dawn": (188, 145, 153), "day": (165, 194, 207)},
     "mid": {"night": (44, 59, 82), "dawn": (119, 89, 111), "day": (105, 139, 154)},
@@ -38,6 +39,19 @@ def _lighting(now: datetime) -> tuple[str, str, float]:
     return "night", "night", 0.0
 
 
+def _weather_layers(weather_code: int | None) -> tuple[int, int, int]:
+    """Return fog, foreground haze, and cloud-shadow opacity for WMO weather."""
+    if weather_code in (0, 1):
+        return 38, 0, 36
+    if weather_code in (2, 3):
+        return 138, 44, 138
+    if weather_code in (45, 48):
+        return 225, 100, 108
+    if weather_code is not None and weather_code >= 50:
+        return 205, 84, 190
+    return 122, 38, 124
+
+
 class RidgesRenderer:
     __slots__ = ("_assets",)
 
@@ -54,25 +68,32 @@ class RidgesRenderer:
             MasterBlend(f"ridges_base_{first}", f"ridges_base_{second}", amount)
         )
         panel.blit(base, (BASE_X, 0))
-        layers = (("far", 131.0, 2.0), ("mid", 109.0, 4.0), ("near", 97.0, 6.0))
-        for name, period, amplitude in layers:
+        fog_opacity, haze_opacity, shadow_opacity = _weather_layers(frame.weather_code)
+        fog = self._assets.load("ridges_fog")
+        fog_breath = 0.985 + math.sin(frame.t * math.tau / 23.0) * 0.015
+        fog_x = BASE_X + round((frame.t * 2.8) % FOG_WRAP - FOG_WRAP / 2.0)
+
+        for name in ("far", "mid", "near"):
             color = lerp(TINTS[name][first], TINTS[name][second], amount)
             layer = self._assets.tinted(TintRequest(f"ridges_{name}", color, None))
-            offset = round(math.sin(frame.t * math.tau / period + amplitude) * amplitude)
             if name == "far":
-                panel.blit(layer, (BASE_X + offset, 0))
-                fog = self._assets.load("ridges_fog")
-                fog.set_alpha(220)
-                fog_x = round(math.sin(frame.t * math.tau / 71.0) * 56.0)
-                panel.blit(fog, (BASE_X + fog_x, 0))
+                panel.blit(layer, (BASE_X, 0))
+                fog.set_alpha(round(fog_opacity * fog_breath))
+                panel.blit(fog, (fog_x, 0))
             elif name == "mid":
-                panel.blit(layer, (BASE_X + offset, 0))
+                panel.blit(layer, (BASE_X, 0))
                 shadow = self._assets.load("ridges_shadow")
-                shadow.set_alpha(190)
-                shadow_x = round(math.sin(frame.t * math.tau / 53.0 + 1.4) * 72.0)
-                panel.blit(shadow, (BASE_X + shadow_x, 0))
+                shadow_breath = 0.99 + math.sin(frame.t * math.tau / 31.0 + 1.4) * 0.01
+                shadow.set_alpha(round(shadow_opacity * shadow_breath))
+                panel.blit(shadow, (BASE_X, 0))
+                if haze_opacity:
+                    haze_x = BASE_X + round(
+                        (frame.t * 1.9 + FOG_WRAP * 0.37) % FOG_WRAP - FOG_WRAP / 2.0
+                    )
+                    fog.set_alpha(round(haze_opacity * fog_breath))
+                    panel.blit(fog, (haze_x, 0))
             else:
-                panel.blit(layer, (BASE_X + offset, 0))
+                panel.blit(layer, (BASE_X, 0))
 
     def close(self) -> None:
         self._assets.close()

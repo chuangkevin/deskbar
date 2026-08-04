@@ -1,4 +1,4 @@
-"""Authored sumi-e fish with paper wash, wakes, and bounded trails."""
+"""Animated top-down sumi-e koi over a paper and water wash."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from typing import Final
 import pygame
 
 from deskbar.ui.scene_assets import MasterBlend, SceneAssets
-from deskbar.ui.scene_common import hash_unit
 from deskbar.ui.scene_runtime import SceneFrame
 
 
@@ -38,7 +37,10 @@ class FishRenderer:
 
     def __init__(self) -> None:
         self._assets = SceneAssets(ASSET_DIR)
-        self._fish: tuple[pygame.Surface, pygame.Surface, pygame.Surface] | None = None
+        self._fish: tuple[
+            tuple[pygame.Surface, pygame.Surface, pygame.Surface],
+            tuple[pygame.Surface, pygame.Surface, pygame.Surface],
+        ] | None = None
         self._wakes: tuple[pygame.Surface, pygame.Surface] | None = None
 
     @property
@@ -46,20 +48,28 @@ class FishRenderer:
         return self._assets.decoded_bytes
 
     def _sprites(self) -> tuple[
-        tuple[pygame.Surface, pygame.Surface, pygame.Surface],
+        tuple[
+            tuple[pygame.Surface, pygame.Surface, pygame.Surface],
+            tuple[pygame.Surface, pygame.Surface, pygame.Surface],
+        ],
         tuple[pygame.Surface, pygame.Surface],
     ]:
         if self._fish is None:
+            rects = (
+                pygame.Rect(round(1240 * 0.28) - 110, 472 // 2 - 165, 220, 330),
+                pygame.Rect(round(1240 * 0.72) - 110, 472 // 2 - 165, 220, 330),
+            )
             self._fish = tuple(
-                self._assets.load(f"fish_sprite_{index}").subsurface(
-                    pygame.Rect(1240 // 2 - 110, 472 // 2 - 50, 220, 100)
+                tuple(
+                    self._assets.load(f"fish_sprite_{index}").subsurface(rect)
+                    for index in range(3)
                 )
-                for index in range(3)
+                for rect in rects
             )
         if self._wakes is None:
             self._wakes = tuple(
                 self._assets.load(f"fish_wake_{index}").subsurface(
-                    pygame.Rect(1240 // 2 - 130, 472 // 2 - 42, 260, 84)
+                    pygame.Rect(1240 // 2 - 50, 472 // 2 - 140, 100, 280)
                 )
                 for index in range(2)
             )
@@ -73,24 +83,23 @@ class FishRenderer:
         panel.blit(base, (BASE_X, 0))
         fish_sprites, wakes = self._sprites()
         width, height = panel.get_size()
-        depth = 0.30 if (frame.weather_code or 0) <= 2 else 0.62
-        for index, fish in enumerate(fish_sprites):
-            speed = 22.0 + index * 8.0
-            x = (hash_unit(index, frame.day_seed) * (width + 260) + frame.t * speed) \
-                % (width + 260) - 130
-            y = height * depth + math.sin(frame.t * (0.10 + index * 0.018) + index * 2.2) \
-                * height * 0.10 + index * 36 - 36
+        frame_order = (0, 1, 2, 1)
+        margin = 170.0
+        cycle = height + margin * 2.0
+        progress = (frame.t * 32.0 / cycle) % 1.0
+        for index, frames in enumerate(fish_sprites):
+            path = progress if index == 0 else (progress + 0.5) % 1.0
+            x = width * (0.66 if index == 0 else 0.34) \
+                + math.sin(path * math.tau + index * 1.4) * width * 0.07
+            y = (height + margin - path * cycle) if index == 0 \
+                else (-margin + path * cycle)
             wake = wakes[index % 2]
-            wake.set_alpha(105)
-            panel.blit(wake, (round(x) - 150, round(y) - wake.get_height() // 2))
-            for trail_index, alpha in ((2, 42), (1, 74)):
-                fish.set_alpha(alpha)
-                panel.blit(
-                    fish,
-                    (round(x - speed * trail_index * 0.12) - fish.get_width() // 2,
-                     round(y) - fish.get_height() // 2),
-                )
-            fish.set_alpha(220)
+            wake.set_alpha(82 if index == 0 else 68)
+            panel.blit(wake, (round(x) - wake.get_width() // 2,
+                              round(y) - wake.get_height() // 2))
+            animation_index = frame_order[int(frame.t * (4.5 + index * 0.4) + index) % 4]
+            fish = frames[animation_index]
+            fish.set_alpha(238 if (frame.weather_code or 0) <= 2 else 194)
             panel.blit(fish, (round(x) - fish.get_width() // 2,
                               round(y) - fish.get_height() // 2))
 

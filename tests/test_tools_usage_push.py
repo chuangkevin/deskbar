@@ -33,6 +33,15 @@ def _load_snippet_module():
     return mod
 
 
+def _load_demo_module():
+    path = TOOLS_DIR / "usage_push_demo.py"
+    spec = importlib.util.spec_from_file_location("usage_push_demo", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
 @pytest.fixture
 def snippet():
     return _load_snippet_module()
@@ -92,3 +101,41 @@ def test_push_to_deskbar_non_204_prints_warning_does_not_raise(snippet, monkeypa
     snippet.push_to_deskbar({"session_pct": 999}, "http://deskbar.local:8080/api/usage")
     out = capsys.readouterr().out
     assert "HTTP 400" in out
+
+
+def test_usage_demo_cache_round_trip(tmp_path):
+    demo = _load_demo_module()
+    path = tmp_path / "usage.json"
+    payload = {"session_pct": 42.0, "fetched_at": "2026-08-04T01:00:00+00:00"}
+
+    demo.save_cache(payload, path)
+
+    assert demo.load_cache(path) == payload
+
+
+def test_usage_demo_payload_contains_fetch_timestamp():
+    demo = _load_demo_module()
+    payload = demo.build_payload({
+        "five_hour": {"utilization": 12, "resets_at": "2026-08-04T04:00:00Z"},
+        "seven_day": {"utilization": 34, "resets_at": "2026-08-10T00:00:00Z"},
+        "limits": [{"kind": "weekly_scoped", "percent": 5, "resets_at": None}],
+    })
+
+    assert payload["session_pct"] == 12
+    assert payload["weekly_pct"] == 34
+    assert payload["fable_pct"] == 5
+    assert "+00:00" in payload["fetched_at"]
+
+
+def test_usage_demo_rate_limit_uses_retry_after(monkeypatch):
+    demo = _load_demo_module()
+
+    class Response:
+        status_code = 429
+        headers = {"Retry-After": "720"}
+
+    monkeypatch.setattr(demo.requests, "get", lambda *args, **kwargs: Response())
+
+    with pytest.raises(demo.RateLimitedError) as caught:
+        demo.fetch_usage("token")
+    assert caught.value.retry_after == 720.0

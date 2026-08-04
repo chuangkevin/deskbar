@@ -58,6 +58,12 @@ def test_stars_and_aurora_asset_contracts() -> None:
         else:
             edges = np.concatenate((alpha[0, :], alpha[-1, :], alpha[:, 0], alpha[:, -1]))
             assert edges.max() == 0, name
+        if name.startswith("aurora_curtain_"):
+            rgb = pygame.surfarray.array3d(surface)
+            alpha_seam = np.abs(alpha[61].astype(np.int16) - alpha[1178].astype(np.int16))
+            rgb_seam = np.abs(rgb[61].astype(np.int16) - rgb[1178].astype(np.int16))
+            assert float(alpha_seam.mean()) <= 2.0, name
+            assert float(rgb_seam.mean()) <= 5.0, name
 
 
 def test_stars_meteor_schedule_is_deterministic_and_rare() -> None:
@@ -72,7 +78,9 @@ def test_stars_and_aurora_material_motion_lighting_and_memory() -> None:
     for kind, motion_range in (("stars", (0.005, 0.18)), ("aurora", (0.02, 0.32))):
         first, decoded = _render(kind, NOW, 0.0)
         repeated, repeated_decoded = _render(kind, NOW, 0.0)
-        later, _ = _render(kind, NOW, 15.0)
+        motion_now = NOW.replace(hour=3) if kind == "aurora" else NOW
+        motion_first, _ = _render(kind, motion_now, 0.0)
+        later, _ = _render(kind, motion_now, 15.0)
         array = np.frombuffer(first, np.uint8).reshape(472, 1118, 3)
         sampled = array[::12, ::12].reshape(-1, 3)
         anchors = [_render(kind, NOW.replace(hour=hour), 5.0)[0] for hour in (3, 7, 12)]
@@ -81,6 +89,13 @@ def test_stars_and_aurora_material_motion_lighting_and_memory() -> None:
         assert decoded <= 48 * 1024 * 1024
         assert float(array.std()) >= 12.0
         assert len(np.unique(sampled, axis=0)) >= 160
-        ratio = _motion_ratio(first, later)
+        ratio = _motion_ratio(motion_first, later)
         assert motion_range[0] <= ratio <= motion_range[1], (kind, ratio)
-        assert len(set(anchors)) == 3
+        assert len(set(anchors)) == (1 if kind == "aurora" else 3)
+
+
+def test_aurora_uses_night_lighting_at_all_hours() -> None:
+    night, _ = _render("aurora", NOW.replace(hour=3), 15.0)
+    dawn, _ = _render("aurora", NOW.replace(hour=7), 15.0)
+    day, _ = _render("aurora", NOW, 15.0)
+    assert night == dawn == day

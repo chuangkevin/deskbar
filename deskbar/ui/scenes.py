@@ -24,7 +24,7 @@ from deskbar.ui.scene_train import TrainRenderer
 
 
 AREA: Final = Rect(402, 8, 1118, 472)
-FPS: Final = 10
+FPS: Final = 20
 ROTATE_S: Final = 600
 
 

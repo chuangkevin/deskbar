@@ -35,10 +35,15 @@ OVERLAYS = (
 )
 
 
-def _render(kind: str, now: datetime, t: float) -> tuple[bytes, int]:
+def _render(
+    kind: str,
+    now: datetime,
+    t: float,
+    weather_code: int = 1,
+) -> tuple[bytes, int]:
     surface = pygame.Surface((1920, 480))
     state = scenes.new_state()
-    scenes.render(surface, state, now, t, enabled=(kind,), weather_code=1)
+    scenes.render(surface, state, now, t, enabled=(kind,), weather_code=weather_code)
     crop = surface.subsurface((402, 8, 1118, 472))
     return pygame.image.tobytes(crop, "RGB"), state["renderer"].decoded_bytes
 
@@ -47,6 +52,12 @@ def _motion_ratio(first: bytes, second: bytes) -> float:
     a = np.frombuffer(first, np.uint8).reshape(472, 1118, 3).astype(np.int16)
     b = np.frombuffer(second, np.uint8).reshape(472, 1118, 3).astype(np.int16)
     return float((np.max(np.abs(a - b), axis=2) > 12).mean())
+
+
+def _mean_delta(first: bytes, second: bytes) -> float:
+    a = np.frombuffer(first, np.uint8).astype(np.int16)
+    b = np.frombuffer(second, np.uint8).astype(np.int16)
+    return float(np.abs(a - b).mean())
 
 
 def test_ridge_and_firefly_assets_cover_crop_without_alpha_edges() -> None:
@@ -62,7 +73,7 @@ def test_ridge_and_firefly_assets_cover_crop_without_alpha_edges() -> None:
 
 
 def test_ridges_and_fireflies_material_motion_lighting_and_memory() -> None:
-    for kind, motion_range in (("ridges", (0.01, 0.20)), ("fireflies", (0.01, 0.25))):
+    for kind, motion_range in (("ridges", (0.0, 0.08)), ("fireflies", (0.01, 0.25))):
         first, decoded = _render(kind, NOW, 0.0)
         repeated, repeated_decoded = _render(kind, NOW, 0.0)
         later, _ = _render(kind, NOW, 15.0)
@@ -70,6 +81,7 @@ def test_ridges_and_fireflies_material_motion_lighting_and_memory() -> None:
         sampled = array[::12, ::12].reshape(-1, 3)
         anchors = [_render(kind, NOW.replace(hour=hour), 5.0)[0] for hour in (3, 7, 12)]
         assert first == repeated
+        assert first != later
         assert decoded == repeated_decoded
         assert decoded <= 48 * 1024 * 1024
         assert float(array.std()) >= 12.0
@@ -79,6 +91,21 @@ def test_ridges_and_fireflies_material_motion_lighting_and_memory() -> None:
         assert len(set(anchors)) == 3
 
 
+def test_ridges_weather_materially_changes_atmosphere() -> None:
+    clear, _ = _render("ridges", NOW, 8.0, weather_code=0)
+    cloudy, _ = _render("ridges", NOW, 8.0, weather_code=3)
+    rain, _ = _render("ridges", NOW, 8.0, weather_code=63)
+    fog, _ = _render("ridges", NOW, 8.0, weather_code=45)
+
+    assert len({clear, cloudy, rain, fog}) == 4
+    assert _mean_delta(clear, cloudy) >= 0.75
+    assert _mean_delta(clear, rain) >= 1.5
+    assert _mean_delta(clear, fog) >= 2.5
+    assert _motion_ratio(clear, rain) >= 0.03
+    assert _motion_ratio(clear, fog) >= 0.03
+
+
 def test_ridges_runtime_has_no_per_frame_smoothscale() -> None:
     source = Path("deskbar/ui/scene_ridges.py").read_text(encoding="utf-8")
     assert "smoothscale" not in source
+    assert "BASE_X + offset" not in source

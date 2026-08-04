@@ -366,7 +366,7 @@ def test_glass_rain_layer_renders_on_top_of_clock_cards():
     st.set_weather(Weather(temp=30.0, code=61, tmax=33.0, tmin=27.0,
                            label="南港", fetched_at=NOW))
     snap = st.snapshot()
-    clock_zone = pygame.Rect(24, 34, 342, 96)     # flipclock 卡片帶
+    clock_zone = pygame.Rect(42, 34, 316, 96)     # 置中的 flipclock 卡片帶
     surfs = []
     for t in (9.5, WIPE_PERIOD_S - 0.5):          # 積滿 vs 剛刷完
         s = _surf()

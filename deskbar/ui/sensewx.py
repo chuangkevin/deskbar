@@ -22,7 +22,7 @@ from deskbar.ui.weatherfx import (CLEAR_CODES, CLOUD_CODES, FOG_CODES,
 
 import pygame
 
-CLOCK = pygame.Rect(24, 34, 316, 96)     # 與 _render_panel 的 flipclock 參數一致
+CLOCK = pygame.Rect(42, 34, 316, 96)     # 與 _render_panel 的 flipclock 參數一致
                                          # （無冒號卡：4 卡＋中央空隙 ≈ 316px）
 ASSET_DIR: Final = Path(__file__).resolve().parent.parent / "assets" / "scenes"
 _ASSETS = SceneAssets(ASSET_DIR)

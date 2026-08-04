@@ -79,7 +79,9 @@ def test_default_rotation_only_contains_visually_approved_scenes():
     # DESIGN.md §100：晨／晝／夜驗證圖經人工核可後才准入預設輪播。
     # 未核可的場景仍可在網頁手動勾選，只是不預設出現——這條測試把那道閘門釘住，
     # 免得日後新增場景時又順手塞回 SCENE_KEYS 全集。
-    assert config.DEFAULT_SCENES == ("flow", "stars", "ridges", "aurora", "planet_horizon")
+    assert config.DEFAULT_SCENES == ("stars", "planet_horizon")
     unapproved = set(config.SCENE_KEYS) - set(config.DEFAULT_SCENES)
-    assert unapproved == {"fireflies", "fish", "train", "runner", "ink"}
+    assert unapproved == {
+        "flow", "ridges", "fireflies", "fish", "aurora", "train", "runner", "ink",
+    }
     assert all(k in config.SCENE_KEYS for k in config.DEFAULT_SCENES)

@@ -20,10 +20,28 @@ PALETTES: Final = {
     "day": ((30, 76, 126), (139, 187, 210), (51, 69, 79), (175, 188, 189), (224, 246, 255)),
 }
 FLOW_PALETTES: Final = {
-    "night": ((3, 7, 18), (15, 34, 58), (71, 125, 194), (220, 139, 83)),
-    "dawn": ((27, 20, 34), (111, 61, 73), (232, 145, 97), (111, 192, 198)),
-    "day": ((18, 51, 71), (99, 151, 165), (219, 231, 213), (42, 105, 139)),
+    "night": (
+        (2, 5, 11), (7, 15, 22), (8, 27, 39),
+        (27, 87, 102), (94, 175, 177), (188, 101, 63),
+    ),
+    "dawn": (
+        (15, 8, 18), (29, 15, 27), (48, 25, 40),
+        (124, 59, 66), (213, 127, 91), (75, 151, 157),
+    ),
+    "day": (
+        (8, 24, 31), (15, 38, 43), (20, 55, 62),
+        (51, 107, 111), (151, 185, 168), (190, 119, 78),
+    ),
 }
+FLOW_CURVE: Final = (
+    (-0.08, 0.32),
+    (0.12, 0.12),
+    (0.28, 0.16),
+    (0.43, 0.55),
+    (0.58, 0.94),
+    (0.75, 0.82),
+    (1.08, 0.37),
+)
 
 
 def _color(rgb: tuple[int, int, int]) -> FloatArray:
@@ -66,6 +84,85 @@ def _planet_layers(seed: int) -> tuple[FloatArray, FloatArray, FloatArray, Float
     rim_alpha = np.exp(-(edge / 3.0) ** 2) * np.clip(px * 0.75 + py * 0.55, 0.0, 1.0) ** 2
     rim_alpha = feather_alpha(np.asarray(rim_alpha, dtype=np.float32), 4, 4)
     return alpha, bands, illumination, rim_alpha
+
+
+def _cubic_segment(points: FloatArray, amount: FloatArray) -> FloatArray:
+    inverse = 1.0 - amount
+    return (
+        inverse[:, None] ** 3 * points[0]
+        + 3.0 * inverse[:, None] ** 2 * amount[:, None] * points[1]
+        + 3.0 * inverse[:, None] * amount[:, None] ** 2 * points[2]
+        + amount[:, None] ** 3 * points[3]
+    )
+
+
+def _flow_distance(width: int, height: int) -> tuple[FloatArray, FloatArray]:
+    """Return distance from, and progress along, one authored S-current."""
+    points = np.asarray(FLOW_CURVE, dtype=np.float32)
+    amount = np.linspace(0.0, 1.0, 768, dtype=np.float32)
+    first = _cubic_segment(points[:4], amount)
+    second = _cubic_segment(points[3:], amount)
+    curve = np.concatenate((first[:-1], second), axis=0)
+    columns = np.arange(width, dtype=np.float32)
+    center = np.interp(
+        columns,
+        curve[:, 0] * width,
+        curve[:, 1] * height,
+    ).astype(np.float32)
+    slope = np.gradient(center).astype(np.float32)
+    rows = np.arange(height, dtype=np.float32)[:, None]
+    distance = (rows - center[None, :]) / np.sqrt(1.0 + slope[None, :] ** 2)
+    progress = np.broadcast_to(columns[None, :] / width, (height, width))
+    return np.asarray(distance, dtype=np.float32), np.asarray(progress, dtype=np.float32)
+
+
+def _soft_band(distance: FloatArray, half_width: float, feather: float) -> FloatArray:
+    amount = np.clip(
+        (half_width + feather - np.abs(distance)) / (2.0 * feather),
+        0.0,
+        1.0,
+    )
+    return np.asarray(amount * amount * (3.0 - 2.0 * amount), dtype=np.float32)
+
+
+def _blend(rgb: FloatArray, color: tuple[int, int, int], amount: FloatArray) -> FloatArray:
+    return (
+        rgb * (1.0 - amount[..., None])
+        + _color(color)[None, None, :] * amount[..., None]
+    )
+
+
+def _flow_brush(index: int, width: int, height: int) -> FloatArray:
+    y, x = np.mgrid[0:height, 0:width].astype(np.float32)
+    dx = x - width * 0.5
+    dy = y - height * 0.5
+    half_length = (148.0, 104.0)[index]
+    unit_x = dx / half_length
+    taper = np.clip(1.0 - np.abs(unit_x), 0.0, 1.0)
+    taper = taper * taper * (3.0 - 2.0 * taper)
+    generator = np.random.default_rng(6840 + index)
+    control_x = np.linspace(-1.0, 1.0, 15, dtype=np.float32)
+    control_strength = generator.uniform(0.48, 1.0, len(control_x)).astype(np.float32)
+    dry_brush = np.interp(unit_x, control_x, control_strength).astype(np.float32)
+    alpha = np.zeros((height, width), dtype=np.float32)
+    offsets = ((-11.0, -3.0, 4.0, 11.0), (-7.0, -1.0, 5.0))[index]
+    for fiber, offset in enumerate(offsets):
+        bend = (fiber - len(offsets) * 0.5) * unit_x * unit_x * 1.5
+        thickness = 1.7 + (fiber % 2) * 0.9
+        alpha += (
+            np.exp(-0.5 * ((dy - offset - bend) / thickness) ** 2)
+            * (0.22 + fiber * 0.035)
+        )
+    body_width = (12.0, 8.0)[index]
+    alpha += np.exp(-0.5 * (dy / body_width) ** 2) * 0.18
+    alpha = np.clip(alpha * taper * dry_brush, 0.0, 0.92)
+    alpha = feather_alpha(np.asarray(alpha, dtype=np.float32), 8, 8)
+    cool = _color((101, 205, 213))
+    warm = _color((228, 139, 82))
+    rgb_color = warm if index == 0 else cool
+    luminance = (0.82 + dry_brush * 0.18)[..., None]
+    rgb = np.broadcast_to(rgb_color, (height, width, 3)).copy() * luminance
+    return _rgba(rgb, alpha)
 
 
 def generate_planet_assets(out: Path) -> None:
@@ -112,30 +209,83 @@ def generate_planet_assets(out: Path) -> None:
 def generate_flow_assets(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     width, height = WORK_SIZE
-    y, x = np.mgrid[0:height, 0:width].astype(np.float32)
-    noise = fbm(width, height, 6200, octaves=4, base=7)
-    warped = np.sin(x * 0.010 + np.sin(y * 0.012) * 3.4 + noise * 5.0)
-    ribbons = np.exp(-np.abs(warped) * 5.5)
-    for name, (top, bottom, first, second) in FLOW_PALETTES.items():
+    distance, progress = _flow_distance(width, height)
+    broad_noise = fbm(width, height, 6200, octaves=4, base=5)
+    detail = fbm(width, height, 6490, octaves=4, base=17)
+    edge_warp = (broad_noise - 0.5) * height * 0.025 + (detail - 0.5) * height * 0.008
+    outer = _soft_band(distance + edge_warp, height * 0.155, height * 0.045)
+    main = _soft_band(distance + edge_warp * 0.72, height * 0.088, height * 0.022)
+    upper = _soft_band(
+        distance + height * 0.112 + edge_warp * 0.45,
+        height * 0.034,
+        height * 0.014,
+    )
+    lower = _soft_band(
+        distance - height * 0.112 + edge_warp * 0.38,
+        height * 0.027,
+        height * 0.012,
+    )
+    upper_span = np.clip(
+        0.24 + np.exp(-((progress - 0.38) / 0.33) ** 2),
+        0.0,
+        1.0,
+    )
+    lower_span = np.clip(
+        np.exp(-((progress - 0.66) / 0.29) ** 2)
+        + np.exp(-((progress - 0.08) / 0.12) ** 2) * 0.46,
+        0.0,
+        1.0,
+    )
+    granulation = 0.66 + broad_noise * 0.24 + detail * 0.10
+    for name, (top, bottom, shadow, ink, light, warm) in FLOW_PALETTES.items():
         base = _vertical_gradient(top, bottom)
-        accent_amount = np.clip(ribbons * 0.38 + (noise - 0.5) * 0.16, 0.0, 0.52)
-        accent = _color(first)[None, None, :] * (0.55 + noise[..., None] * 0.45)
-        base = base * (1.0 - accent_amount[..., None]) + accent * accent_amount[..., None]
-        glow = np.exp(-((y - height * 0.66) / (height * 0.34)) ** 2)[..., None]
-        base += glow * _color(second)[None, None, :] * 0.08
-        save_rgba(out / f"flow_base_{name}.png", _rgba(base, np.ones((height, width), np.float32)), False)
-    filament = np.exp(-np.abs(np.sin(x * 0.014 + np.sin(y * 0.019) * 2.2 + noise * 7.0)) * 10.0)
-    veil_alpha = feather_alpha(np.asarray(filament * (0.10 + noise * 0.22), np.float32), 72, 32)
-    veil_rgb = _color((104, 205, 224))[None, None, :] * (0.55 + noise[..., None] * 0.45)
+        base *= (0.92 + broad_noise[..., None] * 0.11)
+        base = _blend(base, shadow, outer * (0.19 + broad_noise * 0.12))
+        base = _blend(base, ink, main * granulation * 0.78)
+        base = _blend(base, light, upper * upper_span * (0.47 + detail * 0.23))
+        base = _blend(base, warm, lower * lower_span * (0.50 + broad_noise * 0.22))
+        wet_glint = _soft_band(
+            distance + height * 0.040 + (detail - 0.5) * height * 0.010,
+            height * 0.006,
+            height * 0.004,
+        )
+        base = _blend(base, light, wet_glint * (0.12 + detail * 0.18))
+        save_rgba(
+            out / f"flow_base_{name}.png",
+            _rgba(base, np.ones((height, width), np.float32)),
+            False,
+        )
+
+    generator = np.random.default_rng(6720)
+    veil_alpha = np.zeros((height, width), dtype=np.float32)
+    offsets = (-0.105, -0.073, -0.040, -0.014, 0.018, 0.052, 0.091)
+    columns = np.arange(width, dtype=np.float32) / width
+    control_x = np.linspace(0.0, 1.0, 13, dtype=np.float32)
+    for index, offset in enumerate(offsets):
+        controls = generator.normal(0.0, height * 0.006, len(control_x)).astype(np.float32)
+        jitter = np.interp(columns, control_x, controls).astype(np.float32)[None, :]
+        thickness = height * (0.0015 + (index % 3) * 0.00045)
+        fiber = np.exp(
+            -0.5 * ((distance - height * offset - jitter) / thickness) ** 2
+        )
+        center = 0.18 + index * 0.105
+        span = np.clip(
+            np.exp(-((progress - center) / (0.34 + index % 2 * 0.10)) ** 2) * 1.3,
+            0.0,
+            1.0,
+        )
+        tooth = 0.42 + detail * 0.58
+        veil_alpha += fiber * span * tooth * (0.20 + (index % 2) * 0.07)
+    veil_alpha = feather_alpha(np.clip(veil_alpha, 0.0, 0.70), 120, 48)
+    warm_mix = np.clip(0.45 + distance / (height * 0.30), 0.0, 1.0)[..., None]
+    cool = _color((94, 202, 211))[None, None, :]
+    warm = _color((221, 132, 78))[None, None, :]
+    veil_rgb = (cool * (1.0 - warm_mix) + warm * warm_mix) * (
+        0.82 + detail[..., None] * 0.18
+    )
     save_rgba(out / "flow_filament_veil.png", _rgba(veil_rgb, veil_alpha), True)
-    for index, color in enumerate(((231, 151, 92), (108, 205, 222))):
-        center_x, center_y = width * 0.5, height * 0.5
-        dx, dy = (x - center_x) / 96.0, (y - center_y) / 28.0
-        brush = np.exp(-(dx * dx + dy * dy) * 1.8)
-        bristles = 0.42 + 0.58 * np.clip(np.sin((y - center_y) * (0.42 + index * 0.08)) * 2.0, 0.0, 1.0)
-        brush_alpha = feather_alpha(np.asarray(brush * bristles * 0.88, np.float32), 4, 4)
-        brush_rgb = np.broadcast_to(_color(color), (height, width, 3)).copy()
-        save_rgba(out / f"flow_brush_{index}.png", _rgba(brush_rgb, brush_alpha), True)
+    for index in range(2):
+        save_rgba(out / f"flow_brush_{index}.png", _flow_brush(index, width, height), True)
 
 
 def generate_planet_flow_assets(out: Path) -> None:

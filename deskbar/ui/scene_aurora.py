@@ -3,33 +3,19 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
 from pathlib import Path
 from typing import Final
 
 import pygame
 
-from deskbar.ui.scene_assets import MasterBlend, SceneAssets
+from deskbar.ui.scene_assets import SceneAssets
 from deskbar.ui.scene_runtime import SceneFrame
 
 
 ASSET_DIR: Final = Path(__file__).resolve().parent.parent / "assets" / "scenes"
 BASE_X: Final = -(1240 - 1118) // 2
-
-
-def _lighting(now: datetime) -> tuple[str, str, float]:
-    hour = now.hour + now.minute / 60.0
-    if 5.0 <= hour < 7.0:
-        return "night", "dawn", (hour - 5.0) / 2.0
-    if 7.0 <= hour < 8.5:
-        return "dawn", "day", (hour - 7.0) / 1.5
-    if 8.5 <= hour < 16.5:
-        return "day", "day", 0.0
-    if 16.5 <= hour < 18.0:
-        return "day", "dawn", (hour - 16.5) / 1.5
-    if 18.0 <= hour < 20.0:
-        return "dawn", "night", (hour - 18.0) / 2.0
-    return "night", "night", 0.0
+TILE_X: Final = -BASE_X
+TILE_WIDTH: Final = 1118
 
 
 class AuroraRenderer:
@@ -43,22 +29,24 @@ class AuroraRenderer:
         return self._assets.decoded_bytes
 
     def render(self, panel: pygame.Surface, frame: SceneFrame) -> None:
-        first, second, amount = _lighting(frame.now)
-        base = self._assets.blended(
-            MasterBlend(f"aurora_base_{first}", f"aurora_base_{second}", amount)
-        )
-        panel.blit(base, (BASE_X, 0))
+        panel.blit(self._assets.load("aurora_base_night"), (BASE_X, 0))
         specifications = (
-            (0, 104.0, 16.0, 175, 0.0),
-            (1, 79.0, 26.0, 160, 1.8),
-            (2, 61.0, 38.0, 145, 3.6),
+            (0, 7.2, 218, 0.08, 19.0, 0.0),
+            (1, 10.6, 238, 0.41, 16.0, 1.8),
+            (2, 14.1, 224, 0.72, 13.0, 3.6),
         )
-        for index, period, amplitude, base_alpha, phase in specifications:
+        tile_area = pygame.Rect(TILE_X, 0, TILE_WIDTH, 472)
+        for index, speed, base_alpha, start, breathe_period, phase in specifications:
             curtain = self._assets.load(f"aurora_curtain_{index}")
-            offset = round(math.sin(frame.t * math.tau / period + phase) * amplitude)
-            breathe = math.sin(frame.t * math.tau / (17.0 + index * 3.0) + phase)
-            curtain.set_alpha(base_alpha + round(breathe * 28.0))
-            panel.blit(curtain, (BASE_X + offset, 0))
+            breathe = math.sin(frame.t * math.tau / breathe_period + phase)
+            curtain.set_alpha(round(base_alpha + breathe * 12.0))
+            vertical = round(
+                math.sin(frame.t * math.tau / (23.0 + index * 4.0) + phase) * 2.0
+            )
+            left = -round((frame.t * speed + start * TILE_WIDTH) % TILE_WIDTH)
+            while left < panel.get_width():
+                panel.blit(curtain, (left, vertical), tile_area)
+                left += TILE_WIDTH
 
     def close(self) -> None:
         self._assets.close()

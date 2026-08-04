@@ -332,8 +332,10 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
 
     @app.post("/api/usage")
     def push_usage():
-        """Mac 上的 agent 每 60 秒讀本機 Keychain 的 Claude Code 憑證、打 usage
-        API，主動 POST 這支端點推 usage 過來——deskbar 本身不再持有任何憑證、
+        """Mac agent 定期讀本機 Claude Code 憑證並把 usage 快照推到這支端點。
+
+        Agent 可重送本機快取；fetched_at 保留原始抓取時間，避免重送舊快取時把資料
+        偽裝成新鮮。deskbar 本身不持有任何憑證、
         不對外發任何請求（見 deskbar.claudeusage 檔頭說明）。跟 /api/alarms 一樣
         在區網/tailnet 內預設無認證；設了 DESKBAR_PUSH_TOKEN 環境變數才要求
         X-Deskbar-Token 相符，避免同網段裝置誤打這支端點污染畫面。"""
@@ -352,6 +354,13 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
         for f in _RESETS_FIELDS:
             if not _valid_resets_at(d.get(f)):
                 return jsonify({"error": f"invalid {f}"}), 400
+        if "fetched_at" in d and not _valid_resets_at(d.get("fetched_at")):
+            return jsonify({"error": "invalid fetched_at"}), 400
+
+        fetched_at = _parse_dt(d.get("fetched_at")) \
+            if d.get("fetched_at") is not None else datetime.now(_USAGE_TZ)
+        if fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=_USAGE_TZ)
 
         info = UsageInfo(
             session_pct=_to_float(d.get("session_pct")),
@@ -360,7 +369,7 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             weekly_resets_at=_parse_dt(d.get("weekly_resets_at")),
             fable_pct=_to_float(d.get("fable_pct")),
             fable_resets_at=_parse_dt(d.get("fable_resets_at")),
-            fetched_at=datetime.now(_USAGE_TZ),
+            fetched_at=fetched_at,
         )
         usage_state.set_usage(info)
         return "", 204
