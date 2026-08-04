@@ -47,6 +47,27 @@ def test_post_usage_returns_204_and_writes_state(alarm_store):
     assert usage.weekly_resets_at is not None
     assert usage.fable_resets_at is not None
     assert isinstance(usage.fetched_at, datetime)
+    # 向後相容：未帶 AG 欄位時預設為 None
+    assert usage.ag_5h_pct is None
+    assert usage.ag_5h_resets_at is None
+    assert usage.ag_weekly_pct is None
+    assert usage.ag_weekly_resets_at is None
+
+
+def test_post_usage_with_antigravity_fields_success(alarm_store):
+    state = AppState()
+    client = create_app(alarm_store, usage_state=state).test_client()
+
+    payload = dict(VALID_PAYLOAD,
+                   ag_5h_pct=35.76, ag_5h_resets_at="2026-08-04T18:00:00Z",
+                   ag_weekly_pct=5.96, ag_weekly_resets_at="2026-08-11T00:00:00Z")
+    r = client.post("/api/usage", json=payload)
+    assert r.status_code == 204
+    usage = state.snapshot().usage
+    assert usage.ag_5h_pct == 35.76
+    assert usage.ag_weekly_pct == 5.96
+    assert usage.ag_5h_resets_at is not None
+    assert usage.ag_weekly_resets_at is not None
 
 
 def test_post_usage_allows_all_null_fields(alarm_store):
@@ -55,12 +76,16 @@ def test_post_usage_allows_all_null_fields(alarm_store):
 
     payload = {"session_pct": None, "session_resets_at": None,
               "weekly_pct": None, "weekly_resets_at": None,
-              "fable_pct": None, "fable_resets_at": None}
+              "fable_pct": None, "fable_resets_at": None,
+              "ag_5h_pct": None, "ag_5h_resets_at": None,
+              "ag_weekly_pct": None, "ag_weekly_resets_at": None}
     r = client.post("/api/usage", json=payload)
     assert r.status_code == 204
     usage = state.snapshot().usage
     assert usage.session_pct is None
     assert usage.fable_resets_at is None
+    assert usage.ag_5h_pct is None
+    assert usage.ag_weekly_pct is None
 
 
 def test_post_usage_preserves_cached_fetched_at(alarm_store):
@@ -106,7 +131,7 @@ def test_post_usage_non_dict_body_returns_400(alarm_store):
                        content_type="text/plain").status_code == 400
 
 
-@pytest.mark.parametrize("field", ["session_pct", "weekly_pct", "fable_pct"])
+@pytest.mark.parametrize("field", ["session_pct", "weekly_pct", "fable_pct", "ag_5h_pct", "ag_weekly_pct"])
 def test_post_usage_pct_not_a_number_returns_400(alarm_store, field):
     state = AppState()
     client = create_app(alarm_store, usage_state=state).test_client()
@@ -114,7 +139,7 @@ def test_post_usage_pct_not_a_number_returns_400(alarm_store, field):
     assert client.post("/api/usage", json=payload).status_code == 400
 
 
-@pytest.mark.parametrize("field", ["session_pct", "weekly_pct", "fable_pct"])
+@pytest.mark.parametrize("field", ["session_pct", "weekly_pct", "fable_pct", "ag_5h_pct", "ag_weekly_pct"])
 def test_post_usage_pct_bool_returns_400(alarm_store, field):
     state = AppState()
     client = create_app(alarm_store, usage_state=state).test_client()
@@ -124,6 +149,7 @@ def test_post_usage_pct_bool_returns_400(alarm_store, field):
 
 @pytest.mark.parametrize("field,value", [
     ("session_pct", -1), ("weekly_pct", 101), ("fable_pct", 1000),
+    ("ag_5h_pct", -0.1), ("ag_weekly_pct", 100.1),
 ])
 def test_post_usage_pct_out_of_range_returns_400(alarm_store, field, value):
     state = AppState()
@@ -134,6 +160,7 @@ def test_post_usage_pct_out_of_range_returns_400(alarm_store, field, value):
 
 @pytest.mark.parametrize("field", [
     "session_resets_at", "weekly_resets_at", "fable_resets_at",
+    "ag_5h_resets_at", "ag_weekly_resets_at",
 ])
 def test_post_usage_unparseable_resets_at_returns_400(alarm_store, field):
     state = AppState()
@@ -144,6 +171,7 @@ def test_post_usage_unparseable_resets_at_returns_400(alarm_store, field):
 
 @pytest.mark.parametrize("field", [
     "session_resets_at", "weekly_resets_at", "fable_resets_at",
+    "ag_5h_resets_at", "ag_weekly_resets_at",
 ])
 def test_post_usage_resets_at_wrong_type_returns_400(alarm_store, field):
     state = AppState()

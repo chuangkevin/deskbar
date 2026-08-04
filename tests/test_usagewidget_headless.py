@@ -1,5 +1,5 @@
-"""右欄 usage 油表（deskbar.ui.usagewidget）：三組渲染、分級顏色、
-未連結/需重新登入狀態、以及右欄內容不越界（不早於 x=1540、不晚於 x=1900）。"""
+"""右欄 usage 油表（deskbar.ui.usagewidget）：Claude Code 與 Antigravity 兩區塊渲染、
+分級顏色、未連結/需重新登入狀態、以及右欄內容不越界。"""
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -18,12 +18,15 @@ def _surf():
     return s
 
 
-def _usage(session_pct=42.0, weekly_pct=61.0, fable_pct=12.0, fetched_at=None):
+def _usage(session_pct=42.0, weekly_pct=61.0, fable_pct=12.0, fetched_at=None,
+           ag_5h_pct=None, ag_weekly_pct=None):
     return UsageInfo(
         session_pct=session_pct, session_resets_at=NOW + timedelta(hours=2, minutes=3),
         weekly_pct=weekly_pct, weekly_resets_at=NOW + timedelta(days=1, hours=4),
         fable_pct=fable_pct, fable_resets_at=NOW + timedelta(hours=1),
         fetched_at=fetched_at if fetched_at is not None else NOW,
+        ag_5h_pct=ag_5h_pct, ag_5h_resets_at=NOW + timedelta(hours=3),
+        ag_weekly_pct=ag_weekly_pct, ag_weekly_resets_at=NOW + timedelta(days=5),
     )
 
 
@@ -38,7 +41,7 @@ def _scan_ink_outside(surf, x_lo, x_hi, bg):
     return bad
 
 
-# ---------------------------------------------------------------- 三組渲染
+# ---------------------------------------------------------------- 三組/兩區塊渲染
 
 
 def test_render_three_groups_draws_ink_for_each_group():
@@ -62,6 +65,43 @@ def test_fable_group_skipped_when_no_data():
     assert not row_has_ink, "FABLE 無資料時第三組不該畫任何東西"
 
 
+def test_antigravity_section_rendered_when_ag_data_present():
+    surf = _surf()
+    usage = _usage(ag_5h_pct=64.24, ag_weekly_pct=94.04)
+    usagewidget.render(surf, usage, NOW, 1540, 360)
+    bg = theme.C["bg"]
+    ag_has_ink = any(
+        surf.get_at((x, 212))[:3] != bg for x in range(1540, 1900, 2))
+    assert ag_has_ink, "有 AG 資料時應該畫出 ANTIGRAVITY · GEMINI 標題區塊"
+
+
+def test_antigravity_section_skipped_when_ag_data_is_none():
+    surf = _surf()
+    usage = _usage(ag_5h_pct=None, ag_weekly_pct=None)
+    usagewidget.render(surf, usage, NOW, 1540, 360)
+    bg = theme.C["bg"]
+    ag_has_ink = any(
+        surf.get_at((x, y))[:3] != bg
+        for y in range(195, 350, 4)
+        for x in range(1540, 1900, 4)
+    )
+    assert not ag_has_ink, "AG 兩個 pct 皆 None 時完全不畫該區塊（含分隔線與標題）"
+
+
+def test_layout_bottom_never_exceeds_y352():
+    surf = _surf()
+    usage = _usage(fable_pct=12.0, ag_5h_pct=64.24, ag_weekly_pct=94.04)
+    usagewidget.render(surf, usage, NOW, 1540, 360)
+    bg = theme.C["bg"]
+    overshoot = [
+        (x, y)
+        for y in range(353, 480, 2)
+        for x in range(1540, 1900, 2)
+        if surf.get_at((x, y))[:3] != bg
+    ]
+    assert not overshoot, f"版面最深超過 y=352：{overshoot[:10]}"
+
+
 # ---------------------------------------------------------------- 分級顏色
 
 
@@ -69,13 +109,11 @@ def _bar_fill_pixel(surf, group_index=0):
     x0 = 1540
     y = usagewidget.GROUP_START_Y + group_index * usagewidget.GROUP_STEP
     bar_x = x0 + usagewidget.BAR_MARGIN
-    bar_y = y + 26
+    bar_y = y + 24
     return surf.get_at((bar_x + 5, bar_y + usagewidget.BAR_H // 2))[:3]
 
 
 def test_bar_color_normal_use_is_claude_orange():
-    # 配速內的正常用量一律 Claude 珊瑚橘（2026-08-03 起新增線性配速判定：
-    # 用量進度 > 時間進度＋5pt 緩衝＝紅，所以這裡的 pct 都取在配速線以下）
     for pct in (20.0, 40.0, 55.0):
         surf = _surf()
         usagewidget.render(surf, _usage(session_pct=pct), NOW, 1540, 360)
@@ -85,7 +123,7 @@ def test_bar_color_normal_use_is_claude_orange():
 def test_bar_color_warn_tier_above_85_percent():
     surf = _surf()
     usagewidget.render(surf, _usage(session_pct=90.0), NOW, 1540, 360)
-    assert _bar_fill_pixel(surf) == theme.C["warn"]
+    assert _bar_fill_pixel(surf) == theme.C["usage_warn"]
 
 
 # ---------------------------------------------------------------- 狀態：None／stale／very stale
@@ -98,9 +136,8 @@ def test_none_usage_shows_not_pushed_hint():
     has_ink = any(
         surf.get_at((x, 220))[:3] != bg for x in range(1540, 1900, 2))
     assert has_ink, "usage 未推送時應該在中央畫出提示文字"
-    # None 狀態不畫任何橫條（第一組橫條理應存在的位置應該還是純背景色）。
     card_probe = surf.get_at((1540 + usagewidget.BAR_MARGIN + 5,
-                              usagewidget.GROUP_START_Y + 26 + usagewidget.BAR_H // 2))[:3]
+                              usagewidget.GROUP_START_Y + 24 + usagewidget.BAR_H // 2))[:3]
     assert card_probe == bg
 
 
@@ -128,10 +165,10 @@ def test_fresh_fetched_at_shows_no_minutes_ago_note():
 
 def test_very_stale_fetched_at_turns_bars_muted_gray():
     surf = _surf()
-    fresh = _usage(session_pct=90.0)   # 90% 正常時應該是 warn 色
+    fresh = _usage(session_pct=90.0)   # 90% 正常時應該是 usage_warn 色
     usagewidget.render(surf, fresh, NOW, 1540, 360)
     fresh_pixel = _bar_fill_pixel(surf)
-    assert fresh_pixel == theme.C["warn"]
+    assert fresh_pixel == theme.C["usage_warn"]
 
     surf2 = _surf()
     stale = _usage(session_pct=90.0, fetched_at=NOW - timedelta(hours=2))   # > VERY_STALE_AFTER_S(3600)

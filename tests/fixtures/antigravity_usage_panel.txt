@@ -1,0 +1,99 @@
+ [?2026$p [?2027$p [>4m [=0;1u [>4;2m [=1;1u
+ ▄▀▀▄
+ ▀▀▀▀▀▀
+ ▀▀▀▀▀▀▀▀
+   ▄▀▀    ▀▀▄
+  ▄▀▀      ▀▀▄
+
+ Welcome to the Antigravity CLI. You are currently not signed in.
+
+ ⣷  Signing in... ⣯  ⣟  ⡿  ⢿  ⣻  ⣽  ⣾  ⣷  ⣯  ⣟  ⡿  ⢿  [>4m [=0;1u [>4;2m [=1;1u [0 q
+ ▄▀▀▄
+ ▀▀▀▀▀▀
+ ▀▀▀▀▀▀▀▀
+ ▄▀▀    ▀▀▄
+   ▄▀▀      ▀▀▄
+
+   Antigravity CLI 1.1.10
+   user@example.com
+   Gemini 3.6 Flash (High)
+   /private/tmp/claude-501/-Users-kevin-Documents-Projects-deskbar/75b778d8-dec5-40cd-bd6a-937f313df1bf/scratchpad
+
+ ⚠ Warning
+   ⎿  "Gemini 3.1 Pro" is no longer available. Using "Gemini 3.6 Flash (High)".
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcutsGemini 3.6 Flash · high (Google AI Pro)       
+
+
+
+
+
+
+/us
+
+> /usage               View model quota usage
+  /statusline          Toggle the statusline
+  /agy-customizations  Comprehensive guide and reference for the Antigravity Customization System. Use to explain ho...
+
+  ↑/↓ Navigate · enter Select · tab Complete
+? for shortcutsGemini 3.6 Flash · high
+
+
+
+
+/usage
+
+ 
+
+  ↑/↓ Navigate · enter Select · tab Complete
+esc to cancelGemini 3.6 Flash · high
+
+
+
+esc to cancelGemini 3.6 Flash · high [0 q────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+└ Models & Quota
+
+  Account: user@example.com
+
+GEMINI MODELS
+  Models within this group: Gemini Flash, Gemini Pro
+
+  Weekly Limit
+[███████████████████████████████████████████████░░░] 94.04%
+    94% remaining · Refreshes in 164h 29m
+
+  Five Hour Limit
+    [████████████████████████████████░░░░░░░░░░░░░░░░░░] 64.24%
+    64% remaining · Refreshes in 1h 29m
+
+
+CLAUDE AND GPT MODELS
+  Models within this group: Claude Opus, Claude Sonnet, GPT-OSS
+
+  Weekly Limit
+    [█████████████████████████████████░░░░░░░░░░░░░░░░░] 66.03%
+    66% remaining · Refreshes in 164h 32m
+
+  Five Hour Limit
+    [░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 0.00%
+    Refreshes in 1h 32m
+
+
+  │Within each group, models share a weekly limit and a 5-hour limit. Quota is
+  │consumed proportionally to the cost of the tokens. Thus, limits will last
+  │longer with shorter tasks or using more cost-effective models. The 5-hour
+  │limit smooths out aggregate demand to fairly distribute global capacity
+  │across all users, while your weekly limit is tied directly to your individual
+  │tier.
+
+  ↑/↓ Scroll · pgup/pgdown Page · ctrl+end Bottom · ctrl+home Top · esc Close
+? for shortcutsGemini 3.6 Flash · high G1m
+
+
+
+1m

@@ -10,11 +10,24 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
+
+try:
+    from tools.antigravity_usage import fetch_usage_text, parse_usage_panel
+except ImportError:
+    try:
+        from antigravity_usage import fetch_usage_text, parse_usage_panel
+    except ImportError:
+        try:
+            from .antigravity_usage import fetch_usage_text, parse_usage_panel
+        except ImportError:
+            fetch_usage_text = None
+            parse_usage_panel = None
 
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
@@ -24,8 +37,97 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
 CACHE_PATH = Path.home() / ".deskbar-agent" / "usage_cache.json"
 DEFAULT_FETCH_INTERVAL = 300.0
 DEFAULT_PUSH_INTERVAL = 60.0
+DEFAULT_AG_INTERVAL = 300.0
 INITIAL_RATE_LIMIT_BACKOFF = 900.0
 MAX_RATE_LIMIT_BACKOFF = 3600.0
+
+_AG_LOCK = threading.Lock()
+_AG_FETCHING_LOCK = threading.Lock()
+_AG_FETCHING = False
+_AG_LATEST: dict = {
+    "ag_5h_pct": None,
+    "ag_5h_resets_at": None,
+    "ag_weekly_pct": None,
+    "ag_weekly_resets_at": None,
+}
+
+
+def ag_payload_fields(parsed: dict | None, now: datetime) -> dict:
+    """純函數：將 parse_usage_panel 輸出換算為 deskbar payload 欄位。"""
+    if not parsed or not isinstance(parsed, dict):
+        parsed = {}
+
+    rem_5h = parsed.get("gemini_5h_remaining")
+    ref_5h = parsed.get("gemini_5h_refresh_min")
+    rem_wk = parsed.get("gemini_weekly_remaining")
+    ref_wk = parsed.get("gemini_weekly_refresh_min")
+
+    ag_5h_pct = (100 - rem_5h) if rem_5h is not None else None
+    ag_weekly_pct = (100 - rem_wk) if rem_wk is not None else None
+
+    ag_5h_resets_at = (
+        (now + timedelta(minutes=ref_5h)).isoformat()
+        if ref_5h is not None
+        else None
+    )
+    ag_weekly_resets_at = (
+        (now + timedelta(minutes=ref_wk)).isoformat()
+        if ref_wk is not None
+        else None
+    )
+
+    return {
+        "ag_5h_pct": ag_5h_pct,
+        "ag_5h_resets_at": ag_5h_resets_at,
+        "ag_weekly_pct": ag_weekly_pct,
+        "ag_weekly_resets_at": ag_weekly_resets_at,
+    }
+
+
+def get_antigravity_fields() -> dict:
+    """持鎖回傳 _AG_LATEST 的複本。"""
+    with _AG_LOCK:
+        return dict(_AG_LATEST)
+
+
+def _ag_worker() -> None:
+    global _AG_FETCHING
+    try:
+        if fetch_usage_text is None or parse_usage_panel is None:
+            return
+        text = fetch_usage_text()
+        if not text:
+            print("[Antigravity] 抓取文字為空，保留上一次用量資料")
+            return
+        parsed = parse_usage_panel(text)
+        if not parsed or not any(v is not None for v in parsed.values()):
+            print("[Antigravity] 解析結果全空，保留上一次用量資料")
+            return
+        now = datetime.now().astimezone()
+        fields = ag_payload_fields(parsed, now)
+        with _AG_LOCK:
+            _AG_LATEST.update(fields)
+    except Exception as error:
+        print(f"[Antigravity] 抓取時發生例外：{error}")
+    finally:
+        with _AG_FETCHING_LOCK:
+            global _AG_FETCHING
+            _AG_FETCHING = False
+
+
+def refresh_antigravity_async() -> threading.Thread | None:
+    """在背景執行緒異步刷新 Antigravity 用量。若已有抓取在跑則直接略過。"""
+    global _AG_FETCHING
+    if fetch_usage_text is None or parse_usage_panel is None:
+        return None
+    with _AG_FETCHING_LOCK:
+        if _AG_FETCHING:
+            return None
+        _AG_FETCHING = True
+
+    thread = threading.Thread(target=_ag_worker, daemon=True)
+    thread.start()
+    return thread
 
 
 class RateLimitedError(RuntimeError):
@@ -93,7 +195,7 @@ def fetch_usage(token: str) -> dict:
         raise SystemExit(f"usage API 回應不是合法 JSON：{error}")
 
 
-def build_payload(usage: dict) -> dict:
+def build_payload(usage: dict, enable_antigravity: bool = True) -> dict:
     five_hour = usage.get("five_hour") or {}
     seven_day = usage.get("seven_day") or {}
     fable_pct, fable_resets_at = None, None
@@ -102,7 +204,7 @@ def build_payload(usage: dict) -> dict:
             fable_pct = limit.get("percent")
             fable_resets_at = limit.get("resets_at")
             break
-    return {
+    payload = {
         "session_pct": five_hour.get("utilization"),
         "session_resets_at": five_hour.get("resets_at"),
         "weekly_pct": seven_day.get("utilization"),
@@ -111,6 +213,9 @@ def build_payload(usage: dict) -> dict:
         "fable_resets_at": fable_resets_at,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
+    if enable_antigravity:
+        payload.update(get_antigravity_fields())
+    return payload
 
 
 def load_cache(path: Path = CACHE_PATH) -> dict | None:
@@ -144,14 +249,25 @@ def push(payload: dict, url: str, token: str | None) -> None:
 
 
 def _summary(payload: dict) -> str:
-    return (
+    summary = (
         f"5h {payload.get('session_pct')}%  週 {payload.get('weekly_pct')}%  "
         f"fable {payload.get('fable_pct')}%"
     )
+    if "ag_5h_pct" in payload:
+        summary += (
+            f"  AG 5h {payload.get('ag_5h_pct')}%  "
+            f"AG 週 {payload.get('ag_weekly_pct')}%"
+        )
+    return summary
 
 
-def one_cycle(url: str, token: str | None) -> dict:
-    payload = build_payload(fetch_usage(load_access_token()))
+def one_cycle(
+    url: str, token: str | None, enable_antigravity: bool = True
+) -> dict:
+    payload = build_payload(
+        fetch_usage(load_access_token()),
+        enable_antigravity=enable_antigravity,
+    )
     save_cache(payload)
     push(payload, url, token)
     print(f"已抓取並推送：{_summary(payload)}")
@@ -163,17 +279,33 @@ def run_loop(
     token: str | None,
     fetch_interval: float,
     push_interval: float,
+    ag_interval: float = DEFAULT_AG_INTERVAL,
+    enable_antigravity: bool = True,
 ) -> None:
     cached = load_cache()
     next_fetch = 0.0
     next_push = 0.0
+    next_ag = 0.0
     rate_limit_backoff = INITIAL_RATE_LIMIT_BACKOFF
+    ag_status = (
+        f"Antigravity {ag_interval:g} 秒"
+        if (enable_antigravity and fetch_usage_text is not None)
+        else "Antigravity 已關閉"
+    )
     print(
-        f"常駐模式啟動（Anthropic {fetch_interval:g} 秒、deskbar {push_interval:g} 秒）"
+        f"常駐模式啟動（Anthropic {fetch_interval:g} 秒、deskbar {push_interval:g} 秒、{ag_status}）"
     )
     while True:
         now = time.monotonic()
+
+        if enable_antigravity and now >= next_ag:
+            refresh_antigravity_async()
+            next_ag = now + ag_interval
+
+        now = time.monotonic()
         if cached is not None and now >= next_push:
+            if enable_antigravity:
+                cached.update(get_antigravity_fields())
             try:
                 push(cached, url, token)
                 print(f"已補送快取：{_summary(cached)}")
@@ -184,22 +316,31 @@ def run_loop(
         now = time.monotonic()
         if now >= next_fetch:
             try:
-                cached = one_cycle(url, token)
+                cached = one_cycle(
+                    url, token, enable_antigravity=enable_antigravity
+                )
                 next_fetch = now + fetch_interval
                 next_push = now + push_interval
                 rate_limit_backoff = INITIAL_RATE_LIMIT_BACKOFF
             except RateLimitedError as error:
                 wait = max(rate_limit_backoff, error.retry_after or 0.0)
                 next_fetch = now + wait
-                rate_limit_backoff = min(rate_limit_backoff * 2.0,
-                                         MAX_RATE_LIMIT_BACKOFF)
-                print(f"Anthropic 429，{round(wait)} 秒後再抓；期間補送本機快取")
+                rate_limit_backoff = min(
+                    rate_limit_backoff * 2.0, MAX_RATE_LIMIT_BACKOFF
+                )
+                print(
+                    f"Anthropic 429，{round(wait)} 秒後再抓；期間補送本機快取"
+                )
             except SystemExit as error:
                 next_fetch = now + fetch_interval
                 print(f"抓取失敗：{error}；期間補送本機快取")
 
-        next_event = min(next_fetch, next_push if cached is not None else next_fetch)
-        time.sleep(max(1.0, min(5.0, next_event - time.monotonic())))
+        now = time.monotonic()
+        events = [next_fetch, next_push if cached is not None else next_fetch]
+        if enable_antigravity:
+            events.append(next_ag)
+        next_event = min(events)
+        time.sleep(max(1.0, min(5.0, next_event - now)))
 
 
 def main() -> None:
@@ -211,13 +352,27 @@ def main() -> None:
                         default=DEFAULT_FETCH_INTERVAL)
     parser.add_argument("--push-interval", type=float,
                         default=DEFAULT_PUSH_INTERVAL)
+    parser.add_argument("--ag-interval", type=float,
+                        default=DEFAULT_AG_INTERVAL)
+    parser.add_argument("--no-antigravity", action="store_true",
+                        help="停用 Antigravity 用量抓取")
     args = parser.parse_args()
 
+    enable_ag = not args.no_antigravity
+
     if args.loop:
-        run_loop(args.url, args.token, args.fetch_interval, args.push_interval)
+        run_loop(
+            args.url,
+            args.token,
+            args.fetch_interval,
+            args.push_interval,
+            ag_interval=args.ag_interval,
+            enable_antigravity=enable_ag,
+        )
     else:
-        one_cycle(args.url, args.token)
+        one_cycle(args.url, args.token, enable_antigravity=enable_ag)
 
 
 if __name__ == "__main__":
     main()
+

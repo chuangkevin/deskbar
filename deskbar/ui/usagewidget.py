@@ -1,17 +1,10 @@
-"""右欄：Claude Code usage 油表——三組（5H SESSION／本週／FABLE）橫條，唯讀顯示，
-不產生任何 Hit（純資訊面板，跟左欄時鐘/天氣一樣不可互動）。
+"""右欄：Claude Code 與 Antigravity (Gemini) usage 油表。
 
-usage 資料完全被動：Mac 上的 agent 每 60 秒讀本機 Keychain 的 Claude Code 憑證、
-打 usage API，主動 POST 到 deskbar 的 /api/usage（見 deskbar.webserver）；deskbar
-本身不持有任何憑證、不主動抓取（見 deskbar.claudeusage 檔頭說明）。
+全寬單欄、上下兩區：
+1. CLAUDE CODE 區：5H SESSION / 本週 / FABLE（FABLE 無資料時略過）
+2. ANTIGRAVITY · GEMINI 區：5H / 本週（無資料時整區略過，不畫分隔線與標題）
 
-兩種狀態：
-- usage is None：從沒收過推送（agent 沒在跑，或還沒送過第一筆）
-  → 中央提示「usage 未推送」＋「Mac agent 未執行」。
-- 其餘：畫三組（FABLE 沒有資料就整組略過，見上游 payload）。距上次推送
-  （fetched_at）超過 STALE_AFTER_S 秒，標題旁加「(N 分前)」；超過
-  VERY_STALE_AFTER_S 秒（代表 agent 可能已經停了很久），三組全部轉 muted 灰，
-  跟正常新鮮資料的分級色一眼區分開。
+usage 資料完全被動接收：Mac agent POST 到 deskbar 的 /api/usage。
 """
 from __future__ import annotations
 
@@ -22,15 +15,14 @@ import pygame
 from deskbar.claudeusage import WINDOW_S, fmt_countdown, over_pace, pace_pct
 from deskbar.ui import theme
 
-TITLE_Y = 60
-GROUP_START_Y = 100
-GROUP_STEP = 84
+TITLE_Y = 8               # 原本 60，整個版面上移 52px
+GROUP_START_Y = 30
+GROUP_STEP = 54           # 原本 84
 BAR_H = 12
 BAR_RADIUS = 6
-BAR_MARGIN = 20              # 橫條左右各留白，寬度＝欄寬-2*BAR_MARGIN，置中排列
-STALE_AFTER_S = 300          # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
-VERY_STALE_AFTER_S = 3600    # 超過這麼久，整組轉 muted 灰（agent 可能已經停了）
-
+BAR_MARGIN = 20           # 橫條 x = x0+20，寬 = w-40（維持全寬，不要縮成子欄）
+STALE_AFTER_S = 300       # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
+VERY_STALE_AFTER_S = 3600 # 超過這麼久，整組轉 muted 灰（agent 可能已經停了）
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft", bold=False):
@@ -46,11 +38,9 @@ def _center_text(surface, s, size, color, x0, w, cy):
 
 
 def _level_color(pct: float, over: bool = False):
-    # 正常用量一律 Claude 珊瑚橘；轉紅有兩個門：爆量（>85%）或「燒太快」
-    # ——用量進度超過視窗的時間進度（claudeusage.over_pace 線性配速，
-    # 例：weekly 才過 2 天就燒掉 50% ＝紅）。
+    # 正常用量一律 usage_bar 珊瑚橘；轉紅使用 usage_warn（針對低對比 TN 面板微調）。
     if over or pct > 85:
-        return theme.C["warn"]
+        return theme.C["usage_warn"]
     return theme.C["usage_bar"]
 
 
@@ -59,13 +49,13 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
                 window_s: float | None = None) -> None:
     label_color = theme.C["muted"] if muted else theme.C["text2"]
     pct_color = theme.C["muted"] if muted else theme.C["text"]
-    _text(surface, label, 18, label_color, x0, y)
+    _text(surface, label, 17, label_color, x0, y)
     pct_label = f"{round(pct)}%" if pct is not None else "—"
-    _text(surface, pct_label, 22, pct_color, x0 + w - 8, y - 4, "topright", bold=True)
+    _text(surface, pct_label, 20, pct_color, x0 + w, y - 3, "topright", bold=True)
 
     bar_x = x0 + BAR_MARGIN
     bar_w = w - 2 * BAR_MARGIN
-    bar_y = y + 26
+    bar_y = y + 24
     pygame.draw.rect(surface, theme.C["card"],
                      pygame.Rect(round(bar_x), round(bar_y), round(bar_w), BAR_H),
                      border_radius=BAR_RADIUS)
@@ -80,8 +70,6 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
         pygame.draw.rect(surface, fill_color,
                          pygame.Rect(round(bar_x), round(bar_y), round(fill_w), BAR_H),
                          border_radius=BAR_RADIUS)
-    # 配速刻度：此刻「應該」燒到哪的細豎線——條在刻度左邊＝有餘裕，
-    # 右邊＝超支（同時整條轉紅）
     if window_s is not None and not muted:
         pace = pace_pct(resets_at, now, window_s)
         if pace is not None:
@@ -90,16 +78,13 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
                              (round(px), round(bar_y - 3)),
                              (round(px), round(bar_y + BAR_H + 3)), 1)
 
-    # 不用「↻」之類的符號字形當前綴——比照 deskbar.ui.icons 的教訓（字型檔不一定
-    # 內建該字符，會畫成方塊），純文字「剩 …」在任何字型下都穩定可讀。
     countdown = fmt_countdown(resets_at, now)
-    _text(surface, f"剩 {countdown}", 16, theme.C["muted"], x0, bar_y + BAR_H + 8)
+    _text(surface, f"剩 {countdown}", 13, theme.C["muted"], x0, y + 38)
 
 
 def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360) -> None:
     """usage：deskbar.claudeusage.UsageInfo｜None（來自 Snapshot.usage）。
-    x0/w 由呼叫端（dashboard.py）帶入模組常量 USAGE_X0/USAGE_W，這裡的預設值
-    只是給獨立測試/工具方便，不代表版面權威定義。"""
+    x0/w 由呼叫端（dashboard.py）帶入模組常量 USAGE_X0/USAGE_W。"""
     _text(surface, "CLAUDE CODE", 16, theme.C["muted"], x0, TITLE_Y)
 
     if usage is None:
@@ -111,7 +96,7 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360) -> N
     muted = age > VERY_STALE_AFTER_S
     if age > STALE_AFTER_S:
         mins = int(age // 60)
-        _text(surface, f"({mins} 分前)", 16, theme.C["muted"], x0 + w - 8, TITLE_Y, "topright")
+        _text(surface, f"({mins} 分前)", 16, theme.C["muted"], x0 + w, TITLE_Y, "topright")
 
     groups = [
         ("5H SESSION", usage.session_pct, usage.session_resets_at,
@@ -127,3 +112,20 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360) -> N
         _draw_group(surface, x0, w, y, label, pct, resets_at, now, muted=muted,
                     window_s=win)
         y += GROUP_STEP
+
+    has_ag = (usage.ag_5h_pct is not None or usage.ag_weekly_pct is not None)
+    if has_ag:
+        y += 6
+        pygame.draw.line(surface, theme.C["panel_line"],
+                         (round(x0), round(y)), (round(x0 + w), round(y)), 1)
+        y += 10
+        _text(surface, "ANTIGRAVITY · GEMINI", 16, theme.C["muted"], x0, y)
+        y += 26
+        ag_groups = [
+            ("5H", usage.ag_5h_pct, usage.ag_5h_resets_at, WINDOW_S["ag_5h"]),
+            ("本週", usage.ag_weekly_pct, usage.ag_weekly_resets_at, WINDOW_S["ag_weekly"]),
+        ]
+        for label, pct, resets_at, win in ag_groups:
+            _draw_group(surface, x0, w, y, label, pct, resets_at, now, muted=muted,
+                        window_s=win)
+            y += GROUP_STEP

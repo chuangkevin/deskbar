@@ -14,8 +14,8 @@ from deskbar.presence import PresenceState
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _USAGE_TZ = ZoneInfo("Asia/Taipei")
-_PCT_FIELDS = ("session_pct", "weekly_pct", "fable_pct")
-_RESETS_FIELDS = ("session_resets_at", "weekly_resets_at", "fable_resets_at")
+_PCT_FIELDS = ("session_pct", "weekly_pct", "fable_pct", "ag_5h_pct", "ag_weekly_pct")
+_RESETS_FIELDS = ("session_resets_at", "weekly_resets_at", "fable_resets_at", "ag_5h_resets_at", "ag_weekly_resets_at")
 
 
 def _valid_pct(v) -> bool:
@@ -419,6 +419,10 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             fable_pct=_to_float(d.get("fable_pct")),
             fable_resets_at=_parse_dt(d.get("fable_resets_at")),
             fetched_at=fetched_at,
+            ag_5h_pct=_to_float(d.get("ag_5h_pct")),
+            ag_5h_resets_at=_parse_dt(d.get("ag_5h_resets_at")),
+            ag_weekly_pct=_to_float(d.get("ag_weekly_pct")),
+            ag_weekly_resets_at=_parse_dt(d.get("ag_weekly_resets_at")),
         )
         usage_state.set_usage(info)
         return "", 204

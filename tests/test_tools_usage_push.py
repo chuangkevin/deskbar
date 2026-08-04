@@ -139,3 +139,145 @@ def test_usage_demo_rate_limit_uses_retry_after(monkeypatch):
     with pytest.raises(demo.RateLimitedError) as caught:
         demo.fetch_usage("token")
     assert caught.value.retry_after == 720.0
+
+
+def test_ag_payload_fields_normal_conversion():
+    from datetime import datetime, timezone, timedelta
+    demo = _load_demo_module()
+
+    now = datetime(2026, 8, 4, 12, 0, 0, tzinfo=timezone.utc)
+    parsed = {
+        "gemini_5h_remaining": 64.24,
+        "gemini_5h_refresh_min": 89,
+        "gemini_weekly_remaining": 94.04,
+        "gemini_weekly_refresh_min": 9869,
+    }
+
+    res = demo.ag_payload_fields(parsed, now)
+
+    assert res["ag_5h_pct"] == pytest.approx(35.76)
+    assert res["ag_5h_resets_at"] == (now + timedelta(minutes=89)).isoformat()
+    assert res["ag_weekly_pct"] == pytest.approx(5.96)
+    assert res["ag_weekly_resets_at"] == (now + timedelta(minutes=9869)).isoformat()
+
+
+def test_ag_payload_fields_all_none_input():
+    from datetime import datetime, timezone
+    demo = _load_demo_module()
+
+    now = datetime(2026, 8, 4, 12, 0, 0, tzinfo=timezone.utc)
+    parsed = {
+        "gemini_5h_remaining": None,
+        "gemini_5h_refresh_min": None,
+        "gemini_weekly_remaining": None,
+        "gemini_weekly_refresh_min": None,
+    }
+
+    res = demo.ag_payload_fields(parsed, now)
+
+    assert set(res.keys()) == {
+        "ag_5h_pct",
+        "ag_5h_resets_at",
+        "ag_weekly_pct",
+        "ag_weekly_resets_at",
+    }
+    assert all(val is None for val in res.values())
+
+    res_empty = demo.ag_payload_fields({}, now)
+    assert set(res_empty.keys()) == {
+        "ag_5h_pct",
+        "ag_5h_resets_at",
+        "ag_weekly_pct",
+        "ag_weekly_resets_at",
+    }
+    assert all(val is None for val in res_empty.values())
+
+
+def test_ag_payload_fields_partially_filled():
+    from datetime import datetime, timezone, timedelta
+    demo = _load_demo_module()
+
+    now = datetime(2026, 8, 4, 12, 0, 0, tzinfo=timezone.utc)
+    parsed = {
+        "gemini_5h_remaining": 40.0,
+        "gemini_5h_refresh_min": 30,
+        "gemini_weekly_remaining": None,
+        "gemini_weekly_refresh_min": None,
+    }
+
+    res = demo.ag_payload_fields(parsed, now)
+
+    assert res["ag_5h_pct"] == pytest.approx(60.0)
+    assert res["ag_5h_resets_at"] == (now + timedelta(minutes=30)).isoformat()
+    assert res["ag_weekly_pct"] is None
+    assert res["ag_weekly_resets_at"] is None
+
+
+def test_build_payload_includes_ag_fields(monkeypatch):
+    demo = _load_demo_module()
+
+    fake_ag = {
+        "ag_5h_pct": 25.0,
+        "ag_5h_resets_at": "2026-08-04T15:00:00+00:00",
+        "ag_weekly_pct": 10.0,
+        "ag_weekly_resets_at": "2026-08-10T00:00:00+00:00",
+    }
+    monkeypatch.setattr(demo, "get_antigravity_fields", lambda: fake_ag)
+
+    usage = {
+        "five_hour": {"utilization": 12, "resets_at": "2026-08-04T04:00:00Z"},
+        "seven_day": {"utilization": 34, "resets_at": "2026-08-10T00:00:00Z"},
+    }
+
+    payload = demo.build_payload(usage, enable_antigravity=True)
+
+    assert payload["session_pct"] == 12
+    assert payload["weekly_pct"] == 34
+    assert payload["ag_5h_pct"] == 25.0
+    assert payload["ag_5h_resets_at"] == "2026-08-04T15:00:00+00:00"
+    assert payload["ag_weekly_pct"] == 10.0
+    assert payload["ag_weekly_resets_at"] == "2026-08-10T00:00:00+00:00"
+
+    payload_no_ag = demo.build_payload(usage, enable_antigravity=False)
+    assert "ag_5h_pct" not in payload_no_ag
+
+
+def test_refresh_antigravity_async_keeps_old_value_on_failure(monkeypatch):
+    demo = _load_demo_module()
+
+    initial_ag = {
+        "ag_5h_pct": 50.0,
+        "ag_5h_resets_at": "2026-08-04T12:00:00+00:00",
+        "ag_weekly_pct": 20.0,
+        "ag_weekly_resets_at": "2026-08-10T12:00:00+00:00",
+    }
+    with demo._AG_LOCK:
+        demo._AG_LATEST.update(initial_ag)
+
+    monkeypatch.setattr(demo, "fetch_usage_text", lambda *a, **kw: None)
+
+    t = demo.refresh_antigravity_async()
+    if t is not None:
+        t.join()
+
+    assert demo.get_antigravity_fields() == initial_ag
+
+    # Test when fetch returns text but parse is empty
+    monkeypatch.setattr(demo, "fetch_usage_text", lambda *a, **kw: "some text")
+    monkeypatch.setattr(
+        demo,
+        "parse_usage_panel",
+        lambda text: {
+            "gemini_5h_remaining": None,
+            "gemini_5h_refresh_min": None,
+            "gemini_weekly_remaining": None,
+            "gemini_weekly_refresh_min": None,
+        },
+    )
+
+    t = demo.refresh_antigravity_async()
+    if t is not None:
+        t.join()
+
+    assert demo.get_antigravity_fields() == initial_ag
+

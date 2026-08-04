@@ -221,10 +221,10 @@ def test_usage_widget_over_pace_draws_red():
     a, b = pygame.Surface((1920, 480)), pygame.Surface((1920, 480))
     usagewidget.render(a, over, NOW)
     usagewidget.render(b, ok, NOW)
-    warn = theme.C["warn"]
-    reds_a = sum(1 for x in range(1560, 1880, 4) for y in range(180, 220, 2)
+    warn = theme.C["usage_warn"]
+    reds_a = sum(1 for x in range(1560, 1880, 4) for y in range(80, 150, 2)
                  if a.get_at((x, y))[:3] == warn)
-    reds_b = sum(1 for x in range(1560, 1880, 4) for y in range(180, 220, 2)
+    reds_b = sum(1 for x in range(1560, 1880, 4) for y in range(80, 150, 2)
                  if b.get_at((x, y))[:3] == warn)
     assert reds_a > 0 and reds_b == 0, "超速的那條要轉紅、正常配速不紅"
 

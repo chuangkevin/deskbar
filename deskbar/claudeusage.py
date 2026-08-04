@@ -28,6 +28,10 @@ class UsageInfo:
     fable_pct: float | None
     fable_resets_at: datetime | None
     fetched_at: datetime
+    ag_5h_pct: float | None = None
+    ag_5h_resets_at: datetime | None = None
+    ag_weekly_pct: float | None = None
+    ag_weekly_resets_at: datetime | None = None
 
 
 def fmt_countdown(dt: datetime | None, now: datetime) -> str:
@@ -49,8 +53,8 @@ def fmt_countdown(dt: datetime | None, now: datetime) -> str:
 
 # ---------------------------------------------------------------- 配速判定
 
-# 各視窗長度（秒）：5 小時 session、7 天週限額、7 天 Fable 週限額
-WINDOW_S = {"session": 5 * 3600, "weekly": 7 * 86400, "fable": 7 * 86400}
+# 各視窗長度（秒）：5 小時 session、7 天週限額、7 天 Fable 週限額、AG 5 小時、AG 週限額
+WINDOW_S = {"session": 5 * 3600, "weekly": 7 * 86400, "fable": 7 * 86400, "ag_5h": 5 * 3600, "ag_weekly": 7 * 86400}
 PACE_GRACE_PCT = 5.0     # 容許超前配速的緩衝（百分點）：視窗剛開的小額使用不該轉紅
 
 
