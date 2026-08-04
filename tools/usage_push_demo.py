@@ -90,6 +90,26 @@ def get_antigravity_fields() -> dict:
         return dict(_AG_LATEST)
 
 
+def warm_ag_from_cache(cached: dict | None) -> None:
+    """啟動時用快取資料預熱 `_AG_LATEST`。
+
+    快取裡的 Antigravity 用量資料是「上一輪」的，且 `ag_*_resets_at` 是固定的
+    時間字串（若過期 deskbar 端的倒數會顯示「即將重置」）。
+    但這樣做能避免重啟後在第一輪抓取完成前的 ~47 秒內 Antigravity 區塊完全空白、
+    造成 deskbar UI 整區消失再出現的閃爍。寧可先顯示可能略舊的值，也不要讓整區閃爍。
+    """
+    if not cached or not isinstance(cached, dict):
+        return
+    fields = {
+        "ag_5h_pct": cached.get("ag_5h_pct"),
+        "ag_5h_resets_at": cached.get("ag_5h_resets_at"),
+        "ag_weekly_pct": cached.get("ag_weekly_pct"),
+        "ag_weekly_resets_at": cached.get("ag_weekly_resets_at"),
+    }
+    with _AG_LOCK:
+        _AG_LATEST.update(fields)
+
+
 def _ag_worker() -> None:
     global _AG_FETCHING
     try:
@@ -283,6 +303,8 @@ def run_loop(
     enable_antigravity: bool = True,
 ) -> None:
     cached = load_cache()
+    if enable_antigravity:
+        warm_ag_from_cache(cached)
     next_fetch = 0.0
     next_push = 0.0
     next_ag = 0.0

@@ -281,3 +281,90 @@ def test_refresh_antigravity_async_keeps_old_value_on_failure(monkeypatch):
 
     assert demo.get_antigravity_fields() == initial_ag
 
+
+@pytest.fixture(autouse=True)
+def reset_ag_latest():
+    demo = _load_demo_module()
+    clean_state = {
+        "ag_5h_pct": None,
+        "ag_5h_resets_at": None,
+        "ag_weekly_pct": None,
+        "ag_weekly_resets_at": None,
+    }
+    with demo._AG_LOCK:
+        demo._AG_LATEST.update(clean_state)
+    yield
+    with demo._AG_LOCK:
+        demo._AG_LATEST.update(clean_state)
+
+
+def test_save_cache_includes_ag_fields(tmp_path):
+    demo = _load_demo_module()
+    path = tmp_path / "usage.json"
+    payload = {
+        "session_pct": 42.0,
+        "weekly_pct": 10.0,
+        "ag_5h_pct": 35.5,
+        "ag_5h_resets_at": "2026-08-04T18:00:00+00:00",
+        "ag_weekly_pct": 12.0,
+        "ag_weekly_resets_at": "2026-08-11T00:00:00+00:00",
+        "fetched_at": "2026-08-04T17:00:00+00:00",
+    }
+    demo.save_cache(payload, path)
+    loaded = demo.load_cache(path)
+    assert loaded["ag_5h_pct"] == 35.5
+    assert loaded["ag_5h_resets_at"] == "2026-08-04T18:00:00+00:00"
+    assert loaded["ag_weekly_pct"] == 12.0
+    assert loaded["ag_weekly_resets_at"] == "2026-08-11T00:00:00+00:00"
+
+
+def test_warm_ag_from_cache_with_ag_fields():
+    demo = _load_demo_module()
+    cached = {
+        "session_pct": 42.0,
+        "ag_5h_pct": 50.0,
+        "ag_5h_resets_at": "2026-08-04T18:00:00+00:00",
+        "ag_weekly_pct": 25.0,
+        "ag_weekly_resets_at": "2026-08-11T00:00:00+00:00",
+    }
+    demo.warm_ag_from_cache(cached)
+    fields = demo.get_antigravity_fields()
+    assert fields["ag_5h_pct"] == 50.0
+    assert fields["ag_5h_resets_at"] == "2026-08-04T18:00:00+00:00"
+    assert fields["ag_weekly_pct"] == 25.0
+    assert fields["ag_weekly_resets_at"] == "2026-08-11T00:00:00+00:00"
+
+
+def test_warm_ag_from_cache_missing_fields_defaults_none():
+    demo = _load_demo_module()
+    cached = {
+        "session_pct": 42.0,
+        "ag_5h_pct": 50.0,
+    }
+    demo.warm_ag_from_cache(cached)
+    fields = demo.get_antigravity_fields()
+    assert fields["ag_5h_pct"] == 50.0
+    assert fields["ag_5h_resets_at"] is None
+    assert fields["ag_weekly_pct"] is None
+    assert fields["ag_weekly_resets_at"] is None
+
+
+def test_warm_ag_from_cache_none_and_empty_safe_noop():
+    demo = _load_demo_module()
+    demo.warm_ag_from_cache(None)
+    assert demo.get_antigravity_fields() == {
+        "ag_5h_pct": None,
+        "ag_5h_resets_at": None,
+        "ag_weekly_pct": None,
+        "ag_weekly_resets_at": None,
+    }
+
+    demo.warm_ag_from_cache({})
+    assert demo.get_antigravity_fields() == {
+        "ag_5h_pct": None,
+        "ag_5h_resets_at": None,
+        "ag_weekly_pct": None,
+        "ag_weekly_resets_at": None,
+    }
+
+
