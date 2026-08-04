@@ -38,6 +38,8 @@ def test_get_prefs_returns_all_fields(client):
     assert d["brightness_day"] == 100 and d["brightness_night"] == 40
     assert d["presence_enabled"] is False
     assert d["presence_interval_sec"] == 45 and d["sync_interval_min"] == 5
+    assert d["presence_source"] == "bluetooth"
+    assert d["presence_push_ttl_sec"] == 900
 
 
 def test_phone_settings_lists_every_scene(client):
@@ -50,13 +52,15 @@ def test_phone_settings_lists_every_scene(client):
 def test_patch_prefs_applies_and_saves(client):
     r = client.patch("/api/prefs", json={
         "work_end_min": 1170, "brightness_night": 20,
-        "presence_enabled": True, "presence_interval_sec": 15,
-        "presence_grace_sec": 45, "sync_interval_min": 10})
+        "presence_enabled": True, "presence_interval_sec": 30,
+        "presence_grace_sec": 45, "sync_interval_min": 10,
+        "presence_source": "push", "presence_push_ttl_sec": 600})
     assert r.status_code == 200
     s = client._settings
     assert s.work_end_min == 1170 and s.brightness_night == 20
-    assert s.presence_enabled is True and s.presence_interval_sec == 15
+    assert s.presence_enabled is True and s.presence_interval_sec == 30
     assert s.presence_grace_sec == 45 and s.sync_interval_min == 10
+    assert s.presence_source == "push" and s.presence_push_ttl_sec == 600
     assert client._saved, "PATCH 必須持久化"
 
 
@@ -67,6 +71,11 @@ def test_patch_prefs_applies_and_saves(client):
     ({"theme": "light"}, "theme 不開放（webserver 執行緒不得清渲染快取）"),
     ({"nonsense": 1}, "未知欄位"),
     ({}, "空 payload"),
+    ({"presence_interval_sec": 5}, "presence_interval_sec 下限為 20"),
+    ({"presence_interval_sec": 19}, "presence_interval_sec 下限為 20"),
+    ({"presence_push_ttl_sec": 59}, "presence_push_ttl_sec 下限為 60"),
+    ({"presence_push_ttl_sec": 86401}, "presence_push_ttl_sec 上限為 86400"),
+    ({"presence_source": "invalid"}, "presence_source 只收 bluetooth 或 push"),
 ])
 def test_patch_prefs_rejects_bad_input_without_side_effects(client, payload, why):
     before = (client._settings.work_end_min, client._settings.brightness_day)
@@ -74,6 +83,12 @@ def test_patch_prefs_rejects_bad_input_without_side_effects(client, payload, why
     assert r.status_code == 400, why
     assert (client._settings.work_end_min, client._settings.brightness_day) == before
     assert not client._saved, "驗證失敗不得寫檔"
+
+
+def test_presence_interval_20_accepted(client):
+    r = client.patch("/api/prefs", json={"presence_interval_sec": 20})
+    assert r.status_code == 200
+    assert client._settings.presence_interval_sec == 20
 
 
 def test_patch_linear_key_sets_value_and_get_only_exposes_bool(client):
@@ -96,3 +111,4 @@ def test_prefs_unavailable_without_settings_wiring(tmp_path, monkeypatch):
     c = app.test_client()
     assert c.get("/api/prefs").status_code == 501
     assert c.patch("/api/prefs", json={"brightness_day": 50}).status_code == 501
+

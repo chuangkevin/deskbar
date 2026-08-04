@@ -10,6 +10,7 @@ from flask import Flask, Response, jsonify, request
 
 from deskbar import auth, config
 from deskbar.claudeusage import UsageInfo
+from deskbar.presence import PresenceState
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _USAGE_TZ = ZoneInfo("Asia/Taipei")
@@ -203,11 +204,14 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
     # 手機網頁可調的裝置偏好（2026-07-27 需求：「那些設定也應該要可以在手機
     # 設定頁調整」）。theme 刻意不開放——theme.set_theme 會清渲染快取，只能由
     # UI 執行緒自己做，webserver 執行緒碰了會跟 render 撞快取。
+    # 2026-08-04 實機事故：presence_interval_sec 下限由 5 改為 20 秒——單次探測
+    # 最壞 10 秒，間隔比它短等於保證重疊送連線請求，會把 BCM43438 控制器打死。
     _PREF_INT = {
         "work_start_min": (0, 1410), "work_end_min": (0, 1410),
         "brightness_day": (10, 100), "brightness_night": (10, 100),
         "sleep_start_min": (0, 1410), "sleep_end_min": (0, 1410),
-        "presence_interval_sec": (5, 600), "presence_grace_sec": (0, 3600),
+        "presence_interval_sec": (20, 600), "presence_grace_sec": (0, 3600),
+        "presence_push_ttl_sec": (60, 86400),
         "sync_interval_min": (1, 120),
     }
     _PREF_BOOL = {"presence_enabled", "sleep_enabled", "weather_auto_locate"}
@@ -231,6 +235,7 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             out["scene_mode"] = getattr(settings_provider, "scene_mode", "auto")
             out["scenes_enabled"] = list(getattr(settings_provider,
                                                  "scenes_enabled", []))
+            out["presence_source"] = getattr(settings_provider, "presence_source", "bluetooth")
         return jsonify(out)
 
     @app.patch("/api/prefs")
@@ -258,6 +263,10 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             elif k == "scene_mode":
                 if v not in ("auto", "manual", "force"):
                     return jsonify({"error": "scene_mode must be auto/manual/force"}), 400
+                staged[k] = v
+            elif k == "presence_source":
+                if v not in ("bluetooth", "push"):
+                    return jsonify({"error": "presence_source must be bluetooth or push"}), 400
                 staged[k] = v
             elif k == "scenes_enabled":
                 from deskbar.config import SCENE_KEYS
@@ -329,6 +338,46 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
         resp.headers["Content-Disposition"] = \
             "attachment; filename=deskbar-backup.json"
         return resp
+
+    @app.post("/api/presence")
+    def push_presence():
+        """外部主動推送在場狀態（iPhone 捷徑自動化／外部感測器）。
+        2026-08-04 實機事故擴充：iPhone 藍牙對 L2CAP echo 不回應且 MAC 隨機化，
+        對藍牙探測本質不可靠。提供推送端點讓手機端主動報到。
+
+        與 /api/usage 同樣原則：Tailnet 內預設無認證，若環境變數 DESKBAR_PUSH_TOKEN
+        有設則驗證 X-Deskbar-Token 標頭。
+        """
+        if usage_state is None:
+            return jsonify({"error": "not available"}), 501
+        push_token = os.environ.get("DESKBAR_PUSH_TOKEN")
+        if push_token and request.headers.get("X-Deskbar-Token") != push_token:
+            return jsonify({"error": "unauthorized"}), 401
+
+        d = request.get_json(force=True, silent=True)
+        if not isinstance(d, dict):
+            return jsonify({"error": "body must be a JSON object"}), 400
+
+        if "present" not in d or not isinstance(d["present"], bool):
+            return jsonify({"error": "invalid present"}), 400
+
+        present = d["present"]
+        rssi = d.get("rssi")
+        if rssi is not None and (not isinstance(rssi, int) or isinstance(rssi, bool)):
+            return jsonify({"error": "invalid rssi"}), 400
+
+        enabled = True
+        if settings_provider is not None and settings_lock is not None:
+            with settings_lock:
+                enabled = getattr(settings_provider, "presence_enabled", True)
+
+        prev = usage_state.snapshot().presence
+        now = datetime.now(_USAGE_TZ)
+        last_seen = now if present else prev.last_seen
+
+        usage_state.set_presence(PresenceState(present=present, rssi=rssi,
+                                               last_seen=last_seen, enabled=enabled))
+        return "", 204
 
     @app.post("/api/usage")
     def push_usage():

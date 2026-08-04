@@ -63,6 +63,8 @@ class Settings:
     presence_hide_accounts: list[str] = field(default_factory=list)
     presence_grace_sec: int = 150
     presence_interval_sec: int = 45     # 藍牙探測間隔；設定頁「感應速度」快/中/慢連動
+    presence_source: str = "bluetooth"  # "bluetooth" | "push" (2026-08-04 實機事故擴充)
+    presence_push_ttl_sec: int = 900    # push 多久沒來就視為不在場
     work_start_min: int = 540           # 上班開始（分鐘制 0-1439）；螢幕亮度排程用
     work_end_min: int = 1080            # 下班（分鐘制）；此後套用下班亮度
     brightness_day: int = 100           # 上班時段亮度 %（軟體疊黑實現）
@@ -125,11 +127,23 @@ def load_settings() -> Settings:
         if not isinstance(presence_grace_sec, int) or isinstance(presence_grace_sec, bool) \
                 or presence_grace_sec < 0:
             presence_grace_sec = 150
+        # 2026-08-04 實機事故：單次探測最壞是 l2ping 5 秒＋hcitool rssi 5 秒＝10 秒，
+        # 間隔比它短等於保證重疊送連線請求打死 BCM43438 控制器，故下限拉高至 20 秒。
         presence_interval_sec = raw.get("presence_interval_sec", 45)
         if not isinstance(presence_interval_sec, int) \
                 or isinstance(presence_interval_sec, bool) \
-                or not (5 <= presence_interval_sec <= 600):
+                or not (20 <= presence_interval_sec <= 600):
             presence_interval_sec = 45
+
+        presence_source = raw.get("presence_source", "bluetooth")
+        if not isinstance(presence_source, str) or presence_source not in ("bluetooth", "push"):
+            presence_source = "bluetooth"
+
+        presence_push_ttl_sec = raw.get("presence_push_ttl_sec", 900)
+        if not isinstance(presence_push_ttl_sec, int) \
+                or isinstance(presence_push_ttl_sec, bool) \
+                or not (60 <= presence_push_ttl_sec <= 86400):
+            presence_push_ttl_sec = 900
 
         def _int_in(key, default, lo, hi):
             v = raw.get(key, default)
@@ -191,6 +205,8 @@ def load_settings() -> Settings:
             presence_hide_accounts=presence_hide_accounts,
             presence_grace_sec=presence_grace_sec,
             presence_interval_sec=presence_interval_sec,
+            presence_source=presence_source,
+            presence_push_ttl_sec=presence_push_ttl_sec,
             work_start_min=work_start_min,
             work_end_min=work_end_min,
             brightness_day=brightness_day,
@@ -226,6 +242,8 @@ def save_settings(s: Settings) -> None:
         "presence_hide_accounts": s.presence_hide_accounts,
         "presence_grace_sec": s.presence_grace_sec,
         "presence_interval_sec": s.presence_interval_sec,
+        "presence_source": s.presence_source,
+        "presence_push_ttl_sec": s.presence_push_ttl_sec,
         "work_start_min": s.work_start_min,
         "work_end_min": s.work_end_min,
         "brightness_day": s.brightness_day,

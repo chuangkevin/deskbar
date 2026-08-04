@@ -5,6 +5,7 @@ import threading
 import time as _time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from typing import Final
 from zoneinfo import ZoneInfo
 
 import requests
@@ -17,6 +18,11 @@ from deskbar.store import AppState
 from deskbar.weather import fetch_weather
 
 CAL_INTERVAL, WX_INTERVAL = 300, 1800
+# 失敗後快速重試的指數退避（秒）。Transient 網路/DNS 抖動通常幾秒到一兩分鐘就
+# 恢復；若失敗一次就得等完整間隔（日曆 5–10 分、天氣 30 分），儀表板會一直掛著
+# 「部分帳號同步異常」。退避序列：15s → 30s → 60s → 120s → 300s（封頂），
+# 成功即重置回到正常間隔。300s 之後就跟正常間隔同量級，不再更快。
+RETRY_DELAYS: Final = (15, 30, 60, 120, 300)
 # 注意：這兩個數字與 deskbar.viewwin.WINDOW_PAST_DAYS/WINDOW_FUTURE_DAYS 定義必須一致——
 # 那邊是 UI 用來判斷「資料窗口外＝假空」的邊界，這邊是實際抓取的窗口，兩者本來就該是同一份窗口。
 WINDOW_PAST_DAYS, WINDOW_FUTURE_DAYS = 7, 30
@@ -35,6 +41,13 @@ def request_sync() -> None:
     """立即觸發下一輪日曆＋天氣同步（例如使用者點擊同步狀態列）。"""
     FORCE_CAL.set()
     FORCE_WX.set()
+
+
+def _next_retry_elapsed(streak: int) -> int | None:
+    """streak 次連續失敗後，下一次重試要等幾秒（None＝不縮短正常間隔）。"""
+    if streak <= 0:
+        return None
+    return RETRY_DELAYS[min(streak - 1, len(RETRY_DELAYS) - 1)]
 
 
 @dataclass
@@ -92,6 +105,7 @@ def calendar_sync_once(state: AppState, settings, deps: SyncDeps,
                 config.save_settings(settings)
 
         # --- (b) 不持鎖：網路階段（token 刷新＋抓事件＋normalize） ---
+        ok_all = True
         for acc, enabled_ids in plan:
             email = acc["email"]
             try:
@@ -106,11 +120,14 @@ def calendar_sync_once(state: AppState, settings, deps: SyncDeps,
                 state.set_events(email, events, deps.now_fn())
             except AuthError:
                 state.set_error(email, "需重新授權", deps.now_fn())
+                ok_all = False
             except (SyncError, OSError, ValueError, KeyError, requests.RequestException):
                 state.set_error(email, "同步失敗", deps.now_fn())
+                ok_all = False
 
         # --- (c) 無需 settings 鎖；state 自己內部鎖住 ---
         state.save_cache()
+        return ok_all
     finally:
         state.set_syncing(False)
 
@@ -154,10 +171,12 @@ def weather_sync_once(state: AppState, settings, deps: SyncDeps,
     try:
         w = fetch_weather(lat, lon, label, http_get=deps.http_get, now_fn=deps.now_fn)
         state.set_weather(w)
+        return True
     except Exception as e:
         # 保留舊值，UI 顯示資料年齡（AppState 沒有天氣專屬的 last_error 欄位，
         # 這裡本來完全靜默、故障時無從得知原因——至少寫一行 stderr 供 journald 除錯。
         print(f"[deskbar] weather sync failed: {e}", file=sys.stderr)
+        return False
 
 
 LINEAR_INTERVAL = 300      # Linear 待辦輪詢間隔（秒）；唯讀查詢，5 分鐘足夠
@@ -173,55 +192,69 @@ def linear_sync_once(state: AppState, settings,
     else:
         key = getattr(settings, "linear_api_key", "")
     if not key:
-        return
+        return True
     try:
         items = linear_mod.fetch_issues(key)
         at = datetime.now(ZoneInfo("Asia/Taipei"))
         state.set_linear(items, at)
         linear_mod.save_cache(items, at)
+        return True
     except Exception as e:
         print(f"[deskbar] linear sync failed: {e}", file=sys.stderr)
+        return False
+
+
+def _try_once(fn, streak: int) -> int:
+    """執行一次同步；回傳更新後的連續失敗次數（成功歸零，例外/False 累加）。"""
+    try:
+        ok = fn()
+        return 0 if ok else streak + 1
+    except Exception as e:
+        print(f"[deskbar] {getattr(fn, '__name__', 'sync')} failed: {e}",
+              file=sys.stderr)
+        return streak + 1
+
+
+def _sync_loop(fn, interval_getter, force_event: threading.Event | None):
+    """帶指數退避重試的同步迴圈。
+
+    失敗後不必等完整間隔：依連續失敗次數在 RETRY_DELAYS 退避（15→30→60→120→
+    300s 封頂）快速重試，成功立刻重置回正常間隔。force_event 用 check-and-clear
+    消費自己的事件（FORCE_CAL/FORCE_WX 各自獨立，不會互相誤清）。
+    """
+    def run():
+        streak = _try_once(fn, 0)
+        elapsed = 0
+        while True:
+            _time.sleep(1)
+            elapsed += 1
+            due = force_event is not None and force_event.is_set()
+            due = due or elapsed >= interval_getter()
+            retry_in = _next_retry_elapsed(streak)
+            if retry_in is not None and elapsed >= retry_in:
+                due = True
+            if not due:
+                continue
+            if force_event is not None:
+                force_event.clear()
+            elapsed = 0
+            streak = _try_once(fn, streak)
+    return run
 
 
 def start_threads(state: AppState, settings, settings_lock: threading.Lock) -> None:
     deps = default_deps()
 
-    def cal_loop():
-        # calendar_sync_once 自己只在 phase (a) 短暫持鎖，這裡不再外包一層鎖，
-        # 否則巢狀取鎖同一把非重入 Lock 會直接死結。
-        calendar_sync_once(state, settings, deps, settings_lock)
-        elapsed = 0
-        while True:
-            _time.sleep(1)
-            elapsed += 1
-            with settings_lock:
-                interval_s = settings.sync_interval_min * 60
-            if FORCE_CAL.is_set() or elapsed >= interval_s:
-                FORCE_CAL.clear()
-                elapsed = 0
-                calendar_sync_once(state, settings, deps, settings_lock)
+    def cal_interval() -> int:
+        with settings_lock:
+            return settings.sync_interval_min * 60
 
-    def wx_loop():
-        weather_sync_once(state, settings, deps, settings_lock)
-        elapsed = 0
-        while True:
-            _time.sleep(1)
-            elapsed += 1
-            if FORCE_WX.is_set() or elapsed >= WX_INTERVAL:
-                FORCE_WX.clear()
-                elapsed = 0
-                weather_sync_once(state, settings, deps, settings_lock)
-
-    def linear_loop():
-        linear_sync_once(state, settings, settings_lock)
-        elapsed = 0
-        while True:
-            _time.sleep(1)
-            elapsed += 1
-            if elapsed >= LINEAR_INTERVAL:
-                elapsed = 0
-                linear_sync_once(state, settings, settings_lock)
-
-    threading.Thread(target=cal_loop, daemon=True).start()
-    threading.Thread(target=wx_loop, daemon=True).start()
-    threading.Thread(target=linear_loop, daemon=True).start()
+    threading.Thread(target=_sync_loop(
+        lambda: calendar_sync_once(state, settings, deps, settings_lock),
+        cal_interval, FORCE_CAL), daemon=True, name="cal-sync").start()
+    threading.Thread(target=_sync_loop(
+        lambda: weather_sync_once(state, settings, deps, settings_lock),
+        lambda: WX_INTERVAL, FORCE_WX), daemon=True, name="wx-sync").start()
+    threading.Thread(target=_sync_loop(
+        lambda: linear_sync_once(state, settings, settings_lock),
+        lambda: LINEAR_INTERVAL, None), daemon=True, name="linear-sync").start()

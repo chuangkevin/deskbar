@@ -139,3 +139,92 @@ def test_fetch_range_events_window_bounds():
     assert urls[0]["singleEvents"] == "true"
     assert urls[0]["orderBy"] == "startTime"
     assert urls[0]["maxResults"] == "250"
+
+
+def test_retry_delays_sequence_capped():
+    assert sync._next_retry_elapsed(0) is None
+    assert sync._next_retry_elapsed(1) == 15
+    assert sync._next_retry_elapsed(2) == 30
+    assert sync._next_retry_elapsed(3) == 60
+    assert sync._next_retry_elapsed(4) == 120
+    assert sync._next_retry_elapsed(5) == 300
+    assert sync._next_retry_elapsed(99) == 300, "退避封頂不再更長"
+
+
+def test_calendar_sync_returns_false_on_fetch_failure(tmp_path, monkeypatch):
+    def boom(tok, cal, start, end, tz, http_get):
+        raise OSError("dns down")
+
+    deps = _deps(monkeypatch, tmp_path, None)
+    monkeypatch.setattr(sync, "_fetch_range", boom)
+    _acc_file(config.accounts_dir())
+    state, settings = AppState(), Settings()
+    assert sync.calendar_sync_once(state, settings, deps) is False
+    st = state.snapshot().statuses["a@x.com"]
+    assert st.ok is False and st.error == "同步失敗"
+
+
+def test_calendar_sync_returns_true_on_success(tmp_path, monkeypatch):
+    deps = _deps(monkeypatch, tmp_path, lambda start, end, cal: [])
+    _acc_file(config.accounts_dir())
+    state, settings = AppState(), Settings()
+    assert sync.calendar_sync_once(state, settings, deps) is True
+
+
+def test_weather_sync_returns_false_then_true(monkeypatch, tmp_path):
+    calls = []
+
+    def flaky_get(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError("dns down")
+        return FakeResp(200, {
+            "current": {"temperature_2m": 22.0, "weather_code": 1,
+                        "apparent_temperature": 21.0, "relative_humidity_2m": 60},
+            "daily": {"temperature_2m_max": [25.0], "temperature_2m_min": [18.0],
+                      "sunrise": ["2026-07-27T05:00:00"], "sunset": ["2026-07-27T19:00:00"]}})
+
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("DESKBAR_CACHE_DIR", str(tmp_path / "cache"))
+    deps = sync.SyncDeps(today_fn=lambda: TODAY, now_fn=lambda: NOW,
+                         http_get=flaky_get, http_post=None, tz=TZ)
+    state, settings = AppState(), Settings()
+    settings.weather_auto_locate = False
+    assert sync.weather_sync_once(state, settings, deps) is False
+    assert sync.weather_sync_once(state, settings, deps) is True
+
+
+def test_linear_sync_returns_false_on_failure_then_true(monkeypatch, tmp_path):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    settings = Settings()
+    settings.linear_api_key = "lk"
+    calls = []
+
+    def flaky_fetch(key):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError("dns down")
+        return []
+
+    monkeypatch.setattr("deskbar.linear.fetch_issues", flaky_fetch)
+    state = AppState()
+    assert sync.linear_sync_once(state, settings) is False
+    assert sync.linear_sync_once(state, settings) is True
+    settings.linear_api_key = ""
+
+
+def test_sync_loop_pure_decision():
+    # _next_retry_elapsed 已由 test_retry_delays_sequence_capped 覆蓋；
+    # 這條驗證「失敗會觸發重試、成功會重置」是由 _try_once 回傳值驅動。
+    calls = []
+
+    def boom():
+        calls.append(1)
+        raise OSError("x")
+
+    streak = sync._try_once(boom, 0)
+    assert streak == 1
+    streak = sync._try_once(boom, streak)
+    assert streak == 2
+    assert sync._try_once(lambda: True, streak) == 0
+    assert sync._try_once(lambda: False, 0) == 1

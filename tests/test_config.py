@@ -85,3 +85,31 @@ def test_default_rotation_only_contains_visually_approved_scenes():
         "flow", "ridges", "fireflies", "fish", "aurora", "train", "runner", "ink",
     }
     assert all(k in config.SCENE_KEYS for k in config.DEFAULT_SCENES)
+def test_presence_interval_below_20_falls_back_to_45(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"presence_interval_sec": 15}), encoding="utf-8")
+    s = config.load_settings()
+    assert s.presence_interval_sec == 45
+
+
+def test_presence_source_invalid_falls_back_to_bluetooth(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"presence_source": "invalid_mode"}), encoding="utf-8")
+    s = config.load_settings()
+    assert s.presence_source == "bluetooth"
+
+
+def test_presence_push_ttl_sec_invalid_falls_back_to_900(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"presence_push_ttl_sec": 30}), encoding="utf-8")  # < 60
+    s = config.load_settings()
+    assert s.presence_push_ttl_sec == 900
+
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"presence_push_ttl_sec": "900"}), encoding="utf-8")  # 非 int
+    s2 = config.load_settings()
+    assert s2.presence_push_ttl_sec == 900
+

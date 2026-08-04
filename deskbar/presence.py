@@ -16,6 +16,45 @@ if TYPE_CHECKING:
 TZ = ZoneInfo("Asia/Taipei")
 _RSSI_RE = re.compile(r"-?\d+")
 
+PROBE_TIMEOUT_S = 5        # 既有 subprocess timeout，抽成常量（原本硬寫在 probe_once）
+PROBE_BACKOFF_S = (0, 0, 30, 60, 120, 300, 600)
+_PROBE_LOCK = threading.Lock()
+
+
+def backoff_delay(fail_streak: int) -> int:
+    """連續 fail_streak 次探測失敗後，除了正常間隔還要「額外」等幾秒。
+    fail_streak<=0 → 0；1 → 0（第一次失敗不罰，可能只是抖動）；
+    2→30、3→60、4→120、5→300、6 以上→600（封頂）。
+
+    2026-08-04 實機事故教訓：探測失敗代表控制器層（如 Pi Zero 2W 的 BCM43438）
+    可能已經有清不掉的 pending 連線請求，繼續按原間隔硬打會把藍牙控制器打到不回
+    HCI 指令（dmesg 出現 tx timeout, HCI_Reset opcode failed），最終整顆晶片死鎖。
+    因此失敗時必須指數退避，保護硬體不被連續 request 灌爆。
+    """
+    if fail_streak <= 0:
+        return 0
+    return PROBE_BACKOFF_S[min(fail_streak, len(PROBE_BACKOFF_S) - 1)]
+
+
+def next_sleep(interval_sec: int, fail_streak: int) -> int:
+    """這一輪結束後要睡幾秒＝正常間隔＋退避。純函數，方便測試。"""
+    return interval_sec + backoff_delay(fail_streak)
+
+
+def expire_push(prev: PresenceState, now: datetime, ttl_s: int) -> PresenceState:
+    """push 模式的唯一狀態轉換：last_seen 超過 ttl_s 沒更新就轉為不在場。
+    last_seen 為 None → 不在場。已經是不在場就原樣回傳。
+    這是隱私保證：手機端的捷徑掛掉時，私人行事曆必須自己收回去，
+    不能因為沒人再推就永遠留在「在場」。
+    """
+    if not prev.present:
+        return prev
+    if prev.last_seen is None:
+        return replace(prev, present=False)
+    if (now - prev.last_seen).total_seconds() >= ttl_s:
+        return replace(prev, present=False)
+    return prev
+
 
 @dataclass(frozen=True)
 class PresenceState:
@@ -33,26 +72,35 @@ def probe_once(mac: str, runner=subprocess.run) -> tuple[bool, int | None]:
        指令不存在（環境沒裝 bluez-utils）或逾時，一律當作「不在場、無 RSSI」。
     2. 在場才進一步用 hcitool rssi 取信號強度；同樣容錯，取不到就回 None，
        不影響「在場」這個判定本身（RSSI 只是輔助門檻，見 decide()）。
+    3. 2026-08-04 實機事故保險：同時只允許一個 probe 在跑。若上一輪 l2ping
+       還卡在 kernel 或 BCM43438 晶片層沒收乾淨，拿不到 _PROBE_LOCK 就立刻
+       放棄並回 (False, None)，絕不在控制器上再疊一層 pending 連線。
     """
-    try:
-        ping = runner(["l2ping", "-c1", "-t2", mac], capture_output=True,
-                      text=True, timeout=5)
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return False, None
-    if ping.returncode != 0:
+    if not _PROBE_LOCK.acquire(blocking=False):
         return False, None
 
-    rssi = None
     try:
-        rssi_proc = runner(["hcitool", "rssi", mac], capture_output=True,
-                           text=True, timeout=5)
-        if rssi_proc.returncode == 0:
-            m = _RSSI_RE.search(rssi_proc.stdout or "")
-            if m:
-                rssi = int(m.group())
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        try:
+            ping = runner(["l2ping", "-c1", "-t2", mac], capture_output=True,
+                          text=True, timeout=PROBE_TIMEOUT_S)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            return False, None
+        if ping.returncode != 0:
+            return False, None
+
         rssi = None
-    return True, rssi
+        try:
+            rssi_proc = runner(["hcitool", "rssi", mac], capture_output=True,
+                               text=True, timeout=PROBE_TIMEOUT_S)
+            if rssi_proc.returncode == 0:
+                m = _RSSI_RE.search(rssi_proc.stdout or "")
+                if m:
+                    rssi = int(m.group())
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            rssi = None
+        return True, rssi
+    finally:
+        _PROBE_LOCK.release()
 
 
 def decide(present_probe: bool, rssi: int | None, threshold: int, prev: PresenceState,
@@ -76,37 +124,56 @@ def decide(present_probe: bool, rssi: int | None, threshold: int, prev: Presence
 
 def start_presence_thread(state: "AppState", settings: "Settings",
                           settings_lock: threading.Lock, interval: int = 45) -> bool:
-    """啟動藍牙在場感應背景執行緒。**永遠啟動**：迴圈每輪自己檢查
-    enabled/mac，沒開就 no-op 睡下一輪——2026-07-27 首日教訓：開機時
-    presence_mac 還沒設就不建 thread，之後使用者在藍牙配對頁配好裝置、
-    打開開關，功能卻要重開機才活，看起來就是「開了沒反應」。
+    """啟動在場感應背景執行緒。**永遠啟動**：迴圈每輪自己檢查
+    enabled/mac/source，沒開或非感應狀態就 no-op 睡下一輪——2026-07-27 首日教訓。
 
-    迴圈每輪：持 settings_lock 只做快照讀取（mac/threshold/grace/enabled/間隔，
-    純量、很快)，放鎖後才做探測（l2ping/hcitool，可能耗時到秒級，不該卡住其他
-    也要拿 settings_lock 的執行緒——呼應 sync.py 同樣的鎖範圍原則）。探測完依
-    decide() 算出新狀態，再用當輪讀到的 enabled 覆寫 enabled 欄位，最後
-    state.set_presence(...) 寫回。
+    支援兩種在場來源（2026-08-04 實機事故擴充）：
+    1. bluetooth：藍牙 l2ping/hcitool 探測。配合 fail_streak 退避保護控制器。
+    2. push：外部 POST /api/presence 主動推送。本執行緒不作藍牙探測，
+       僅檢查 expire_push() 超過 ttl_s 自動收回私人行事曆。
     """
 
     def loop():
+        fail_streak = 0
         while True:
-            with settings_lock:
-                mac_now = settings.presence_mac
-                threshold = settings.presence_rssi_threshold
-                grace = settings.presence_grace_sec
-                enabled_now = settings.presence_enabled
-                # 每輪重讀：設定頁「感應速度」改了間隔要立刻生效，不用重開機
-                interval_now = getattr(settings, "presence_interval_sec", interval)
-            if enabled_now and mac_now:
-                present_probe, rssi = probe_once(mac_now)
-                prev = state.snapshot().presence
-                now = datetime.now(TZ)
-                new = decide(present_probe, rssi, threshold, prev, now, grace)
-                state.set_presence(replace(new, enabled=True))
-            else:
-                prev = state.snapshot().presence
-                state.set_presence(replace(prev, enabled=False))
-            _time.sleep(interval_now)
+            try:
+                with settings_lock:
+                    mac_now = settings.presence_mac
+                    threshold = settings.presence_rssi_threshold
+                    grace = settings.presence_grace_sec
+                    enabled_now = settings.presence_enabled
+                    interval_now = getattr(settings, "presence_interval_sec", interval)
+                    source_now = getattr(settings, "presence_source", "bluetooth")
+                    push_ttl_now = getattr(settings, "presence_push_ttl_sec", 900)
+
+                if not enabled_now:
+                    fail_streak = 0
+                    prev = state.snapshot().presence
+                    state.set_presence(replace(prev, enabled=False))
+                elif source_now == "push":
+                    fail_streak = 0
+                    prev = state.snapshot().presence
+                    now = datetime.now(TZ)
+                    new = expire_push(prev, now, push_ttl_now)
+                    state.set_presence(replace(new, enabled=True))
+                elif mac_now:
+                    present_probe, rssi = probe_once(mac_now)
+                    if present_probe:
+                        fail_streak = 0
+                    else:
+                        fail_streak += 1
+                    prev = state.snapshot().presence
+                    now = datetime.now(TZ)
+                    new = decide(present_probe, rssi, threshold, prev, now, grace)
+                    state.set_presence(replace(new, enabled=True))
+                else:
+                    fail_streak = 0
+                    prev = state.snapshot().presence
+                    state.set_presence(replace(prev, enabled=False))
+
+                _time.sleep(next_sleep(interval_now, fail_streak))
+            except Exception:
+                _time.sleep(interval)
 
     threading.Thread(target=loop, daemon=True).start()
     return True

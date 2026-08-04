@@ -219,3 +219,65 @@ def test_sedentary_hint_renders_in_panel():
     dashboard.render_panel_only(b, snap, Settings(), now, sedentary=True)
     assert pygame.image.tobytes(a, "RGB") != pygame.image.tobytes(b, "RGB"), \
         "sedentary=True 要多畫一行提示"
+
+
+# ---------------------------------------------------------------- 探測退避與 Push 過期測試 (2026-08-04)
+
+def test_backoff_delay_boundaries():
+    assert presence.backoff_delay(-1) == 0
+    assert presence.backoff_delay(0) == 0
+    assert presence.backoff_delay(1) == 0
+    assert presence.backoff_delay(2) == 30
+    assert presence.backoff_delay(3) == 60
+    assert presence.backoff_delay(4) == 120
+    assert presence.backoff_delay(5) == 300
+    assert presence.backoff_delay(6) == 600
+    assert presence.backoff_delay(99) == 600
+
+
+def test_next_sleep_combines_interval_and_backoff():
+    assert presence.next_sleep(45, 0) == 45
+    assert presence.next_sleep(45, 1) == 45
+    assert presence.next_sleep(45, 2) == 75
+    assert presence.next_sleep(45, 6) == 645
+
+
+def test_probe_once_lock_contention_returns_false_and_skips_runner():
+    runner_called = False
+
+    def fake_runner(*a, **k):
+        nonlocal runner_called
+        runner_called = True
+
+    with presence._PROBE_LOCK:
+        present, rssi = presence.probe_once("AA:BB:CC:DD:EE:FF", runner=fake_runner)
+        assert present is False
+        assert rssi is None
+        assert not runner_called, "鎖被佔用時不得呼叫 runner 重疊送連線請求"
+
+
+def test_expire_push_behavior():
+    t0 = datetime(2026, 8, 4, 12, 0, tzinfo=TZ)
+    st_present = PresenceState(present=True, rssi=-60, last_seen=t0, enabled=True)
+
+    # 未過期：維持在場
+    t1 = t0 + timedelta(seconds=899)
+    st1 = presence.expire_push(st_present, t1, 900)
+    assert st1.present is True
+    assert st1.last_seen == t0
+
+    # 已過期：轉為不在場
+    t2 = t0 + timedelta(seconds=900)
+    st2 = presence.expire_push(st_present, t2, 900)
+    assert st2.present is False
+
+    # last_seen 為 None：視為不在場
+    st_no_last_seen = PresenceState(present=True, rssi=-60, last_seen=None, enabled=True)
+    st3 = presence.expire_push(st_no_last_seen, t0, 900)
+    assert st3.present is False
+
+    # 已經是不在場：原樣回傳
+    st_absent = PresenceState(present=False, rssi=None, last_seen=t0, enabled=True)
+    st4 = presence.expire_push(st_absent, t0 + timedelta(seconds=9999), 900)
+    assert st4 == st_absent
+
