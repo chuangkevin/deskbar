@@ -107,7 +107,7 @@ async function loadPrefs(){
  if(!r.ok){box.innerHTML='<div class="card">此功能需重新部署後啟用</div>';return}
  const p=await r.json();
  const pct=[...Array(10)].map((_,i)=>(i+1)*10);
- const spd=[[15,"快"],[30,"中"],[45,"慢"]];
+ const spd=[[20,"快"],[30,"中"],[45,"慢"]];
  box.innerHTML=`<div class="card">
   <div class="cal-row">上班開始 ${sel("p_ws",MIN_OPTS,p.work_start_min,fm)}</div>
   <div class="cal-row">下班時間 ${sel("p_we",MIN_OPTS,p.work_end_min,fm)}（此後套用下班亮度）</div>
@@ -150,7 +150,7 @@ const SCENE_NAMES=[["flow","流場墨線"],["stars","星河流星"],["ridges","�
  ["planet_horizon","行星地平線"]];
 async function savePrefs(){
  const iv=+document.getElementById("p_pi").value;
- const grace={15:45,30:90,45:150}[iv]||150;
+ const grace={20:60,30:90,45:150}[iv]||150;
  const body={weather_auto_locate:document.getElementById("p_wa").checked,
   work_start_min:+document.getElementById("p_ws").value,
   work_end_min:+document.getElementById("p_we").value,
@@ -166,8 +166,9 @@ async function savePrefs(){
   scenes_enabled:[...document.querySelectorAll(".p_sc:checked")].map(c=>c.value)};
  const r=await fetch("/api/prefs",{method:"PATCH",
   headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
- document.getElementById("p_msg").textContent=r.ok?" 已儲存 ✓":" 儲存失敗";
- if(r.ok)setTimeout(loadPrefs,600);
+ if(r.ok){document.getElementById("p_msg").textContent=" 已儲存 ✓";setTimeout(loadPrefs,600);}
+ else{let m="";try{m=(await r.json()).error||"";}catch(e){}
+  document.getElementById("p_msg").textContent=" 儲存失敗"+(m?"："+m:"");}
 }
 async function setCity(){
  const q=document.getElementById("p_city").value.trim();

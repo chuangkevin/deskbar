@@ -48,6 +48,27 @@ def _to_float(v):
     return None if v is None else float(v)
 
 
+# 手機網頁可調的裝置偏好（2026-07-27 需求：「那些設定也應該要可以在手機
+# 設定頁調整」）。theme 刻意不開放——theme.set_theme 會清渲染快取，只能由
+# UI 執行緒自己做，webserver 執行緒碰了會跟 render 撞快取。
+# 2026-08-04 實機事故：presence_interval_sec 下限由 5 改為 20 秒——單次探測
+# 最壞 10 秒，間隔比它短等於保證重疊送連線請求，會把 BCM43438 控制器打死。
+_PREF_INT = {
+    "work_start_min": (0, 1410), "work_end_min": (0, 1410),
+    "brightness_day": (10, 100), "brightness_night": (10, 100),
+    "sleep_start_min": (0, 1410), "sleep_end_min": (0, 1410),
+    "presence_interval_sec": (20, 600), "presence_grace_sec": (0, 3600),
+    "presence_push_ttl_sec": (60, 86400),
+    "sync_interval_min": (1, 120),
+}
+_PREF_BOOL = {"presence_enabled", "sleep_enabled", "weather_auto_locate"}
+_PREF_STR = {"linear_api_key": 200,      # 值=長度上限；GET 絕不回傳 key 原文
+             "weather_label": 12}
+# 手動指定城市（IP 定位在雙北常差一個行政區——ISP 登記地 ≠ 實際位置）：
+# 網頁用 Open-Meteo geocoding 查好座標後直接寫入，並關掉自動定位
+_PREF_FLOAT = {"weather_lat": (-90.0, 90.0), "weather_lon": (-180.0, 180.0)}
+
+
 def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
               usage_state=None, notes_store=None, shot_bridge=None) -> Flask:
     app = Flask("deskbar")
@@ -200,26 +221,6 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             _notes_changed()
             return "", 204
         return jsonify({"error": "not found"}), 404
-
-    # 手機網頁可調的裝置偏好（2026-07-27 需求：「那些設定也應該要可以在手機
-    # 設定頁調整」）。theme 刻意不開放——theme.set_theme 會清渲染快取，只能由
-    # UI 執行緒自己做，webserver 執行緒碰了會跟 render 撞快取。
-    # 2026-08-04 實機事故：presence_interval_sec 下限由 5 改為 20 秒——單次探測
-    # 最壞 10 秒，間隔比它短等於保證重疊送連線請求，會把 BCM43438 控制器打死。
-    _PREF_INT = {
-        "work_start_min": (0, 1410), "work_end_min": (0, 1410),
-        "brightness_day": (10, 100), "brightness_night": (10, 100),
-        "sleep_start_min": (0, 1410), "sleep_end_min": (0, 1410),
-        "presence_interval_sec": (20, 600), "presence_grace_sec": (0, 3600),
-        "presence_push_ttl_sec": (60, 86400),
-        "sync_interval_min": (1, 120),
-    }
-    _PREF_BOOL = {"presence_enabled", "sleep_enabled", "weather_auto_locate"}
-    _PREF_STR = {"linear_api_key": 200,      # 值=長度上限；GET 絕不回傳 key 原文
-                 "weather_label": 12}
-    # 手動指定城市（IP 定位在雙北常差一個行政區——ISP 登記地 ≠ 實際位置）：
-    # 網頁用 Open-Meteo geocoding 查好座標後直接寫入，並關掉自動定位
-    _PREF_FLOAT = {"weather_lat": (-90.0, 90.0), "weather_lon": (-180.0, 180.0)}
 
     @app.get("/api/prefs")
     def get_prefs():
