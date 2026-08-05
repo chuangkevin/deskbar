@@ -50,6 +50,7 @@ class Settings:
     weather_lon: float = DEFAULT_LON
     weather_label: str = DEFAULT_LABEL
     weather_auto_locate: bool = True    # IP 定位自動跟隨裝置位置（換網路即換城市）
+    weather_metar_station: str = "RCSS"  # 空字串＝停用 METAR，純用 Open-Meteo
     start_hour: int = 8
     end_hour: int = 24
     sync_interval_min: int = 5
@@ -168,6 +169,9 @@ def load_settings() -> Settings:
         weather_auto_locate = raw.get("weather_auto_locate", True)
         if not isinstance(weather_auto_locate, bool):
             weather_auto_locate = True
+        weather_metar_station = raw.get("weather_metar_station", "RCSS")
+        if not isinstance(weather_metar_station, str) or len(weather_metar_station) > 8:
+            weather_metar_station = "RCSS"
         sleep_enabled = raw.get("sleep_enabled", False)
         if not isinstance(sleep_enabled, bool):
             sleep_enabled = False
@@ -192,6 +196,7 @@ def load_settings() -> Settings:
             weather_lon=raw.get("weather_lon", DEFAULT_LON),
             weather_label=raw.get("weather_label", DEFAULT_LABEL),
             weather_auto_locate=weather_auto_locate,
+            weather_metar_station=weather_metar_station,
             start_hour=raw.get("start_hour", 8),
             end_hour=raw.get("end_hour", 24),
             sync_interval_min=sync_interval_min,
@@ -230,6 +235,7 @@ def save_settings(s: Settings) -> None:
         "weather_lon": s.weather_lon,
         "weather_label": s.weather_label,
         "weather_auto_locate": s.weather_auto_locate,
+        "weather_metar_station": s.weather_metar_station,
         "start_hour": s.start_hour,
         "end_hour": s.end_hour,
         "sync_interval_min": s.sync_interval_min,

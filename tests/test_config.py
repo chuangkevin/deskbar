@@ -113,3 +113,33 @@ def test_presence_push_ttl_sec_invalid_falls_back_to_900(tmp_path, monkeypatch):
     s2 = config.load_settings()
     assert s2.presence_push_ttl_sec == 900
 
+
+def test_weather_metar_station_validation(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+
+    # 預設值為 RCSS
+    s = config.load_settings()
+    assert s.weather_metar_station == "RCSS"
+
+    # 允許空字串（停用）
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"weather_metar_station": ""}), encoding="utf-8")
+    s_empty = config.load_settings()
+    assert s_empty.weather_metar_station == ""
+
+    # 正常站名 roundtrip
+    s_empty.weather_metar_station = "RCTP"
+    config.save_settings(s_empty)
+    s_rctp = config.load_settings()
+    assert s_rctp.weather_metar_station == "RCTP"
+
+    # 非字串或長度 > 8 落回 RCSS
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"weather_metar_station": 12345}), encoding="utf-8")
+    assert config.load_settings().weather_metar_station == "RCSS"
+
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"weather_metar_station": "TOO_LONG_STATION_NAME"}), encoding="utf-8")
+    assert config.load_settings().weather_metar_station == "RCSS"
+
+

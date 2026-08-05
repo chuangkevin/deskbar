@@ -63,7 +63,8 @@ _PREF_INT = {
 }
 _PREF_BOOL = {"presence_enabled", "sleep_enabled", "weather_auto_locate"}
 _PREF_STR = {"linear_api_key": 200,      # 值=長度上限；GET 絕不回傳 key 原文
-             "weather_label": 12}
+             "weather_label": 12,
+             "weather_metar_station": 8}
 # 手動指定城市（IP 定位在雙北常差一個行政區——ISP 登記地 ≠ 實際位置）：
 # 網頁用 Open-Meteo geocoding 查好座標後直接寫入，並關掉自動定位
 _PREF_FLOAT = {"weather_lat": (-90.0, 90.0), "weather_lon": (-180.0, 180.0)}
@@ -233,6 +234,7 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             out["linear_key_set"] = bool(getattr(settings_provider,
                                                  "linear_api_key", ""))
             out["weather_label"] = getattr(settings_provider, "weather_label", "")
+            out["weather_metar_station"] = getattr(settings_provider, "weather_metar_station", "RCSS")
             out["scene_mode"] = getattr(settings_provider, "scene_mode", "auto")
             out["scenes_enabled"] = list(getattr(settings_provider,
                                                  "scenes_enabled", []))
@@ -291,7 +293,7 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
         if usage_state is not None:
             usage_state.bump()   # 叫醒 render 迴圈：亮度/睡眠等改動即時上畫面
         if staged.keys() & {"weather_lat", "weather_lon", "weather_label",
-                            "weather_auto_locate"}:
+                            "weather_auto_locate", "weather_metar_station"}:
             try:
                 from deskbar import sync as _sync
                 _sync.FORCE_WX.set()   # 位置改了立刻重抓天氣，不等下一小時

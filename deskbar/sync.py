@@ -135,7 +135,7 @@ def calendar_sync_once(state: AppState, settings, deps: SyncDeps,
 def weather_sync_once(state: AppState, settings, deps: SyncDeps,
                       settings_lock: threading.Lock | None = None) -> None:
     """天氣同步不碰 settings.accounts，理論上完全不需要鎖；
-    但為求嚴謹，仍在鎖內快照 lat/lon/label 這幾個純量再放鎖去打網路。
+    但為求嚴謹，仍在鎖內快照 lat/lon/label/metar_station 這幾個純量再放鎖去打網路。
 
     自動定位（weather_auto_locate，預設開）：每輪先用 IP 反查位置，跟目前
     設定差超過 ~5km（0.05°）或城市名變了才改寫並持久化——裝置搬到公司、
@@ -144,9 +144,11 @@ def weather_sync_once(state: AppState, settings, deps: SyncDeps,
         with settings_lock:
             auto = getattr(settings, "weather_auto_locate", True)
             lat, lon, label = settings.weather_lat, settings.weather_lon, settings.weather_label
+            metar_station = getattr(settings, "weather_metar_station", "RCSS")
     else:
         auto = getattr(settings, "weather_auto_locate", True)
         lat, lon, label = settings.weather_lat, settings.weather_lon, settings.weather_label
+        metar_station = getattr(settings, "weather_metar_station", "RCSS")
     if auto:
         from deskbar import config as _cfg
         from deskbar import geoloc
@@ -169,7 +171,8 @@ def weather_sync_once(state: AppState, settings, deps: SyncDeps,
                 except OSError as e:
                     print(f"[deskbar] geoloc save failed: {e}", file=sys.stderr)
     try:
-        w = fetch_weather(lat, lon, label, http_get=deps.http_get, now_fn=deps.now_fn)
+        w = fetch_weather(lat, lon, label, http_get=deps.http_get, now_fn=deps.now_fn,
+                          metar_station=metar_station)
         state.set_weather(w)
         return True
     except Exception as e:
