@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import threading
 import time
@@ -29,6 +30,10 @@ except ImportError:
             fetch_usage_text = None
             parse_usage_panel = None
 
+CLAUDE_BIN = os.environ.get(
+    "DESKBAR_CLAUDE_BIN", os.path.expanduser("~/.local/bin/claude")
+)
+REFRESH_COOLDOWN_S = 600.0  # 兩次觸發換發之間至少間隔 10 分鐘
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 USAGE_BETA_HEADER = "oauth-2025-04-20"
@@ -156,7 +161,48 @@ class RateLimitedError(RuntimeError):
         self.retry_after = retry_after
 
 
-def load_access_token() -> str:
+_last_refresh_time: float = 0.0
+
+
+def trigger_token_refresh() -> bool:
+    """呼叫 Claude Code CLI 觸發 Anthropic 官方 OAuth token 換發流程。
+
+    根據 2026-08-05 實測，桌面版 Claude Code 不會將換發後的 accessToken
+    寫回 macOS Keychain，導致常駐推送 agent 讀取 Keychain 時遇到 token 過期而中止。
+    在終端機執行一次 `claude -p ...` 呼叫 CLI 官方流程，即可讓 Claude Code 自動換發
+    新 token 並更新 Keychain 項目。
+
+    此處刻意發出一次極小的 API 呼叫（-p ok --max-turns 1），目的不是取得回應，
+    而是讓 Claude Code 走其官方 refresh 流程將新 token 寫回 Keychain。
+    雖然會消耗極少量額度並輕微擾動量測數字，但相較於自行實作 OAuth 換發可能弄壞
+    使用者登入狀態的風險，這是刻意採用的取捨。
+    """
+    global _last_refresh_time
+    claude_path = Path(CLAUDE_BIN)
+    if not claude_path.exists():
+        print(f"[Claude Code] 找不到 claude CLI 執行檔：{CLAUDE_BIN}")
+        return False
+
+    now = time.time()
+    if now - _last_refresh_time < REFRESH_COOLDOWN_S:
+        return False
+
+    _last_refresh_time = now
+
+    try:
+        result = subprocess.run(
+            [CLAUDE_BIN, "-p", "ok", "--max-turns", "1"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        return result.returncode == 0
+    except Exception:
+        # 依規格需求，任何例外（FileNotFoundError / TimeoutExpired / OSError）皆吞掉回 False
+        return False
+
+
+def load_access_token(allow_refresh: bool = True) -> str:
     result = subprocess.run(
         ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
         capture_output=True,
@@ -176,7 +222,11 @@ def load_access_token() -> str:
         raise SystemExit("Keychain 資料裡沒有 accessToken 欄位")
     expires_at = oauth.get("expiresAt", 0)
     if expires_at and expires_at / 1000 < time.time():
-        raise SystemExit("token 已過期，請執行一次 Claude Code 以刷新登入")
+        if allow_refresh and trigger_token_refresh():
+            return load_access_token(allow_refresh=False)
+        raise SystemExit(
+            "token 已過期且自動換發失敗，請手動在終端機跑一次 claude"
+        )
     return token
 
 

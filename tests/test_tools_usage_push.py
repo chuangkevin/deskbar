@@ -368,3 +368,144 @@ def test_warm_ag_from_cache_none_and_empty_safe_noop():
     }
 
 
+@pytest.fixture(autouse=True)
+def reset_token_refresh_state():
+    """測試之間重設 trigger_token_refresh 的上次觸發時間，避免測試間互相污染。"""
+    demo = _load_demo_module()
+    demo._last_refresh_time = 0.0
+    yield
+    demo._last_refresh_time = 0.0
+
+
+def test_trigger_token_refresh_claude_bin_not_found(monkeypatch):
+    """CLAUDE_BIN 不存在時回傳 False，且不跑 subprocess。"""
+    demo = _load_demo_module()
+    monkeypatch.setattr(demo, "CLAUDE_BIN", "/nonexistent/path/to/claude")
+    assert demo.trigger_token_refresh() is False
+
+
+def test_trigger_token_refresh_cooldown(monkeypatch, tmp_path):
+    """冷卻期內第二次呼叫回傳 False，且沒有再跑 subprocess。"""
+    import subprocess
+    demo = _load_demo_module()
+    dummy_claude = tmp_path / "claude"
+    dummy_claude.touch()
+    monkeypatch.setattr(demo, "CLAUDE_BIN", str(dummy_claude))
+
+    calls = []
+
+    def fake_run(cmd, capture_output=True, text=True, timeout=120):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(demo.subprocess, "run", fake_run)
+
+    # 第一次觸發成功
+    assert demo.trigger_token_refresh() is True
+    assert len(calls) == 1
+
+    # 冷卻期內第二次觸發直接回傳 False，不重複跑 subprocess
+    assert demo.trigger_token_refresh() is False
+    assert len(calls) == 1
+
+
+def test_trigger_token_refresh_subprocess_exception(monkeypatch, tmp_path):
+    """subprocess 拋出例外時吞掉例外並回傳 False。"""
+    demo = _load_demo_module()
+    dummy_claude = tmp_path / "claude"
+    dummy_claude.touch()
+    monkeypatch.setattr(demo, "CLAUDE_BIN", str(dummy_claude))
+
+    def fake_run_raise(cmd, capture_output=True, text=True, timeout=120):
+        raise FileNotFoundError("claude execution failed")
+
+    monkeypatch.setattr(demo.subprocess, "run", fake_run_raise)
+
+    # 不得拋出例外，應回傳 False
+    assert demo.trigger_token_refresh() is False
+
+
+def test_load_access_token_expired_refresh_success(monkeypatch):
+    """load_access_token 遇到過期 token 且換發成功（第二次讀 Keychain 為新 token）時，回傳新 token。"""
+    import json
+    import subprocess
+    import time
+    demo = _load_demo_module()
+
+    keychain_responses = [
+        json.dumps({"claudeAiOauth": {"accessToken": "old_expired", "expiresAt": 1000}}),
+        json.dumps({"claudeAiOauth": {"accessToken": "new_fresh", "expiresAt": (time.time() + 3600) * 1000}}),
+    ]
+
+    def fake_run(cmd, capture_output=True, text=True, timeout=30):
+        if cmd[0] == "security":
+            stdout = keychain_responses.pop(0)
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=stdout, stderr="")
+        raise RuntimeError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(demo.subprocess, "run", fake_run)
+
+    refresh_calls = []
+
+    def fake_trigger():
+        refresh_calls.append(True)
+        return True
+
+    monkeypatch.setattr(demo, "trigger_token_refresh", fake_trigger)
+
+    token = demo.load_access_token()
+    assert token == "new_fresh"
+    assert len(refresh_calls) == 1
+
+
+def test_load_access_token_expired_refresh_failed(monkeypatch):
+    """load_access_token 遇到過期 token 且換發失敗時，拋出 SystemExit。"""
+    import json
+    import subprocess
+    demo = _load_demo_module()
+
+    expired_stdout = json.dumps({"claudeAiOauth": {"accessToken": "old_expired", "expiresAt": 1000}})
+
+    def fake_run(cmd, capture_output=True, text=True, timeout=30):
+        if cmd[0] == "security":
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=expired_stdout, stderr="")
+        raise RuntimeError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(demo.subprocess, "run", fake_run)
+    monkeypatch.setattr(demo, "trigger_token_refresh", lambda: False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        demo.load_access_token()
+    assert "token 已過期且自動換發失敗" in str(exc_info.value)
+
+
+def test_load_access_token_expired_still_expired_no_infinite_loop(monkeypatch):
+    """load_access_token 遇到過期 token 且換發後重讀仍過期時，拋出 SystemExit 且 trigger_token_refresh 只呼叫一次。"""
+    import json
+    import subprocess
+    demo = _load_demo_module()
+
+    expired_stdout = json.dumps({"claudeAiOauth": {"accessToken": "old_expired", "expiresAt": 1000}})
+
+    def fake_run(cmd, capture_output=True, text=True, timeout=30):
+        if cmd[0] == "security":
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=expired_stdout, stderr="")
+        raise RuntimeError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(demo.subprocess, "run", fake_run)
+
+    refresh_calls = []
+
+    def fake_trigger():
+        refresh_calls.append(True)
+        return True
+
+    monkeypatch.setattr(demo, "trigger_token_refresh", fake_trigger)
+
+    with pytest.raises(SystemExit) as exc_info:
+        demo.load_access_token()
+    assert "token 已過期且自動換發失敗" in str(exc_info.value)
+    assert len(refresh_calls) == 1
+
+
+
