@@ -113,3 +113,91 @@ def test_hybrid_weather_metar_disabled():
     assert w.temp == 32.7
     assert w.code == 53
     assert w.observed is False
+
+
+class CustomFakeResp:
+    def __init__(self, current_temp=32.7, tmax=35.2, tmin=27.1):
+        self.current_temp = current_temp
+        self.tmax = tmax
+        self.tmin = tmin
+
+    def json(self):
+        return {"current": {"temperature_2m": self.current_temp, "weather_code": 53},
+                "daily": {"temperature_2m_max": [self.tmax], "temperature_2m_min": [self.tmin],
+                          "sunrise": ["2026-08-05T05:15:00"], "sunset": ["2026-08-05T18:35:00"]}}
+
+
+def test_temp_clamps_tmax_when_metar_exceeds_forecast():
+    tz = ZoneInfo("Asia/Taipei")
+    now = datetime(2026, 8, 5, 13, 0, tzinfo=tz)
+
+    def fake_metar(station):
+        return {"temp": 35.0, "code": 1, "observed_at": now}
+
+    resp = CustomFakeResp(current_temp=30.0, tmax=34.5, tmin=25.0)
+    w = weather.fetch_weather(
+        25.0, 121.5, "台北",
+        http_get=lambda *a, **k: resp,
+        now_fn=lambda: now,
+        metar_station="RCSS",
+        fetch_metar_fn=fake_metar,
+    )
+    assert w.temp == 35.0
+    assert w.tmax == 35.0
+    assert w.tmin == 25.0
+
+
+def test_temp_clamps_tmin_when_metar_below_forecast():
+    tz = ZoneInfo("Asia/Taipei")
+    now = datetime(2026, 8, 5, 13, 0, tzinfo=tz)
+
+    def fake_metar(station):
+        return {"temp": 20.0, "code": 1, "observed_at": now}
+
+    resp = CustomFakeResp(current_temp=23.0, tmax=30.0, tmin=25.4)
+    w = weather.fetch_weather(
+        25.0, 121.5, "台北",
+        http_get=lambda *a, **k: resp,
+        now_fn=lambda: now,
+        metar_station="RCSS",
+        fetch_metar_fn=fake_metar,
+    )
+    assert w.temp == 20.0
+    assert w.tmin == 20.0
+    assert w.tmax == 30.0
+
+
+def test_temp_within_forecast_range_unchanged():
+    tz = ZoneInfo("Asia/Taipei")
+    now = datetime(2026, 8, 5, 13, 0, tzinfo=tz)
+
+    def fake_metar(station):
+        return {"temp": 28.0, "code": 1, "observed_at": now}
+
+    resp = CustomFakeResp(current_temp=27.0, tmax=32.0, tmin=25.0)
+    w = weather.fetch_weather(
+        25.0, 121.5, "台北",
+        http_get=lambda *a, **k: resp,
+        now_fn=lambda: now,
+        metar_station="RCSS",
+        fetch_metar_fn=fake_metar,
+    )
+    assert w.temp == 28.0
+    assert w.tmax == 32.0
+    assert w.tmin == 25.0
+
+
+def test_temp_clamps_when_fallback_to_open_meteo():
+    now = datetime(2026, 8, 5, 13, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+    resp = CustomFakeResp(current_temp=36.0, tmax=34.5, tmin=25.0)
+    w = weather.fetch_weather(
+        25.0, 121.5, "台北",
+        http_get=lambda *a, **k: resp,
+        now_fn=lambda: now,
+        metar_station="",
+    )
+    assert w.temp == 36.0
+    assert w.tmax == 36.0
+    assert w.tmin == 25.0
+    assert w.observed is False
+

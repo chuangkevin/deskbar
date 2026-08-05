@@ -79,11 +79,20 @@ def fetch_weather(lat: float, lon: float, label: str, http_get=requests.get,
         except Exception:
             pass
 
+    tmax = float(body["daily"]["temperature_2m_max"][0])
+    tmin = float(body["daily"]["temperature_2m_min"][0])
+
+    # 高低溫是 Open-Meteo 的預報、現況是 METAR 實測，兩個來源天生可能打架；
+    # 預報被實測打臉時，實測為準，把預報區間撐大到至少涵蓋實測值，
+    # 畫面才不會自相矛盾（2026-08-05 實機：現況 35°、預報最高 34°）。
+    tmax = max(tmax, temp)
+    tmin = min(tmin, temp)
+
     return Weather(
         temp=temp,
         code=code,
-        tmax=float(body["daily"]["temperature_2m_max"][0]),
-        tmin=float(body["daily"]["temperature_2m_min"][0]),
+        tmax=tmax,
+        tmin=tmin,
         label=label,
         fetched_at=now_fn(),
         sunrise=_iso("sunrise"),
