@@ -1,6 +1,9 @@
+import hashlib
 import os
 
 import pygame
+
+from deskbar.ui.textsafe import sanitize_text
 
 # 雙主題色板（2026-07-27 重調）：實機是低色域低對比 TN 類面板，舊版多層深灰
 # （0f0f0f/1a1a1a/262626 那個量級）在面板上會塌陷成一坨、次要文字掉進黑階看不見。
@@ -161,12 +164,33 @@ _FONT_PATHS_BY_WEIGHT = {
     ],
 }
 _font_cache: dict = {}
+_tofu_signature_cache: dict = {}
+_char_tofu_cache: dict = {}
+
+
+def _tofu_signature(f: "pygame.font.Font") -> "str | None":
+    """以 U+E000（私用區 PUA）當基準，取得字型渲染缺字 (tofu) 的像素 MD5 hash。
+    若 render 失敗（如零寬例外）則回傳 None，代表無法進行動態比對。結果按 font 物件快取。
+
+    註：pygame.font.Font.metrics() 對缺字會回傳 .notdef 的度量、聲稱「有字形」，
+    2026-08-05 實測踩過這個坑，不可信；必須用實際 render 比對像素 hash。
+    """
+    if f not in _tofu_signature_cache:
+        try:
+            surf = f.render("\ue000", True, (255, 255, 255))
+            sig = hashlib.md5(pygame.image.tostring(surf, "RGBA")).hexdigest()
+        except Exception:
+            sig = None
+        _tofu_signature_cache[f] = sig
+    return _tofu_signature_cache[f]
 
 
 def font(size: int, bold: bool = False, weight: "str | None" = None) -> "pygame.font.Font":
     if not pygame.font.get_init():
         pygame.font.init()
         _font_cache.clear()
+        _tofu_signature_cache.clear()
+        _char_tofu_cache.clear()
     w = weight or ("medium" if bold else "regular")
     key = (size, w)
     if key not in _font_cache:
@@ -194,20 +218,81 @@ def text_surface(s: str, size: int, color, bold: bool = False,
     每段 1-3ms＝重繪成本的大宗，而同字串同款式的面永遠相同——快取後熱路徑
     趨近 0，點擊到畫面更新的延遲砍掉一大半。
 
+    2026-08-05 實機修正：
+    便條與待辦常含 emoji，Noto Sans CJK 缺少此類字形會繪製成豆腐框 (⊠)。
+    pygame.font.Font.metrics() 對缺字會回傳 .notdef 度量聲稱「有字形」，不可信；
+    因此統一在渲染前以 sanitize_text() 清理控制字元、星形平面與替換常見 emoji，
+    並於 cache miss 時比對字元渲染像素與 U+E000 豆腐特徵碼 (tofu signature)，
+    動態剔除缺字字元。
+
     注意：回傳的是共享面，呼叫端只准 blit、不准改（set_alpha/畫上去都不行，
     要改先 .copy()）。超過上限整鍋清（防旋轉中的事件標題無限累積）；換主題
-    走既有的 register_cache_clear 清空。"""
+    走既有的 register_cache_clear 清空。
+    """
     key = (s, size, tuple(color), bold, weight)
     surf = _text_cache.get(key)
-    if surf is None:
-        if len(_text_cache) >= _TEXT_CACHE_MAX:
-            _text_cache.clear()
-        surf = font(size, bold, weight).render(s, True, color)
+    if surf is not None:
+        return surf
+
+    if len(_text_cache) >= _TEXT_CACHE_MAX:
+        _text_cache.clear()
+
+    # 1. 靜態清理（刪除無寬度控制字元、等義替換常見 emoji、刪除 codepoint > 0xFFFF）
+    s2 = sanitize_text(s)
+
+    # 2. 若 s2 為空，直接回傳 1x1 透明面，避免零寬例外
+    if not s2:
+        surf = pygame.Surface((1, 1), pygame.SRCALPHA)
         _text_cache[key] = surf
+        return surf
+
+    f = font(size, bold, weight)
+
+    # 3. 動態缺字比對（僅在 tofu signature 存在時執行）
+    sig = _tofu_signature(f)
+    if sig is not None:
+        filtered_chars = []
+        for ch in s2:
+            code = ord(ch)
+            # 效能優化：ASCII (<=127) 與 CJK 統一表意文字 (0x4E00–0x9FFF) 保證有字形，直接放行
+            if code <= 127 or (0x4E00 <= code <= 0x9FFF):
+                filtered_chars.append(ch)
+                continue
+
+            ckey = (ch, f, size)
+            is_tofu = _char_tofu_cache.get(ckey)
+            if is_tofu is None:
+                try:
+                    csurf = f.render(ch, True, (255, 255, 255))
+                    chash = hashlib.md5(pygame.image.tostring(csurf, "RGBA")).hexdigest()
+                    is_tofu = (chash == sig)
+                except Exception:
+                    is_tofu = True
+                _char_tofu_cache[ckey] = is_tofu
+
+            if not is_tofu:
+                filtered_chars.append(ch)
+        s2 = "".join(filtered_chars)
+
+    # 若過濾後變為空字串，同樣回傳 1x1 透明面
+    if not s2:
+        surf = pygame.Surface((1, 1), pygame.SRCALPHA)
+        _text_cache[key] = surf
+        return surf
+
+    # 4. 渲染清理後的字串；若這一步仍拋出 pygame.error，退回 render 一個 1x1 透明面
+    try:
+        surf = f.render(s2, True, color)
+    except Exception:
+        surf = pygame.Surface((1, 1), pygame.SRCALPHA)
+
+    _text_cache[key] = surf
     return surf
 
 
 register_cache_clear(_text_cache.clear)
+register_cache_clear(_tofu_signature_cache.clear)
+register_cache_clear(_char_tofu_cache.clear)
 
 
 def account_color(idx: int):
