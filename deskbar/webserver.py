@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from flask import Flask, Response, jsonify, request
 
 from deskbar import auth, config
+from deskbar.alarms import _is_valid_date_str
 from deskbar.claudeusage import UsageInfo
 from deskbar.presence import PresenceState
 
@@ -101,11 +102,29 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
     @app.patch("/api/alarms/<aid>")
     def patch_alarm(aid):
         d = request.get_json(force=True, silent=True) or {}
-        if not isinstance(d.get("enabled"), bool):
+        has_enabled = "enabled" in d
+        has_skip_date = "skip_date" in d
+        if not has_enabled and not has_skip_date:
+            return jsonify({"error": "enabled or skip_date required"}), 400
+
+        if has_enabled and not isinstance(d.get("enabled"), bool):
             return jsonify({"error": "enabled must be boolean"}), 400
-        if store.set_enabled(aid, d.get("enabled")):
-            return jsonify({"ok": True})
-        return jsonify({"error": "not found"}), 404
+
+        if has_skip_date:
+            skip_date = d.get("skip_date")
+            if skip_date is not None and not _is_valid_date_str(skip_date):
+                return jsonify({"error": "skip_date must be YYYY-MM-DD or null"}), 400
+
+        existing = next((a for a in store.list() if a.id == aid), None)
+        if existing is None:
+            return jsonify({"error": "not found"}), 404
+
+        if has_enabled:
+            store.set_enabled(aid, d["enabled"])
+        if has_skip_date:
+            store.set_skip_date(aid, d["skip_date"])
+
+        return jsonify({"ok": True})
 
     @app.delete("/api/alarms/<aid>")
     def delete_alarm(aid):

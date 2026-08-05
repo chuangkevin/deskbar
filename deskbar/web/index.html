@@ -55,14 +55,20 @@ WD.forEach((w,i)=>{wk.insertAdjacentHTML("beforeend",
  `<label class="d"><input type="checkbox" value="${i}">${w}</label>`)});
 async function load(){
  const as=await (await fetch("/api/alarms")).json();
- document.getElementById("list").innerHTML=as.map(a=>`
-  <div class="card ${a.enabled?"":"off"}"><div class="row">
+ const td=new Date().toLocaleDateString("sv-SE");
+ document.getElementById("list").innerHTML=as.map(a=>{
+  const sk=a.skip_date===td;
+  const off=!a.enabled||sk;
+  const dt=(a.days.length?a.days.map(d=>"週"+WD[d]).join(" "):"一次性")+(sk?"（今天略過）":"");
+  const sb=a.days.length?`<button onclick="skip('${esc(a.id)}',${sk?null:`'${td}'`})">${sk?"取消略過":"今天略過"}</button>`:"";
+  return `<div class="card ${off?"off":""}"><div class="row">
    <div><div class="time">${esc(a.time)}</div>
    <div class="label">${esc(a.label)}</div>
-   <div class="days">${a.days.length? a.days.map(d=>"週"+WD[d]).join(" "):"一次性"}</div></div>
-   <div><button onclick="tog('${esc(a.id)}',${!a.enabled})">${a.enabled?"停用":"啟用"}</button>
+   <div class="days">${dt}</div></div>
+   <div>${sb}<button onclick="tog('${esc(a.id)}',${!a.enabled})">${a.enabled?"停用":"啟用"}</button>
    <button class="del" onclick="del('${esc(a.id)}')">刪除</button></div>
-  </div></div>`).join("")||'<div class="card">尚無鬧鐘</div>';
+  </div></div>`;
+ }).join("")||'<div class="card">尚無鬧鐘</div>';
 }
 async function add(){
  const days=[...wk.querySelectorAll("input:checked")].map(x=>+x.value);
@@ -73,6 +79,8 @@ async function add(){
 }
 async function tog(id,en){await fetch("/api/alarms/"+id,{method:"PATCH",
  headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:en})});load()}
+async function skip(id,d){await fetch("/api/alarms/"+id,{method:"PATCH",
+ headers:{"Content-Type":"application/json"},body:JSON.stringify({skip_date:d})});load()}
 async function del(id){await fetch("/api/alarms/"+id,{method:"DELETE"});load()}
 async function loadCals(){
  const box=document.getElementById("cals");

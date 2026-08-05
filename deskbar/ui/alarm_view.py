@@ -61,23 +61,26 @@ def render(surface, store, draft, now) -> list[Hit]:
     _btn(surface, "完成", 1700, 20, 180, 52, "settings_done", None, hits)
     pygame.draw.line(surface, theme.C["panel_line"], (DIVIDER_X, 0), (DIVIDER_X, 480))
 
-    _render_list(surface, store, hits)
+    _render_list(surface, store, hits, now)
     _render_draft(surface, draft, hits)
     return hits
 
 
-def _render_list(surface, store, hits) -> None:
+def _render_list(surface, store, hits, now) -> None:
     alarms = store.list()[:4] if store is not None else []
     if not alarms:
         _text(surface, "尚無鬧鐘——右側可新增，或掃描設定頁 QR 用手機設定",
               22, theme.C["muted"], 40, 220)
         return
     y = 100
+    today_s = now.date().isoformat() if now is not None else ""
     for a in alarms:
-        # 停用列整列都壓成 muted：時間／標籤／星期一致變暗，跟啟用列（亮字）
+        is_skipped = (a.skip_date == today_s) if today_s else False
+        is_muted = (not a.enabled) or is_skipped
+        # 停用或今天略過列整列都壓成 muted：時間／標籤／星期一致變暗，跟啟用列（亮字）
         # 拉出明顯明暗差，一眼分得出哪些鬧鐘目前不會響。
-        time_color = theme.C["text"] if a.enabled else theme.C["muted"]
-        label_color = theme.C["text2"] if a.enabled else theme.C["muted"]
+        time_color = theme.C["text"] if not is_muted else theme.C["muted"]
+        label_color = theme.C["text2"] if not is_muted else theme.C["muted"]
         _text(surface, a.time, 40, time_color, 40, y)
         label = a.label if len(a.label) <= 12 else a.label[:12] + "…"
         _text(surface, label, 22, label_color, 190, y + 4)
@@ -85,11 +88,19 @@ def _render_list(surface, store, hits) -> None:
         valid_days = sorted(d for d in a.days if isinstance(d, int) and 0 <= d <= 6)
         days = ("每" + "".join(WEEKDAY_CHARS[d] for d in valid_days)
                 if valid_days else "一次性")
+        if is_skipped:
+            days += "（今天略過）"
         _text(surface, days, 20, theme.C["muted"], 190, y + 34)
         toggle_label = "停用" if a.enabled else "啟用"
         _btn(surface, toggle_label, 560, y, 130, 52, "toggle_alarm", a.id, hits, size=22)
-        _btn(surface, "刪除", 710, y, 100, 52, "delete_alarm", a.id, hits,
-             size=22, fg=theme.C["warn"])
+        if valid_days:
+            skip_label = "取消略過" if is_skipped else "今天略過"
+            _btn(surface, skip_label, 710, y, 150, 52, "skip_alarm", a.id, hits, size=22)
+            _btn(surface, "刪除", 880, y, 100, 52, "delete_alarm", a.id, hits,
+                 size=22, fg=theme.C["warn"])
+        else:
+            _btn(surface, "刪除", 710, y, 100, 52, "delete_alarm", a.id, hits,
+                 size=22, fg=theme.C["warn"])
         y += 85
 
 

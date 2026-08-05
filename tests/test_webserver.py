@@ -38,3 +38,23 @@ def test_validation(client):
 def test_index_served(client):
     r = client.get("/")
     assert r.status_code == 200 and "deskbar" in r.get_data(as_text=True)
+
+
+def test_patch_alarm_skip_date_api(client):
+    r = client.post("/api/alarms", json={"time": "09:00", "days": [0, 1], "label": "打卡"})
+    aid = r.get_json()["id"]
+
+    assert client.patch(f"/api/alarms/{aid}", json={"enabled": True}).status_code == 200
+
+    r = client.patch(f"/api/alarms/{aid}", json={"skip_date": "2026-08-06"})
+    assert r.status_code == 200
+    assert client.get("/api/alarms").get_json()[0]["skip_date"] == "2026-08-06"
+
+    r = client.patch(f"/api/alarms/{aid}", json={"skip_date": None})
+    assert r.status_code == 200
+    assert client.get("/api/alarms").get_json()[0]["skip_date"] is None
+
+    assert client.patch(f"/api/alarms/{aid}", json={}).status_code == 400
+    assert client.patch(f"/api/alarms/{aid}", json={"skip_date": "亂寫"}).status_code == 400
+    assert client.patch(f"/api/alarms/{aid}", json={"enabled": "yes"}).status_code == 400
+    assert client.patch("/api/alarms/nope", json={"skip_date": "2026-08-06"}).status_code == 404

@@ -56,3 +56,76 @@ def test_disabled_not_due_and_remove(tmp_path, monkeypatch):
     assert s.due(T(8, 59), T(9, 0)) == []
     assert s.remove(a.id) is True and s.list() == []
     assert s.remove("nope") is False
+
+
+def test_normalize_alarm_skip_date():
+    from deskbar.alarms import _normalize_alarm
+    a = _normalize_alarm({"id": "a1", "time": "09:00", "skip_date": "2026-08-06"})
+    assert a is not None and a.skip_date == "2026-08-06"
+
+    assert _normalize_alarm({"id": "a1", "time": "09:00", "skip_date": 123}).skip_date is None
+    assert _normalize_alarm({"id": "a1", "time": "09:00", "skip_date": "2026-8-6"}).skip_date is None
+    assert _normalize_alarm({"id": "a1", "time": "09:00", "skip_date": "2026-13-45"}).skip_date is None
+
+
+def test_due_skip_date_today_yesterday_tomorrow(tmp_path, monkeypatch):
+    s = mk(tmp_path, monkeypatch)
+    a1 = s.add("09:00", [0], "today-skip")
+    s.set_skip_date(a1.id, "2026-07-27")
+
+    a2 = s.add("09:00", [0], "yesterday-skip")
+    s.set_skip_date(a2.id, "2026-07-26")
+
+    a3 = s.add("09:00", [0], "tomorrow-skip")
+    s.set_skip_date(a3.id, "2026-07-28")
+
+    now = T(9, 0, wd=0)
+    last = T(8, 59, wd=0)
+    fired = s.due(last, now)
+    fired_ids = {a.id for a in fired}
+
+    assert a1.id not in fired_ids
+    assert a2.id in fired_ids
+    # 搜尋 store 中對應的 alarm 檢查過期的 skip_date 是否已被清空
+    store_alarms = {a.id: a for a in s.list()}
+    assert store_alarms[a2.id].skip_date is None
+    assert a3.id in fired_ids
+    assert store_alarms[a3.id].skip_date == "2026-07-28"
+
+
+def test_due_one_shot_skip_date_not_disabled(tmp_path, monkeypatch):
+    s = mk(tmp_path, monkeypatch)
+    a = s.add("09:00", [], "one-shot")
+    s.set_skip_date(a.id, "2026-07-27")
+
+    now = T(9, 0, wd=0)
+    last = T(8, 59, wd=0)
+    fired = s.due(last, now)
+    assert fired == []
+    assert s.list()[0].enabled is True
+
+
+def test_due_disabled_and_skipped_coexist(tmp_path, monkeypatch):
+    s = mk(tmp_path, monkeypatch)
+    a = s.add("09:00", [0], "disabled-and-skipped")
+    s.set_enabled(a.id, False)
+    s.set_skip_date(a.id, "2026-07-27")
+
+    fired = s.due(T(8, 59, wd=0), T(9, 0, wd=0))
+    assert fired == []
+
+
+def test_set_skip_date(tmp_path, monkeypatch):
+    s = mk(tmp_path, monkeypatch)
+    a = s.add("09:00", [0], "test")
+
+    assert s.set_skip_date(a.id, "2026-08-06") is True
+    assert s.list()[0].skip_date == "2026-08-06"
+
+    assert s.set_skip_date(a.id, "invalid-date") is False
+    assert s.list()[0].skip_date == "2026-08-06"
+
+    assert s.set_skip_date("nope", "2026-08-06") is False
+
+    assert s.set_skip_date(a.id, None) is True
+    assert s.list()[0].skip_date is None

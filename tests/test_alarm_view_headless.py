@@ -87,3 +87,25 @@ def test_draft_time_wraps():
     draft["minute"] = 0
     alarm_view.bump_draft(draft, "minute", -5)
     assert draft["minute"] == 55
+
+
+def test_alarm_view_skip_button_and_rects():
+    a_repeat = Alarm(id="r1", time="07:30", days=[0, 1], label="重複鬧鐘")
+    a_once = Alarm(id="o1", time="09:00", days=[], label="一次性鬧鐘")
+    store = _FixedStore([a_repeat, a_once])
+    surf = pygame.Surface((1920, 480))
+    hits = alarm_view.render(surf, store, _draft(), NOW)
+
+    skip_hits = [h for h in hits if h.action == "skip_alarm"]
+    assert len(skip_hits) == 1
+    assert skip_hits[0].data == a_repeat.id
+    assert skip_hits[0].rect.x == 710
+    assert skip_hits[0].rect.w == 150
+
+    repeat_delete = next(h for h in hits if h.action == "delete_alarm" and h.data == a_repeat.id)
+    assert repeat_delete.rect.x == 880
+    assert repeat_delete.rect.w == 100
+
+    once_delete = next(h for h in hits if h.action == "delete_alarm" and h.data == a_once.id)
+    assert once_delete.rect.x == 710
+    assert once_delete.rect.w == 100

@@ -281,6 +281,21 @@ class App:
                             except OSError as e:
                                 print(f"[deskbar] alarm toggle write failed: {e}",
                                       file=sys.stderr)
+                    elif a == "skip_alarm":
+                        if self.alarm_store is not None:
+                            try:
+                                from datetime import datetime
+                                from zoneinfo import ZoneInfo
+                                today_s = datetime.now(ZoneInfo("Asia/Taipei")).date().isoformat()
+                                target = next((x for x in self.alarm_store.list() if x.id == h.data), None)
+                                if target is not None:
+                                    if target.skip_date == today_s:
+                                        self.alarm_store.set_skip_date(h.data, None)
+                                    else:
+                                        self.alarm_store.set_skip_date(h.data, today_s)
+                            except OSError as e:
+                                print(f"[deskbar] alarm skip write failed: {e}",
+                                      file=sys.stderr)
                     elif a == "delete_alarm":
                         if self.alarm_store is not None:
                             try:
