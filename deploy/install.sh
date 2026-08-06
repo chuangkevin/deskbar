@@ -39,4 +39,17 @@ sudo install -m 755 deploy/net-watchdog.sh /usr/local/bin/deskbar-net-watchdog.s
 sudo cp deploy/deskbar-net-watchdog.service deploy/deskbar-net-watchdog.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now deskbar-net-watchdog.timer
+
+# 2026-08-05 教訓：RPi OS 預設 Storage=volatile，重開機日誌全失，事故查不到
+# 死因。用 drop-in 蓋掉（優先權高於 journald.conf），上限 200M 保護 SD 卡。
+sudo mkdir -p /var/log/journal /etc/systemd/journald.conf.d
+sudo tee /etc/systemd/journald.conf.d/50-deskbar-persistent.conf >/dev/null <<'EOF'
+[Journal]
+Storage=persistent
+SystemMaxUse=200M
+EOF
+sudo systemd-tmpfiles --create --prefix /var/log/journal || true
+sudo systemctl restart systemd-journald || true
+
 echo "install.sh 完成"
+

@@ -232,7 +232,9 @@ def test_backoff_delay_boundaries():
     assert presence.backoff_delay(4) == 120
     assert presence.backoff_delay(5) == 300
     assert presence.backoff_delay(6) == 600
-    assert presence.backoff_delay(99) == 600
+    assert presence.backoff_delay(7) == 1800
+    assert presence.backoff_delay(8) == 1800
+    assert presence.backoff_delay(99) == 1800
 
 
 def test_next_sleep_combines_interval_and_backoff():
@@ -240,6 +242,7 @@ def test_next_sleep_combines_interval_and_backoff():
     assert presence.next_sleep(45, 1) == 45
     assert presence.next_sleep(45, 2) == 75
     assert presence.next_sleep(45, 6) == 645
+    assert presence.next_sleep(45, 7) == 1845
 
 
 def test_probe_once_lock_contention_returns_false_and_skips_runner():
@@ -280,4 +283,161 @@ def test_expire_push_behavior():
     st_absent = PresenceState(present=False, rssi=None, last_seen=t0, enabled=True)
     st4 = presence.expire_push(st_absent, t0 + timedelta(seconds=9999), 900)
     assert st4 == st_absent
+
+
+# ---------------------------------------------------------------- 藍牙控制器保護與自動復原 (2026-08-05)
+
+def test_probe_once_calls_hcitool_dc_on_l2ping_failure():
+    calls = []
+
+    class Result:
+        def __init__(self, returncode, stdout=""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    def fake_runner(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "l2ping":
+            return Result(1)
+        return Result(0)
+
+    present, rssi = presence.probe_once("AA:BB:CC:DD:EE:FF", runner=fake_runner)
+    assert present is False
+    assert rssi is None
+    assert len(calls) == 2
+    assert calls[0][0] == "l2ping"
+    assert calls[1][:3] == ["hcitool", "dc", "AA:BB:CC:DD:EE:FF"]
+
+
+def test_probe_once_does_not_call_hcitool_dc_on_l2ping_success():
+    calls = []
+
+    class Result:
+        def __init__(self, returncode, stdout=""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    def fake_runner(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "l2ping":
+            return Result(0)
+        return Result(0, stdout="RSSI return value: -50")
+
+    present, rssi = presence.probe_once("AA:BB:CC:DD:EE:FF", runner=fake_runner)
+    assert present is True
+    assert rssi == -50
+    assert len(calls) == 2
+    assert calls[0][0] == "l2ping"
+    assert calls[1][0] == "hcitool"
+    assert calls[1][1] == "rssi"
+
+
+def test_probe_once_dc_exception_returns_false_and_none():
+    def fake_runner(cmd, **kwargs):
+        if cmd[0] == "l2ping":
+            raise subprocess.TimeoutExpired(cmd="l2ping", timeout=2)
+        if cmd[0] == "hcitool" and cmd[1] == "dc":
+            raise RuntimeError("dc command crashed")
+        return None
+
+    present, rssi = presence.probe_once("AA:BB:CC:DD:EE:FF", runner=fake_runner)
+    assert present is False
+    assert rssi is None
+
+
+def test_adapter_healthy_cases():
+    class Result:
+        def __init__(self, returncode, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    # rc=0 且正常輸出 → True
+    def runner_ok(cmd, **kwargs):
+        return Result(0, stdout="hci0:\tType: Primary  Bus: UART\n\tBD Address: 00:11:22:33:44:55\n\tUP RUNNING\n")
+    assert presence.adapter_healthy(runner=runner_ok) is True
+
+    # 輸出含 "Can't init device" → False
+    def runner_cant_init(cmd, **kwargs):
+        return Result(1, stdout="Can't init device hci0: Connection timed out (110)\n")
+    assert presence.adapter_healthy(runner=runner_cant_init) is False
+
+    # rc=0 但輸出含 "Can't init device" → False
+    def runner_cant_init_rc0(cmd, **kwargs):
+        return Result(0, stdout="Can't init device hci0: Device or resource busy\n")
+    assert presence.adapter_healthy(runner=runner_cant_init_rc0) is False
+
+    # 逾時 → False
+    def runner_timeout(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="hciconfig", timeout=5)
+    assert presence.adapter_healthy(runner=runner_timeout) is False
+
+    # FileNotFoundError → False
+    def runner_fnf(cmd, **kwargs):
+        raise FileNotFoundError("hciconfig: command not found")
+    assert presence.adapter_healthy(runner=runner_fnf) is False
+
+
+def test_try_recover_adapter_cases(monkeypatch):
+    monkeypatch.setattr(presence._time, "sleep", lambda s: None)
+
+    class Result:
+        def __init__(self, returncode, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    # 1. 第一段就恢復 → True 且沒有跑第二段
+    calls_stage1 = []
+    def runner_stage1_ok(cmd, **kwargs):
+        calls_stage1.append(cmd)
+        if cmd[0] == "sudo" and cmd[2] == "systemctl":
+            return Result(0)
+        if cmd[0] == "hciconfig":
+            return Result(0, stdout="hci0: UP RUNNING")
+        return Result(0)
+
+    res1 = presence.try_recover_adapter(runner=runner_stage1_ok)
+    assert res1 is True
+    cmds_run = [c[0] if c[0] != "sudo" else f"sudo {c[2]}" for c in calls_stage1]
+    assert "sudo systemctl" in cmds_run
+    assert "sudo hciconfig" not in cmds_run
+
+    # 2. 第一段失敗第二段成功 → True
+    calls_stage2 = []
+    hciconfig_calls = 0
+    def runner_stage2_ok(cmd, **kwargs):
+        nonlocal hciconfig_calls
+        calls_stage2.append(cmd)
+        if cmd[0] == "sudo" and cmd[2] == "systemctl":
+            return Result(0)
+        if cmd[0] == "hciconfig":
+            hciconfig_calls += 1
+            if hciconfig_calls == 1:
+                return Result(1, stdout="Can't init device")  # 第一段檢查失敗
+            return Result(0, stdout="hci0: UP RUNNING")       # 第二段檢查成功
+        if cmd[0] == "sudo" and cmd[2] == "hciconfig":
+            return Result(0)
+        return Result(0)
+
+    res2 = presence.try_recover_adapter(runner=runner_stage2_ok)
+    assert res2 is True
+    cmds_run2 = [c[0] if c[0] != "sudo" else f"sudo {c[2]}" for c in calls_stage2]
+    assert "sudo systemctl" in cmds_run2
+    assert "sudo hciconfig" in cmds_run2
+
+    # 3. 兩段都失敗 → False
+    def runner_both_fail(cmd, **kwargs):
+        if cmd[0] == "hciconfig":
+            return Result(1, stdout="Can't init device")
+        return Result(0)
+
+    assert presence.try_recover_adapter(runner=runner_both_fail) is False
+
+    # 4. 任何例外 → False 不拋出
+    def runner_raises(cmd, **kwargs):
+        raise OSError("Permission denied")
+
+    assert presence.try_recover_adapter(runner=runner_raises) is False
+
 
