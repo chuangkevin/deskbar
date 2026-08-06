@@ -7,18 +7,25 @@
 實作約束（比照 deskbar.wifi）：
 - 全部 subprocess＋timeout，任何失敗收斂成安全值，不讓例外穿進 render loop。
 - 解析函式是純函式（吃 bluetoothctl 輸出字串），單元測試餵假輸出。
-- 配對用 stdin 腳本＋NoInputNoOutput agent（Just-Works）：Pi 端免輸入，
-  手機端會跳「配對要求」對話框，使用者按確認即完成；成功後順手 trust，
-  讓裝置重開機後仍可直接互連。
+- 配對流程使用有時序延遲的 shell pipeline：
+  2026-08-06 實機重現抓到三個問題：
+  1. 代理註冊失敗：bluetoothctl 在 Waiting to connect to bluetoothd 時即處理 agent 指令，
+     導致 Failed to register agent object 與 No agent is registered。指令間加延遲可確保註冊成功。
+  2. 未回應 SSP 數字比對：手機端要求 Confirm passkey，舊腳本未自動送 yes。
+  3. 異步配對過早結束：pair 為異步指令，若未等待即 quit 會中止配對。
+  是以實測出來的延遲值透過 Bash pipeline 依序餵給 bluetoothctl，並等待手機端確認。
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass
 
 _TIMEOUT_CMD = 15
-_TIMEOUT_PAIR = 40
+_TIMEOUT_PAIR = 90
 SCAN_SECONDS = 8
+
+_MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
 
 
 @dataclass(frozen=True)
@@ -90,17 +97,61 @@ def scan(seconds: int = SCAN_SECONDS) -> list:
     return parse_devices(out, paired_macs())
 
 
-def pair(mac: str) -> "tuple[bool, str]":
-    """配對＋信任。手機端會跳確認框，使用者按下確認才會成功；已配對過
-    視為成功（冪等）。"""
-    script = ("power on\nagent NoInputNoOutput\ndefault-agent\n"
-              f"pair {mac}\ntrust {mac}\nquit\n")
-    rc, out = _run([], _TIMEOUT_PAIR, input_text=script)
-    ok = ("Pairing successful" in out) or ("AlreadyExists" in out)
-    if ok:
+def parse_pair_result(output: str) -> "tuple[bool, str]":
+    """判讀 bluetoothctl 配對輸出，回 (成功?, 給人看的短訊息)。"""
+    text = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", output or "")
+
+    if "Pairing successful" in text or "Paired: yes" in text:
         return True, "配對成功"
-    msg = " ".join(out.split())[-140:]
+    if "AlreadyExists" in text:
+        return True, "已配對"
+    if "AuthenticationFailed" in text:
+        return False, "手機端未確認配對（請在手機上按接受後重試）"
+    if "AuthenticationTimeout" in text:
+        return False, "配對逾時（手機端沒有回應）"
+    if "AuthenticationCanceled" in text:
+        return False, "配對被取消"
+    if "Failed to register agent" in text or "No agent is registered" in text:
+        return False, "藍牙代理註冊失敗"
+    if re.search(r"Device .* not available", text) or "org.bluez.Error.DoesNotExist" in text:
+        return False, "找不到裝置（請先讓手機進入可被搜尋狀態）"
+
+    msg = " ".join(text.split())[-140:]
     return False, msg or "配對失敗"
+
+
+def pair(mac: str) -> "tuple[bool, str]":
+    """配對＋信任。手機端會跳確認框，必須兩邊確認。
+    過濾無效 MAC 後以時序 shell pipeline 餵給 bluetoothctl 執行。
+    """
+    if not _MAC_RE.match(mac):
+        return False, "MAC 格式不正確"
+
+    pipeline = (
+        f'(echo "power on"; sleep 2; '
+        f'echo "agent NoInputNoOutput"; sleep 2; '
+        f'echo "default-agent"; sleep 2; '
+        f'echo "pair {mac}"; sleep 6; '
+        f'echo "yes"; sleep 30; '
+        f'echo "trust {mac}"; sleep 3; '
+        f'echo "quit") | bluetoothctl'
+    )
+    try:
+        r = subprocess.run(
+            ["bash", "-c", pipeline],
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_PAIR,
+        )
+        out = (r.stdout or "") + (r.stderr or "")
+        return parse_pair_result(out)
+    except FileNotFoundError:
+        return False, "bluetoothctl 不存在"
+    except subprocess.TimeoutExpired:
+        return False, "配對逾時"
+    except OSError as e:
+        return False, f"bluetoothctl 執行失敗：{e}"
+
 
 
 def unpair(mac: str) -> "tuple[bool, str]":

@@ -51,15 +51,15 @@ def test_pair_uses_noinput_agent_and_detects_success(monkeypatch):
     captured = {}
 
     def fake_run(args, capture_output, text, timeout, input=None):
-        captured["input"] = input
+        captured["cmd"] = args[2] if len(args) > 2 else (input or "")
         return subprocess.CompletedProcess(args, 0, stdout="Pairing successful", stderr="")
 
     monkeypatch.setattr(bt.subprocess, "run", fake_run)
     ok, msg = bt.pair("AA:BB:CC:DD:EE:01")
     assert ok and "成功" in msg
-    assert "agent NoInputNoOutput" in captured["input"]
-    assert "pair AA:BB:CC:DD:EE:01" in captured["input"]
-    assert "trust AA:BB:CC:DD:EE:01" in captured["input"]
+    assert "agent NoInputNoOutput" in captured["cmd"]
+    assert "pair AA:BB:CC:DD:EE:01" in captured["cmd"]
+    assert "trust AA:BB:CC:DD:EE:01" in captured["cmd"]
 
 
 def test_pair_already_paired_counts_as_success(monkeypatch):

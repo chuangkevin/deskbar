@@ -64,7 +64,7 @@ class Settings:
     presence_hide_accounts: list[str] = field(default_factory=list)
     presence_grace_sec: int = 150
     presence_interval_sec: int = 45     # 藍牙探測間隔；設定頁「感應速度」快/中/慢連動
-    presence_source: str = "bluetooth"  # "bluetooth" | "push" (2026-08-04 實機事故擴充)
+    presence_source: str = "bluetooth"  # "bluetooth" | "push" | "ble" (2026-08-06 擴充 BLE 掃描)
     presence_push_ttl_sec: int = 900    # push 多久沒來就視為不在場
     work_start_min: int = 540           # 上班開始（分鐘制 0-1439）；螢幕亮度排程用
     work_end_min: int = 1080            # 下班（分鐘制）；此後套用下班亮度
@@ -137,7 +137,7 @@ def load_settings() -> Settings:
             presence_interval_sec = 45
 
         presence_source = raw.get("presence_source", "bluetooth")
-        if not isinstance(presence_source, str) or presence_source not in ("bluetooth", "push"):
+        if not isinstance(presence_source, str) or presence_source not in ("bluetooth", "push", "ble"):
             presence_source = "bluetooth"
 
         presence_push_ttl_sec = raw.get("presence_push_ttl_sec", 900)

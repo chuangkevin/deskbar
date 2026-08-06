@@ -287,8 +287,8 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
                     return jsonify({"error": "scene_mode must be auto/manual/force"}), 400
                 staged[k] = v
             elif k == "presence_source":
-                if v not in ("bluetooth", "push"):
-                    return jsonify({"error": "presence_source must be bluetooth or push"}), 400
+                if v not in ("bluetooth", "push", "ble"):
+                    return jsonify({"error": "presence_source must be bluetooth, push, or ble"}), 400
                 staged[k] = v
             elif k == "scenes_enabled":
                 from deskbar.config import SCENE_KEYS

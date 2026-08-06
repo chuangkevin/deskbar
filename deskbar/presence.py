@@ -17,11 +17,15 @@ TZ = ZoneInfo("Asia/Taipei")
 _RSSI_RE = re.compile(r"-?\d+")
 
 PROBE_TIMEOUT_S = 5        # 既有 subprocess timeout，抽成常量（原本硬寫在 probe_once）
-PROBE_TIMEOUT_S = 5        # 既有 subprocess timeout，抽成常量（原本硬寫在 probe_once）
 PROBE_BACKOFF_S = (0, 0, 30, 60, 120, 300, 600, 1800)
 _PROBE_LOCK = threading.Lock()
 RECOVERY_AFTER_FAILS = 3      # 連續失敗幾次才檢查控制器健康
 UNHEALTHY_RECHECK_S = 1800    # 控制器不健康、停止探測時，每 30 分鐘重試一次健康檢查
+
+BLE_SCAN_SECONDS = 8          # 單次掃描視窗
+BLE_PROBE_TIMEOUT_S = 20      # 整個 bluetoothctl 子行程的上限
+BLE_MIN_INTERVAL_S = 45       # BLE 模式的最小輪詢間隔（必須大於 probe timeout）
+_MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
 
 
 def backoff_delay(fail_streak: int) -> int:
@@ -120,6 +124,68 @@ def probe_once(mac: str, runner=subprocess.run) -> tuple[bool, int | None]:
         _PROBE_LOCK.release()
 
 
+def parse_ble_rssi(output: str) -> int | None:
+    """解析 bluetoothctl 輸出的 RSSI 值（純函數，不做 I/O，不拋例外）。
+
+    2026-08-06 實機驗證：BlueZ 被動 BLE 掃描輸出可能包含 ANSI 色碼與 Hex RSSI 格式，
+    例如 `RSSI: 0xffffffc7 (-57)`，亦可能為簡化格式 `RSSI: -57`。
+    多筆紀錄時（前面為廣播掃描、最後為 info <MAC> 結果）必須取最後一筆。
+    """
+    if not isinstance(output, str) or not output:
+        return None
+    try:
+        clean = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", output)
+        matches = list(re.finditer(r"RSSI:\s*(?:0x[0-9a-fA-F]+\s*\((-?\d+)\)|(-?\d+))", clean))
+        if not matches:
+            return None
+        last_m = matches[-1]
+        val_str = last_m.group(1) or last_m.group(2)
+        if val_str is None:
+            return None
+        return int(val_str)
+    except Exception:
+        return None
+
+
+def probe_ble_once(mac: str, runner=subprocess.run) -> tuple[bool, int | None]:
+    """探測一次 BLE 裝置的訊號強度（不建立 ACL 連線）。
+
+    2026-08-05 實機事故教訓：l2ping 建立主動 ACL 連線時，對方不在場會導致懸掛請求
+    堆積在 BCM43438 控制器中，最終驅動層 tx timeout 並死鎖硬體。
+    2026-08-06 實機驗證：改採被動 BLE 掃描（bluetoothctl 配合 scan on + info <MAC>），
+    由 BlueZ 利用配對時取得的 IRK 自動將手機輪替的隨機 MAC 解析回固定 MAC，
+    完全不對手機建立任何連線即可取得 RSSI，根治晶片卡死風險。
+    """
+    if not isinstance(mac, str) or not _MAC_RE.match(mac):
+        return False, None
+
+    if not _PROBE_LOCK.acquire(blocking=False):
+        return False, None
+
+    try:
+        pipeline = (
+            f'(echo "menu scan"; echo "transport le"; echo "back"; '
+            f'echo "scan on"; sleep 8; '
+            f'echo "info {mac}"; sleep 1; '
+            f'echo "scan off"; echo "quit") | bluetoothctl'
+        )
+        proc = runner(
+            ["bash", "-c", pipeline],
+            capture_output=True,
+            text=True,
+            timeout=BLE_PROBE_TIMEOUT_S,
+        )
+        out = (getattr(proc, "stdout", "") or "") + (getattr(proc, "stderr", "") or "")
+        rssi = parse_ble_rssi(out)
+        if rssi is not None:
+            return True, rssi
+        return False, None
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError, Exception):
+        return False, None
+    finally:
+        _PROBE_LOCK.release()
+
+
 def adapter_healthy(runner=subprocess.run) -> bool:
     """跑 `hciconfig hci0`，讀得到就是活著。逾時、指令不存在、rc != 0、
     或輸出含 "Can't init device" 都視為不健康。任何例外都回 False，不拋出。
@@ -199,12 +265,16 @@ def start_presence_thread(state: "AppState", settings: "Settings",
     """啟動在場感應背景執行緒。**永遠啟動**：迴圈每輪自己檢查
     enabled/mac/source，沒開或非感應狀態就 no-op 睡下一輪——2026-07-27 首日教訓。
 
-    支援兩種在場來源（2026-08-04 實機事故擴充）：
-    1. bluetooth：藍牙 l2ping/hcitool 探測。配合 fail_streak 退避保護控制器。
+    支援三種在場來源（2026-08-04 主動 ACL 擴充 / 2026-08-06 被動 BLE 擴充）：
+    1. bluetooth：藍牙 l2ping/hcitool 主動連線探測。配合 fail_streak 退避保護控制器。
        2026-08-05 事故防禦：fail_streak 達到 RECOVERY_AFTER_FAILS (3) 時檢查
        adapter_healthy() 並嘗試 try_recover_adapter()。若復原失敗則進入
        停止探測狀態（UNHEALTHY_RECHECK_S=1800s 重新檢查健康度），並將在場狀態設為 False。
-    2. push：外部 POST /api/presence 主動推送。本執行緒不作藍牙探測，
+    2. ble：藍牙被動 BLE 掃描探測（bluetoothctl scan on + info <MAC>）。
+       2026-08-06 實機驗證：不建立 ACL 連線，靠 IRK 解析輪替 MAC，根治連線懸掛死鎖；
+       單次探測最長 20 秒，輪詢間隔下限強制為 BLE_MIN_INTERVAL_S (45 秒) 以免重疊。
+       晶片健康檢查與退避復原機制仍全數保留。
+    3. push：外部 POST /api/presence 主動推送。本執行緒不作藍牙探測，
        僅檢查 expire_push() 超過 ttl_s 自動收回私人行事曆。
     """
 
@@ -238,12 +308,23 @@ def start_presence_thread(state: "AppState", settings: "Settings",
                     state.set_presence(replace(new, enabled=True))
                     sleep_time = interval_now
                 elif mac_now:
+                    # 2026-08-06 被動 BLE 掃描 vs 傳統 ACL l2ping 探測
+                    # BLE 模式單次探測最長需 20 秒 (BLE_PROBE_TIMEOUT_S)，
+                    # 實際睡眠時間強制套用 max(interval_now, BLE_MIN_INTERVAL_S) 以免探測重疊；
+                    # 探測與復原邏輯與傳統藍牙模式完全一致。
+                    if source_now == "ble":
+                        effective_interval = max(interval_now, BLE_MIN_INTERVAL_S)
+                        probe_fn = lambda m: probe_ble_once(m, runner=runner)
+                    else:
+                        effective_interval = interval_now
+                        probe_fn = lambda m: probe_once(m, runner=runner)
+
                     if stopped_probing:
                         if adapter_healthy(runner=runner):
                             print("[presence] 藍牙控制器已恢復健康，自動恢復藍牙探測")
                             stopped_probing = False
                             fail_streak = 0
-                            present_probe, rssi = probe_once(mac_now, runner=runner)
+                            present_probe, rssi = probe_fn(mac_now)
                             if present_probe:
                                 fail_streak = 0
                             else:
@@ -252,13 +333,13 @@ def start_presence_thread(state: "AppState", settings: "Settings",
                             now = datetime.now(TZ)
                             new = decide(present_probe, rssi, threshold, prev, now, grace)
                             state.set_presence(replace(new, enabled=True))
-                            sleep_time = next_sleep(interval_now, fail_streak)
+                            sleep_time = next_sleep(effective_interval, fail_streak)
                         else:
                             prev = state.snapshot().presence
                             state.set_presence(replace(prev, present=False, rssi=None, enabled=True))
                             sleep_time = UNHEALTHY_RECHECK_S
                     else:
-                        present_probe, rssi = probe_once(mac_now, runner=runner)
+                        present_probe, rssi = probe_fn(mac_now)
                         if present_probe:
                             fail_streak = 0
                         else:
@@ -281,7 +362,7 @@ def start_presence_thread(state: "AppState", settings: "Settings",
                         else:
                             new = decide(present_probe, rssi, threshold, prev, now, grace)
                             state.set_presence(replace(new, enabled=True))
-                            sleep_time = next_sleep(interval_now, fail_streak)
+                            sleep_time = next_sleep(effective_interval, fail_streak)
                 else:
                     fail_streak = 0
                     stopped_probing = False

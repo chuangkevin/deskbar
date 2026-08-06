@@ -143,3 +143,12 @@ def test_weather_metar_station_validation(tmp_path, monkeypatch):
     assert config.load_settings().weather_metar_station == "RCSS"
 
 
+def test_presence_source_ble_retained(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"presence_source": "ble"}), encoding="utf-8")
+    s = config.load_settings()
+    assert s.presence_source == "ble"
+
+
+
