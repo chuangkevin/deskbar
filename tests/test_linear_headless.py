@@ -186,15 +186,15 @@ def test_swipe_flips_linear_pages_and_clamps(tmp_path, monkeypatch):
     app.state.set_linear([_issue(f"S-{i}") for i in range(20)], NOW)   # 3 頁
     app.hits = []
     app._drag_start = (800, 200)
-    app._handle_touch_up(700, 200)          # 往左滑 100px → 下一頁
+    app._handle_touch_up(450, 200)          # 往左滑 350px (>25% 帶寬) → 下一頁
     assert app.center_pages["linear"] == 1
     app._drag_start = (800, 200)
-    app._handle_touch_up(700, 200)
+    app._handle_touch_up(450, 200)
     app._drag_start = (800, 200)
-    app._handle_touch_up(700, 200)          # 第三次：已是最後一頁，夾住
+    app._handle_touch_up(450, 200)          # 第三次：已是最後一頁，夾住
     assert app.center_pages["linear"] == 2
     app._drag_start = (700, 200)
-    app._handle_touch_up(820, 200)          # 往右滑 → 上一頁
+    app._handle_touch_up(1050, 200)         # 往右滑 350px → 上一頁
     assert app.center_pages["linear"] == 1
 
 

@@ -114,14 +114,14 @@ def test_center_page_swipe_starts_transition(tmp_path, monkeypatch):
     app.settings.center_view = "linear"
     app.state.set_linear([_issue(i) for i in range(12)], NOW)   # 2 頁
     app._drag_start = (900, 200)
-    app._handle_touch_up(700, 200)          # 往左滑 200px → 下一頁
+    app._handle_touch_up(500, 200)          # 往左滑 400px (>25% 帶寬) → 下一頁
     assert app.center_pages["linear"] == 1
-    assert app._transition_start is not None, "翻成要播滑動過場"
-    app._transition_start = None
+    assert app._page_settle is not None, "翻成要播吸附過場"
+    app._page_settle = None
     app._drag_start = (900, 200)
-    app._handle_touch_up(700, 200)          # 已在最末頁 → 不動、不播
+    app._handle_touch_up(500, 200)          # 已在最末頁 → 不動、彈回 0
     assert app.center_pages["linear"] == 1
-    assert app._transition_start is None, "邊界沒翻成不播過場"
+    assert app._page_settle is not None and app._page_settle["to"] == 0.0, "邊界沒翻成吸附彈回原位"
 
 
 # ---------------------------------------------------------------- 迫近搶焦點

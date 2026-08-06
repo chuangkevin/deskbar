@@ -23,6 +23,41 @@ PAN_BAND_INTERVAL = 1 / 30               # 跟手位移的 flip 節流（帶狀 
 # 晴/雲/霧 8）——實務上 open-meteo 的每個 code 都有動態場景，氛圍模式是 24/7
 # 常態，分級幀率才是 Pi Zero 2W 上真正的省電槓桿。
 
+PAGE_FLIP_RATIO = 0.25      # 拖過帶寬的 1/4 就翻頁
+PAGE_EDGE_RESIST = 3        # 邊界外拖的阻尼倍率
+PAGE_SETTLE_S = 0.15        # 放手吸附動畫時長（秒）
+
+
+def page_drag_offset(dx: float, width: int, has_prev: bool, has_next: bool) -> float:
+    """拖曳中內容實際要位移多少 px。
+    往左拖（dx<0）＝要看下一頁：沒有下一頁時只給 dx/PAGE_EDGE_RESIST 的阻尼
+    位移（橡皮筋手感，讓使用者知道到底了），有下一頁就 1:1。
+    往右拖同理對應上一頁。位移量一律夾在 [-width, width]。
+    """
+    if dx < 0:
+        raw = dx if has_next else dx / PAGE_EDGE_RESIST
+    elif dx > 0:
+        raw = dx if has_prev else dx / PAGE_EDGE_RESIST
+    else:
+        raw = 0.0
+    w = float(width)
+    return max(-w, min(w, float(raw)))
+
+
+def page_drag_decision(dx: float, width: int, has_prev: bool, has_next: bool) -> int:
+    """放手時回 +1（翻到下一頁）／-1（上一頁）／0（彈回原頁）。
+    |dx| 必須超過 width * PAGE_FLIP_RATIO 才算數；方向上沒有頁可翻時一律回 0。
+    dx<0 → +1（往左滑看下一頁），dx>0 → -1。
+    """
+    threshold = width * PAGE_FLIP_RATIO
+    if abs(dx) <= threshold or dx == 0:
+        return 0
+    if dx < 0:
+        return 1 if has_next else 0
+    else:
+        return -1 if has_prev else 0
+
+
 
 class App:
     def __init__(self, state, settings, settings_lock, on_save, alarm_store=None,
@@ -65,7 +100,12 @@ class App:
         self._swallow_touch = False     # 熄屏中的第一觸＝喚醒，不當作操作
         self._pan_band = None           # 跟手拖曳：中欄帶狀快照（拖曳中 1:1 位移，放手清除）
         self._pan_band_at = 0.0
+        self._page_drag = None          # 待辦/便條牆跟手拖曳：中欄帶狀快照狀態
+        self._page_drag_at = 0.0
+        self._page_settle = None        # 待辦/便條牆放手吸附動畫狀態
         self._transition_cache = None   # 過場期間的「新畫面」快照：只算一次，逐幀純合成
+        self._dev = False
+        self._dev_rotate = 0
         self._rot_cache = None          # 實機旋轉輸出快取：髒區域局部旋轉的基底
         self._rot_angle = None
         self._auto_center_prev = None   # 迫近行程自動切回行事曆前，使用者原本的中欄視圖
@@ -168,7 +208,8 @@ class App:
             veil = self._dim_veil(out.get_size())
             if veil is not None:
                 out.blit(veil, (0, 0))
-            self.screen.blit(out, (0, 0))
+            if getattr(self, "screen", None) is not None:
+                self.screen.blit(out, (0, 0))
         else:
             angle = transform.pygame_rotation_angle(self.settings.rotation)
             if self._rot_cache is None or self._rot_angle != angle or dirty is None:
@@ -179,11 +220,13 @@ class App:
                 if r.w > 0 and r.h > 0:
                     sub = pygame.transform.rotate(self.logical.subsurface(r), angle)
                     self._rot_cache.blit(sub, self._map_rot(r, angle))
-            self.screen.blit(self._rot_cache, (0, 0))
-            veil = self._dim_veil(self._rot_cache.get_size())
-            if veil is not None:
-                self.screen.blit(veil, (0, 0))
-        pygame.display.flip()
+            if getattr(self, "screen", None) is not None:
+                self.screen.blit(self._rot_cache, (0, 0))
+                veil = self._dim_veil(self._rot_cache.get_size())
+                if veil is not None:
+                    self.screen.blit(veil, (0, 0))
+        if pygame.display.get_init() and pygame.display.get_surface() is not None:
+            pygame.display.flip()
 
     def _dispatch(self, x: int, y: int) -> None:
         from datetime import datetime, time as _time
@@ -797,15 +840,45 @@ class App:
         from deskbar.ui.dashboard import TL_X0, TL_X1
         center = getattr(self.settings, "center_view", "calendar")
         if center in ("linear", "notes") and self.view == "dashboard":
-            # 待辦/便條牆：左右滑動＝翻頁（往左滑看下一頁），點擊照舊 dispatch
+            # 待辦/便條牆：跟手拖曳放手後的吸附動畫；沒拖過門檻則觸發 dispatch 點擊
             if abs(dx) > DRAG_THRESHOLD and sx > TL_X0:
-                before = self.center_pages.get(center, 0)
-                direction = +1 if dx < 0 else -1
-                self._start_transition(direction)
-                self._flip_center_page(center, direction)
-                if self.center_pages.get(center, 0) == before:
-                    self._transition_start = None   # 已在邊界沒翻成，不播過場
-                self._last_seq = -1
+                from deskbar.ui.dashboard import CENTER_SLIDE_AREA
+                r = pygame.Rect(int(CENTER_SLIDE_AREA.x), int(CENTER_SLIDE_AREA.y),
+                                int(CENTER_SLIDE_AREA.w), int(CENTER_SLIDE_AREA.h))
+                cur_page = self.center_pages.get(center, 0)
+                if center == "linear":
+                    from deskbar.ui import linearview
+                    total = linearview.page_count(len(self.state.snapshot().linear))
+                else:
+                    from deskbar.ui import notesview
+                    total = notesview.page_count(
+                        len(self.notes_store.list()) if self.notes_store else 0)
+                has_prev = cur_page > 0
+                has_next = cur_page < total - 1
+
+                if self._page_drag is None:
+                    cur = self.logical.subsurface(r).copy() if getattr(self, "logical", None) is not None else None
+                    self._page_drag = {
+                        "center": center,
+                        "cur": cur,
+                        "neighbour": None,
+                        "dir": -1 if dx < 0 else 1,
+                        "has_prev": has_prev,
+                        "has_next": has_next,
+                        "rect": r,
+                    }
+
+                from_off = page_drag_offset(dx, r.w, has_prev, has_next)
+                d = page_drag_decision(dx, r.w, has_prev, has_next)
+                if d != 0:
+                    self._flip_center_page(center, d)
+                to_off = -r.w if d == 1 else (r.w if d == -1 else 0.0)
+                self._page_settle = {
+                    "from": from_off,
+                    "to": to_off,
+                    "start": time.monotonic(),
+                    "drag": self._page_drag,
+                }
             else:
                 self._dispatch(x, y)
             return
@@ -887,6 +960,144 @@ class App:
         self.logical.blit(self._pan_band, (r.x + dx, r.y))
         self.logical.set_clip(prev_clip)
         self._flip(r)
+
+    def _render_page_drag_band(self) -> None:
+        """待辦/便條牆拖曳跟手：離線快照當前頁與鄰頁帶狀畫面，拖曳中 1:1 位移與節流 flip。
+
+        第一版跟手是拖曳中逐幀全量重繪——Pi Zero 2W 一幀 100ms+，實際 8fps
+        橡皮筋感（實機回報「非常不跟手的卡頓感」）。改成拖曳開始時快照中欄
+        帶狀畫面與鄰頁，之後每幀只做一次帶狀 blit（幾 ms），內容跟著手指 1:1 移動。
+        離線渲染鄰頁一次約耗時 100ms，是刻意接受的一次性成本（只在拖曳起手發生一次，
+        之後每幀都只是 blit）。只在 dashboard 待辦/便條牆視圖生效。
+        """
+        if (self.view != "dashboard" or self._drag_start is None
+                or self._drag_last is None or self._transition_start is not None
+                or self.firing or self.card_overlay is not None
+                or getattr(self, "logical", None) is None):
+            return
+        center = getattr(self.settings, "center_view", "calendar")
+        if center not in ("linear", "notes"):
+            return
+        from deskbar.ui.dashboard import CENTER_SLIDE_AREA, TL_X0
+        sx, _sy = self._drag_start
+        lx, _ly = self._drag_last
+        if sx <= TL_X0 or abs(lx - sx) <= DRAG_THRESHOLD:
+            return
+
+        dx = lx - sx
+        current_dir = -1 if dx < 0 else 1
+
+        # 若拖曳方向中途反轉且超過門檻，清掉狀態讓下一幀重新建立（離線渲染另一側鄰頁）
+        if self._page_drag is not None and self._page_drag["dir"] != current_dir:
+            self._page_drag = None
+
+        r = pygame.Rect(int(CENTER_SLIDE_AREA.x), int(CENTER_SLIDE_AREA.y),
+                        int(CENTER_SLIDE_AREA.w), int(CENTER_SLIDE_AREA.h))
+
+        if self._page_drag is None:
+            cur = self.logical.subsurface(r).copy()
+            cur_page = self.center_pages.get(center, 0)
+            if center == "linear":
+                from deskbar.ui import linearview
+                total = linearview.page_count(len(self.state.snapshot().linear))
+            else:
+                from deskbar.ui import notesview
+                total = notesview.page_count(
+                    len(self.notes_store.list()) if self.notes_store else 0)
+            has_prev = cur_page > 0
+            has_next = cur_page < total - 1
+
+            neighbour = None
+            target_page = cur_page + (1 if dx < 0 else -1)
+            if (dx < 0 and has_next) or (dx > 0 and has_prev):
+                old_page = self.center_pages.get(center, 0)
+                try:
+                    self.center_pages[center] = target_page
+                    from datetime import datetime
+                    from zoneinfo import ZoneInfo
+                    now = datetime.now(ZoneInfo("Asia/Taipei"))
+                    self._draw_frame(self.state.snapshot(), now)
+                    neighbour = self.logical.subsurface(r).copy()
+                finally:
+                    self.center_pages[center] = old_page
+                    self.logical.blit(cur, r.topleft)
+
+            self._page_drag = {
+                "center": center,
+                "cur": cur,
+                "neighbour": neighbour,
+                "dir": current_dir,
+                "has_prev": has_prev,
+                "has_next": has_next,
+                "rect": r,
+            }
+
+        mono = time.monotonic()
+        if mono - self._page_drag_at < PAN_BAND_INTERVAL:
+            return
+        self._page_drag_at = mono
+
+        cur = self._page_drag["cur"]
+        neighbour = self._page_drag["neighbour"]
+        drag_dir = self._page_drag["dir"]
+        has_prev = self._page_drag["has_prev"]
+        has_next = self._page_drag["has_next"]
+
+        off = page_drag_offset(dx, r.w, has_prev, has_next)
+        prev_clip = self.logical.get_clip()
+        self.logical.set_clip(r)
+        self.logical.fill(theme.C["bg"], r)
+        self.logical.blit(cur, (int(r.x + off), r.y))
+        if neighbour is not None:
+            if drag_dir < 0:
+                self.logical.blit(neighbour, (int(r.x + off + r.w), r.y))
+            else:
+                self.logical.blit(neighbour, (int(r.x + off - r.w), r.y))
+        self.logical.set_clip(prev_clip)
+        self._flip(r)
+
+    def _render_page_settle_frame(self, now) -> None:
+        """待辦/便條牆拖曳放手後的吸附動畫。
+
+        動畫期間沿用 drag 時截下的 cur/neighbour 快照做帶狀 blit，
+        位移量 offset 由時間內插（ease-out quad）。動畫結束後清除狀態並
+        設定 _last_seq = -1 強制全量重繪。
+        """
+        if self._page_settle is None or getattr(self, "logical", None) is None:
+            return
+        elapsed = time.monotonic() - self._page_settle["start"]
+        progress = elapsed / PAGE_SETTLE_S
+        from_off = self._page_settle["from"]
+        to_off = self._page_settle["to"]
+        drag = self._page_settle["drag"]
+
+        if progress >= 1.0:
+            self._page_drag = None
+            self._page_settle = None
+            self._last_seq = -1
+            self._render()
+            return
+
+        ease_p = 1.0 - (1.0 - progress) ** 2
+        off = from_off + (to_off - from_off) * ease_p
+
+        r = drag["rect"]
+        cur = drag["cur"]
+        neighbour = drag["neighbour"]
+        drag_dir = drag["dir"]
+
+        prev_clip = self.logical.get_clip()
+        self.logical.set_clip(r)
+        self.logical.fill(theme.C["bg"], r)
+        self.logical.blit(cur, (int(r.x + off), r.y))
+        if neighbour is not None:
+            if drag_dir < 0:
+                self.logical.blit(neighbour, (int(r.x + off + r.w), r.y))
+            else:
+                self.logical.blit(neighbour, (int(r.x + off - r.w), r.y))
+        self.logical.set_clip(prev_clip)
+        self._flip(r)
+
 
     def _press_feedback(self, x: int, y: int) -> None:
         """按下瞬間的視覺回饋（目標 <50ms）：命中可點元素就疊一層高亮並立即
@@ -1003,7 +1214,9 @@ class App:
 
     def _touch_down(self, x: int, y: int) -> None:
         """FINGERDOWN／MOUSEBUTTONDOWN 共用：熄屏中第一觸＝喚醒（吞掉不當操作）；
-        平常＝記下拖曳起點＋立即畫按壓高亮。"""
+        平常＝記下拖曳起點＋狀態重置＋立即畫按壓高亮。"""
+        self._page_settle = None
+        self._page_drag = None
         if self._screen_asleep():
             self._wake_until = time.monotonic() + WAKE_SECONDS
             self._swallow_touch = True
@@ -1062,6 +1275,7 @@ class App:
         if self._drag_start is not None:
             # 跟手位移每圈只做一次（motion 事件常一圈湧進 3-5 顆，逐顆 flip 白燒）
             self._pan_band_preview()
+            self._render_page_drag_band()
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -1094,6 +1308,10 @@ class App:
                 return running
         if self._transition_start is not None:    # 切換過場優先於翻牌動畫（兩者不會同時發生）
             self._render_transition_frame(now)
+            clock.tick(30)
+            return running
+        if self._page_settle is not None:
+            self._render_page_settle_frame(now)
             clock.tick(30)
             return running
         # 翻牌動畫（30fps 燒 400ms）只在 dashboard 頁才有意義；離開 dashboard 就不該
