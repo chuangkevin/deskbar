@@ -124,27 +124,39 @@ def probe_once(mac: str, runner=subprocess.run) -> tuple[bool, int | None]:
         _PROBE_LOCK.release()
 
 
-def parse_ble_rssi(output: str) -> int | None:
-    """解析 bluetoothctl 輸出的 RSSI 值（純函數，不做 I/O，不拋例外）。
+def parse_dbus_rssi(output: str) -> int | None:
+    """解析 D-Bus Get RSSI 屬性指令的輸出（純函數，不做 I/O，不拋例外）。
 
-    2026-08-06 實機驗證：BlueZ 被動 BLE 掃描輸出可能包含 ANSI 色碼與 Hex RSSI 格式，
-    例如 `RSSI: 0xffffffc7 (-57)`，亦可能為簡化格式 `RSSI: -57`。
-    多筆紀錄時（前面為廣播掃描、最後為 info <MAC> 結果）必須取最後一筆。
+    2026-08-06 實機假陽性 Bug 修正對策：
+    前版解析 bluetoothctl 全區輸出會被周圍其他裝置的 [CHG] Device ... RSSI 訊號干擾，
+    對不存在的 MAC 連續探測 10 次皆誤判為 (True, -72)。
+    改用 D-Bus 針對指定裝置讀取 RSSI 屬性：
+    - 在場時輸出包含 "variant       int16 -55"
+    - 不在場或無 RSSI 時輸出包含 "Error org.freedesktop.DBus.Error.InvalidArgs: No such property 'RSSI'"
     """
     if not isinstance(output, str) or not output:
         return None
+    if "Error" in output or "No such property" in output:
+        return None
     try:
-        clean = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", output)
-        matches = list(re.finditer(r"RSSI:\s*(?:0x[0-9a-fA-F]+\s*\((-?\d+)\)|(-?\d+))", clean))
-        if not matches:
+        m = re.search(r"int16\s+(-?\d+)", output)
+        if not m:
             return None
-        last_m = matches[-1]
-        val_str = last_m.group(1) or last_m.group(2)
-        if val_str is None:
-            return None
-        return int(val_str)
+        return int(m.group(1))
     except Exception:
         return None
+
+
+def mac_to_dbus_path(mac: str) -> str | None:
+    """將 MAC 位址轉換為 BlueZ D-Bus 裝置物件路徑（純函數，不做 I/O，不拋例外）。
+
+    例如 "c4:c1:7d:63:07:88" -> "/org/bluez/hci0/dev_C4_C1_7D_63_07_88"。
+    若 MAC 不合法則傳回 None。
+    """
+    if not isinstance(mac, str) or not _MAC_RE.match(mac):
+        return None
+    formatted = mac.replace(":", "_").upper()
+    return f"/org/bluez/hci0/dev_{formatted}"
 
 
 def probe_ble_once(mac: str, runner=subprocess.run) -> tuple[bool, int | None]:
@@ -152,11 +164,17 @@ def probe_ble_once(mac: str, runner=subprocess.run) -> tuple[bool, int | None]:
 
     2026-08-05 實機事故教訓：l2ping 建立主動 ACL 連線時，對方不在場會導致懸掛請求
     堆積在 BCM43438 控制器中，最終驅動層 tx timeout 並死鎖硬體。
-    2026-08-06 實機驗證：改採被動 BLE 掃描（bluetoothctl 配合 scan on + info <MAC>），
-    由 BlueZ 利用配對時取得的 IRK 自動將手機輪替的隨機 MAC 解析回固定 MAC，
-    完全不對手機建立任何連線即可取得 RSSI，根治晶片卡死風險。
+    2026-08-06 實機假陽性 Bug 修正：原先 parse_ble_rssi() 解析掃描期間 bluetoothctl
+    輸出的整段紀錄並取最後一筆 RSSI，但掃描期間周圍其他裝置的 RSSI 變更事件
+    （例如 [CHG] Device XX:XX:XX:XX:XX:XX RSSI: -70）會持續刷進輸出，
+    實測對根本不存在的 MAC (AA:BB:CC:DD:EE:FF) 連續探測 10 次，每一次都回報 (True, -72)
+    這種假陽性，導致 presence 永遠回報在場、presence_hide_accounts 的私人行事曆遮蔽功能失效。
+    正確做法：背景跑被動掃描（掃描命令末端帶 scan off; quit 確保自動收尾），
+    掃描中途利用 dbus-send 針對特定目標裝置路徑直接讀取 RSSI 屬性。
+    掃描在背景跑並自己 scan off; quit 收尾，即使 dbus 讀取失敗也不會留下殘留的 discovery session。
     """
-    if not isinstance(mac, str) or not _MAC_RE.match(mac):
+    dev_path = mac_to_dbus_path(mac)
+    if dev_path is None:
         return False, None
 
     if not _PROBE_LOCK.acquire(blocking=False):
@@ -164,10 +182,12 @@ def probe_ble_once(mac: str, runner=subprocess.run) -> tuple[bool, int | None]:
 
     try:
         pipeline = (
-            f'(echo "menu scan"; echo "transport le"; echo "back"; '
-            f'echo "scan on"; sleep 8; '
-            f'echo "info {mac}"; sleep 1; '
-            f'echo "scan off"; echo "quit") | bluetoothctl'
+            '(echo "menu scan"; echo "transport le"; echo "back"; '
+            'echo "scan on"; sleep 8; echo "scan off"; echo "quit") | bluetoothctl >/dev/null 2>&1 &\n'
+            'sleep 7\n'
+            f'dbus-send --system --print-reply --dest=org.bluez {dev_path} '
+            'org.freedesktop.DBus.Properties.Get string:org.bluez.Device1 string:RSSI\n'
+            'wait'
         )
         proc = runner(
             ["bash", "-c", pipeline],
@@ -175,8 +195,10 @@ def probe_ble_once(mac: str, runner=subprocess.run) -> tuple[bool, int | None]:
             text=True,
             timeout=BLE_PROBE_TIMEOUT_S,
         )
-        out = (getattr(proc, "stdout", "") or "") + (getattr(proc, "stderr", "") or "")
-        rssi = parse_ble_rssi(out)
+        stdout = getattr(proc, "stdout", "") or ""
+        stderr = getattr(proc, "stderr", "") or ""
+        out = stdout + stderr
+        rssi = parse_dbus_rssi(out)
         if rssi is not None:
             return True, rssi
         return False, None

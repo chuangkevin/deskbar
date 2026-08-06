@@ -443,22 +443,40 @@ def test_try_recover_adapter_cases(monkeypatch):
 
 # ---------------------------------------------------------------- 被動 BLE 掃描探測測試 (2026-08-06)
 
-def test_parse_ble_rssi_cases():
-    # 真實格式
-    assert presence.parse_ble_rssi("\tRSSI: 0xffffffc7 (-57)") == -57
-    # 無 hex 的簡化格式
-    assert presence.parse_ble_rssi("RSSI: -45") == -45
-    # 含 ANSI 色碼
-    ansi_input = "\x1b[0;32mDevice 11:22:33:44:55:66\x1b[0m\n\tRSSI: 0xffffffc7 (-57)"
-    assert presence.parse_ble_rssi(ansi_input) == -57
-    # 多筆取最後一筆（info 輸出在最後）
-    multi_input = "Device AA:BB:CC:DD:EE:FF RSSI: -80\nDevice 11:22:33:44:55:66 RSSI: 0xffffffc7 (-57)"
-    assert presence.parse_ble_rssi(multi_input) == -57
-    # 沒有 RSSI 輸出
-    assert presence.parse_ble_rssi("Device 11:22:33:44:55:66 Connected: no") is None
-    # 空字串與 Non-string
-    assert presence.parse_ble_rssi("") is None
-    assert presence.parse_ble_rssi(None) is None
+def test_parse_dbus_rssi_cases():
+    # 正確 RSSI 輸出
+    assert presence.parse_dbus_rssi("   variant       int16 -55") == -55
+    # D-Bus 錯誤輸出
+    err_out = "Error org.freedesktop.DBus.Error.InvalidArgs: No such property 'RSSI'"
+    assert presence.parse_dbus_rssi(err_out) is None
+    # 空字串與 None
+    assert presence.parse_dbus_rssi("") is None
+    assert presence.parse_dbus_rssi(None) is None
+    # 亂碼 / 不符合格式
+    assert presence.parse_dbus_rssi("random garbage text 12345") is None
+
+
+def test_mac_to_dbus_path_cases():
+    # 合法小寫 MAC 轉大寫底線路徑
+    assert presence.mac_to_dbus_path("c4:c1:7d:63:07:88") == "/org/bluez/hci0/dev_C4_C1_7D_63_07_88"
+    # 合法大寫 MAC
+    assert presence.mac_to_dbus_path("AA:BB:CC:DD:EE:FF") == "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF"
+    # 非法 MAC
+    for bad_mac in ("亂寫", "C4:C1:7D:63:07", "", "12345", None):
+        assert presence.mac_to_dbus_path(bad_mac) is None
+
+
+def test_probe_ble_once_regression_other_device_rssi_pollution():
+    """回歸測試（2026-08-06 實機假陽性 Bug）：
+    掃描輸出包含其他裝置 [CHG] Device AA:BB:CC:DD:EE:FF RSSI: -70 但無 D-Bus int16 回應，
+    必須回傳 (False, None)，不得誤判為在場。
+    """
+    class Result:
+        stdout = "[CHG] Device AA:BB:CC:DD:EE:FF RSSI: -70\n[CHG] Device 11:22:33:44:55:66 RSSI: -80\n"
+
+    present, rssi = presence.probe_ble_once("C4:C1:7D:63:07:88", runner=lambda *a, **k: Result())
+    assert present is False
+    assert rssi is None
 
 
 def test_probe_ble_once_invalid_mac_skips_runner():
@@ -484,35 +502,33 @@ def test_probe_ble_once_success_constructs_pipeline():
 
     def fake_runner(cmd, **kwargs):
         calls.append(cmd)
-        return Result("\tRSSI: 0xffffffc7 (-57)")
+        return Result("   variant       int16 -42")
 
-    mac = "AA:BB:CC:DD:EE:FF"
+    mac = "c4:c1:7d:63:07:88"
     present, rssi = presence.probe_ble_once(mac, runner=fake_runner)
     assert present is True
-    assert rssi == -57
+    assert rssi == -42
     assert len(calls) == 1
     pipeline_cmd = calls[0][2]
     assert "scan on" in pipeline_cmd
-    assert f"info {mac}" in pipeline_cmd
-    assert "transport le" in pipeline_cmd
+    assert "dev_C4_C1_7D_63_07_88" in pipeline_cmd
 
 
 def test_probe_ble_once_no_rssi_returns_false():
     class Result:
-        stdout = "Device AA:BB:CC:DD:EE:FF Connected: no\n"
+        stdout = "Error org.freedesktop.DBus.Error.InvalidArgs: No such property 'RSSI'\n"
 
-    present, rssi = presence.probe_ble_once("AA:BB:CC:DD:EE:FF",
-                                            runner=lambda *a, **k: Result())
+    present, rssi = presence.probe_ble_once("AA:BB:CC:DD:EE:FF", runner=lambda *a, **k: Result())
     assert present is False
     assert rssi is None
 
 
 def test_probe_ble_once_runner_exceptions_handled():
     def raise_timeout(*a, **k):
-        raise subprocess.TimeoutExpired(cmd="bluetoothctl", timeout=20)
+        raise subprocess.TimeoutExpired(cmd="bash", timeout=20)
 
     def raise_fnf(*a, **k):
-        raise FileNotFoundError("bluetoothctl: command not found")
+        raise FileNotFoundError("dbus-send: command not found")
 
     def raise_oserror(*a, **k):
         raise OSError("Input/output error")
