@@ -385,6 +385,27 @@ def test_refresh_openai_async_min_interval(monkeypatch):
     assert len(calls) == 1
 
 
+def test_latest_oa_activity_mtime_uses_newest_existing_path(tmp_path):
+    demo = _load_demo_module()
+    older = tmp_path / "auth.json"
+    newer = tmp_path / "history.jsonl"
+    older.touch()
+    newer.touch()
+    older_mtime = 1000.0
+    newer_mtime = 2000.0
+    import os
+    os.utime(older, (older_mtime, older_mtime))
+    os.utime(newer, (newer_mtime, newer_mtime))
+
+    assert demo._latest_oa_activity_mtime((older, newer, tmp_path / "missing")) == newer_mtime
+
+
+def test_latest_oa_activity_mtime_skips_missing_paths(tmp_path):
+    demo = _load_demo_module()
+
+    assert demo._latest_oa_activity_mtime((tmp_path / "missing-a", tmp_path / "missing-b")) is None
+
+
 @pytest.fixture(autouse=True)
 def reset_ag_latest():
     demo = _load_demo_module()
@@ -638,4 +659,3 @@ def test_load_access_token_expired_still_expired_no_infinite_loop(monkeypatch):
         demo.load_access_token()
     assert "token 已過期且自動換發失敗" in str(exc_info.value)
     assert len(refresh_calls) == 1
-

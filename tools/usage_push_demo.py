@@ -50,7 +50,13 @@ USAGE_BETA_HEADER = "oauth-2025-04-20"
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 CACHE_PATH = Path.home() / ".deskbar-agent" / "usage_cache.json"
-OPENCODE_DB_PATH = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+# 2026-08-10 委派主力從 OpenCode 換成 Codex CLI；只看 opencode.db 會使
+# 活動觸發永遠不發生，因此同時觀察 Codex 會更新的憑證與歷程檔。
+OA_ACTIVITY_PATHS = (
+    "~/.codex/auth.json",
+    "~/.codex/history.jsonl",
+    "~/.local/share/opencode/opencode.db",
+)
 DEFAULT_FETCH_INTERVAL = 300.0
 DEFAULT_PUSH_INTERVAL = 60.0
 DEFAULT_AG_INTERVAL = 300.0
@@ -73,8 +79,8 @@ _OA_LOCK = threading.Lock()
 _OA_FETCHING_LOCK = threading.Lock()
 _OA_FETCHING = False
 _OA_LAST_REFRESH_MONO: float | None = None
-_OA_LAST_DB_MTIME: float | None = None
-_OA_DB_MTIME_READY = False
+_OA_LAST_ACTIVITY_MTIME: float | None = None
+_OA_ACTIVITY_MTIME_READY = False
 _OA_LATEST: dict = {
     "oa_weekly_pct": None,
     "oa_weekly_resets_at": None,
@@ -271,22 +277,31 @@ def refresh_openai_async(min_interval: float = OA_MIN_INTERVAL) -> threading.Thr
     return thread
 
 
-def _opencode_db_mtime_changed(path: Path = OPENCODE_DB_PATH) -> bool:
-    """偵測 opencode.db mtime 是否改變，用來推測使用者剛消耗過 OpenAI 額度。"""
-    global _OA_LAST_DB_MTIME, _OA_DB_MTIME_READY
-    try:
-        current = Path(path).expanduser().stat().st_mtime
-    except OSError:
-        current = None
+def _latest_oa_activity_mtime(paths=OA_ACTIVITY_PATHS) -> float | None:
+    """回傳存在活動檔的最新 mtime；缺檔不該中斷常駐推送。"""
+    mtimes = []
+    for path in paths:
+        try:
+            mtimes.append(Path(path).expanduser().stat().st_mtime)
+        except OSError:
+            continue
+    return max(mtimes) if mtimes else None
 
-    if not _OA_DB_MTIME_READY:
-        _OA_LAST_DB_MTIME = current
-        _OA_DB_MTIME_READY = True
+
+def _oa_activity_mtime_changed(paths=OA_ACTIVITY_PATHS) -> bool:
+    """只有最新活動時間比已記錄值新時才推測剛消耗過 OpenAI 額度。"""
+    global _OA_LAST_ACTIVITY_MTIME, _OA_ACTIVITY_MTIME_READY
+    current = _latest_oa_activity_mtime(paths)
+
+    if not _OA_ACTIVITY_MTIME_READY:
+        _OA_LAST_ACTIVITY_MTIME = current
+        _OA_ACTIVITY_MTIME_READY = True
         return False
-
-    if current != _OA_LAST_DB_MTIME:
-        _OA_LAST_DB_MTIME = current
-        return current is not None
+    if current is not None and (
+        _OA_LAST_ACTIVITY_MTIME is None or current > _OA_LAST_ACTIVITY_MTIME
+    ):
+        _OA_LAST_ACTIVITY_MTIME = current
+        return True
     return False
 
 
@@ -513,7 +528,7 @@ def run_loop(
         else "Antigravity 已關閉"
     )
     oa_status = (
-        f"OpenAI {oa_interval:g} 秒 + opencode.db 觸發"
+        f"OpenAI {oa_interval:g} 秒 + 活動檔觸發"
         if openai_available
         else "OpenAI 已關閉"
     )
@@ -530,10 +545,10 @@ def run_loop(
         now = time.monotonic()
         if openai_available:
             # 2026-08-10 實機驗證：OpenAI 用量只能靠真實請求 header 取得，
-            # 每次刷新都消耗一點額度，所以平時不輪詢；只在剛用過 opencode
+            # 每次刷新都消耗一點額度，所以平時不輪詢；只在剛用過 Codex CLI
             # 或距上次兜底刷新超過一小時時才嘗試，並由 OA_MIN_INTERVAL 擋連發。
-            db_changed = _opencode_db_mtime_changed()
-            if now >= next_oa or db_changed:
+            activity_changed = _oa_activity_mtime_changed()
+            if now >= next_oa or activity_changed:
                 started = refresh_openai_async()
                 if started is not None:
                     next_oa = now + oa_interval

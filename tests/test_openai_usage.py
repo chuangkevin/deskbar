@@ -1,7 +1,8 @@
 """OpenAI Codex responses header 解析與抓取工具測試。"""
+import base64
 import json
 
-from tools.openai_usage import fetch_usage, parse_codex_headers
+from tools.openai_usage import fetch_usage, load_credentials, parse_codex_headers
 
 
 REAL_HEADERS = {
@@ -20,6 +21,68 @@ def _auth_file(tmp_path):
         encoding="utf-8",
     )
     return path
+
+
+def _write_json(path, value):
+    path.write_text(json.dumps(value), encoding="utf-8")
+    return path
+
+
+def _fake_jwt(payload):
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    return f"header.{encoded}.signature"
+
+
+def test_load_credentials_uses_codex_when_only_codex_exists(tmp_path):
+    codex = _write_json(tmp_path / "codex.json", {
+        "tokens": {"access_token": "codex-token", "account_id": "codex-account"},
+    })
+
+    assert load_credentials(codex, tmp_path / "missing.json") == ("codex-token", "codex-account")
+
+
+def test_load_credentials_uses_opencode_when_only_opencode_exists(tmp_path):
+    opencode = _write_json(tmp_path / "opencode.json", {
+        "openai": {"access": "opencode-token", "accountId": "opencode-account"},
+    })
+
+    assert load_credentials(tmp_path / "missing.json", opencode) == ("opencode-token", "opencode-account")
+
+
+def test_load_credentials_prefers_codex_over_opencode(tmp_path):
+    codex = _write_json(tmp_path / "codex.json", {
+        "tokens": {"access_token": "codex-token", "account_id": "codex-account"},
+    })
+    opencode = _write_json(tmp_path / "opencode.json", {
+        "openai": {"access": "opencode-token", "accountId": "opencode-account"},
+    })
+
+    assert load_credentials(codex, opencode) == ("codex-token", "codex-account")
+
+
+def test_load_credentials_bad_codex_falls_back_to_opencode(tmp_path):
+    codex = tmp_path / "codex.json"
+    codex.write_text("{not json", encoding="utf-8")
+    opencode = _write_json(tmp_path / "opencode.json", {
+        "openai": {"access": "opencode-token", "accountId": "opencode-account"},
+    })
+
+    assert load_credentials(codex, opencode) == ("opencode-token", "opencode-account")
+
+
+def test_load_credentials_missing_files_returns_none_pair(tmp_path):
+    assert load_credentials(tmp_path / "missing-codex.json", tmp_path / "missing-opencode.json") == (None, None)
+
+
+def test_load_credentials_uses_jwt_account_id_when_missing_from_file(tmp_path):
+    token = _fake_jwt({
+        "https://api.openai.com/auth": {"chatgpt_account_id": "acc-test"},
+    })
+    codex = _write_json(tmp_path / "codex.json", {
+        "tokens": {"access_token": token},
+    })
+
+    assert load_credentials(codex, tmp_path / "missing.json") == (token, "acc-test")
 
 
 def test_parse_codex_headers_real_headers():
