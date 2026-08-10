@@ -58,6 +58,28 @@ def page_drag_decision(dx: float, width: int, has_prev: bool, has_next: bool) ->
         return -1 if has_prev else 0
 
 
+def rot_offset(dx: float, angle: int) -> tuple[float, float]:
+    """把 logical 水平位移換成 pygame.rotate(angle) 後的輸出面位移。
+
+    這段複雜度只是為了 Pi Zero 2W：實機量到拖曳帶狀區域每幀旋轉要 18.3ms，
+    會把拖曳壓到 22fps。若改用 Pi 4 這類旋轉只要 3-5ms 的板子，可以刪掉
+    這條預旋轉捷徑，回到單純畫 logical 再 _flip(rect) 的寫法。
+    """
+    a = angle % 360
+    if a == 0:
+        return (dx, 0.0)
+    if a == 180:
+        return (-dx, 0.0)
+    if a == 270:   # angle == -90；pygame.rotate(-90) 是順時針。
+        # 推導：_map_rot 對 -90 回 (lh - y - h, x)，同一矩形水平移 dx 後，
+        # 旋轉輸出面的 x 不變、y 變成 x + dx，所以往左拖(dx<0)會往上。
+        return (0.0, dx)
+    if a == 90:
+        # 與 -90 相反：_map_rot 對 +90 回 (y, lw - x - w)，水平移 dx 後 y 減 dx。
+        return (0.0, -dx)
+    return (dx, 0.0)
+
+
 
 class App:
     def __init__(self, state, settings, settings_lock, on_save, alarm_store=None,
@@ -193,6 +215,24 @@ class App:
         if angle % 360 == 270:          # pygame.rotate(-90)＝順時針
             return (lh - r.y - r.h, r.x)
         return (r.y, lw - r.x - r.w)    # +90＝逆時針
+
+    def _page_drag_rot_fields(self, cur, neighbour, r: "pygame.Rect") -> dict:
+        """建立待辦/便條牆拖曳用的預旋轉快照欄位。
+
+        這是 Pi Zero 2W 的慢硬體妥協：拖曳時內容只是在平移，若每幀把同一張
+        1118x428 快照旋轉一次會白燒 18.3ms；起手先轉好，後續只 blit。
+        _dev 路徑保留原本 logical→_flip 的簡單管線，方便開發機觀察。
+        """
+        if self._dev or cur is None:
+            return {}
+        angle = transform.pygame_rotation_angle(self.settings.rotation)
+        return {
+            "cur_rot": pygame.transform.rotate(cur, angle),
+            "neighbour_rot": pygame.transform.rotate(neighbour, angle)
+            if neighbour is not None else None,
+            "angle": angle,
+            "rot_base": self._map_rot(r, angle),
+        }
 
     def _flip(self, dirty=None) -> None:
         """dirty（logical 座標的 Rect|tuple|None）：這一幀只有該區域變了。
@@ -877,7 +917,7 @@ class App:
 
                 if self._page_drag is None:
                     cur = self.logical.subsurface(r).copy() if getattr(self, "logical", None) is not None else None
-                    self._page_drag = {
+                    drag = {
                         "center": center,
                         "cur": cur,
                         "neighbour": None,
@@ -886,6 +926,8 @@ class App:
                         "has_next": has_next,
                         "rect": r,
                     }
+                    drag.update(self._page_drag_rot_fields(cur, None, r))
+                    self._page_drag = drag
 
                 from_off = page_drag_offset(dx, r.w, has_prev, has_next)
                 d = page_drag_decision(dx, r.w, has_prev, has_next)
@@ -899,6 +941,12 @@ class App:
                     "drag": self._page_drag,
                 }
             else:
+                if self._page_drag is not None:
+                    # 手指曾經拖過門檻又彈回點擊範圍時，結束暫存拖曳並強制重繪，
+                    # 避免實機 _rot_cache 或 dev logical 留著半路拖曳畫面。
+                    self._page_drag = None
+                    self._rot_angle = None
+                    self._last_seq = -1
                 self._dispatch(x, y)
             return
         if abs(dx) > DRAG_THRESHOLD and sx > TL_X0:
@@ -980,6 +1028,74 @@ class App:
         self.logical.set_clip(prev_clip)
         self._flip(r)
 
+    def _blit_page_band_rotated(self, drag: dict, off: float) -> None:
+        """把待辦/便條牆拖曳快照依 off 合成到輸出面。
+
+        實機路徑直接改 _rot_cache，避免 Pi Zero 2W 每幀重做 18.3ms 的帶狀旋轉；
+        快一點的板子（Pi 4 旋轉約 3-5ms）可以刪掉這段妥協，退回下面 _dev 用的
+        logical 合成後 _flip(rect) 寫法。因為這裡會把 _rot_cache 暫時改成拖曳畫面，
+        吸附結束時必須讓下一次全量 _flip 重建快取，否則會殘留拖曳中的像素。
+        """
+        r = drag["rect"]
+        cur = drag["cur"]
+        neighbour = drag["neighbour"]
+        drag_dir = drag["dir"]
+
+        if self._dev or "cur_rot" not in drag:
+            prev_clip = self.logical.get_clip()
+            self.logical.set_clip(r)
+            self.logical.fill(theme.C["bg"], r)
+            self.logical.blit(cur, (int(r.x + off), r.y))
+            if neighbour is not None:
+                if drag_dir < 0:
+                    self.logical.blit(neighbour, (int(r.x + off + r.w), r.y))
+                else:
+                    self.logical.blit(neighbour, (int(r.x + off - r.w), r.y))
+            self.logical.set_clip(prev_clip)
+            self._flip(r)
+            return
+
+        cur_rot = drag.get("cur_rot")
+        angle = drag.get("angle")
+        rot_base = drag.get("rot_base")
+        if cur_rot is None or angle is None or rot_base is None:
+            return
+        if self._rot_cache is None or self._rot_angle != angle:
+            # 正常 render loop 會保留 _rot_cache；測試或異常重入時補建一次，避免拋例外。
+            self._rot_cache = pygame.transform.rotate(self.logical, angle)
+            self._rot_angle = angle
+
+        rot_rect = pygame.Rect(rot_base, cur_rot.get_size()).clip(self._rot_cache.get_rect())
+        if rot_rect.w <= 0 or rot_rect.h <= 0:
+            return
+
+        ox, oy = rot_offset(off, angle)
+        prev_clip = self._rot_cache.get_clip()
+        self._rot_cache.set_clip(rot_rect)
+        self._rot_cache.fill(theme.C["bg"], rot_rect)
+        self._rot_cache.blit(cur_rot, (int(rot_base[0] + ox), int(rot_base[1] + oy)))
+
+        neighbour_rot = drag.get("neighbour_rot")
+        if neighbour_rot is not None:
+            if drag_dir < 0:
+                nox, noy = rot_offset(r.w, angle)
+            else:
+                nox, noy = rot_offset(-r.w, angle)
+            self._rot_cache.blit(neighbour_rot,
+                                 (int(rot_base[0] + ox + nox),
+                                  int(rot_base[1] + oy + noy)))
+        self._rot_cache.set_clip(prev_clip)
+
+        if getattr(self, "screen", None) is not None:
+            dst_rect = rot_rect.clip(self.screen.get_rect())
+            if dst_rect.w > 0 and dst_rect.h > 0:
+                veil = self._dim_veil(self._rot_cache.get_size())
+                self.screen.blit(self._rot_cache, dst_rect.topleft, dst_rect)
+                if veil is not None:
+                    self.screen.blit(veil, dst_rect.topleft, dst_rect)
+        if pygame.display.get_init() and pygame.display.get_surface() is not None:
+            pygame.display.flip()
+
     def _render_page_drag_band(self) -> None:
         """待辦/便條牆拖曳跟手：離線快照當前頁與鄰頁帶狀畫面，拖曳中 1:1 位移與節流 flip。
 
@@ -1041,7 +1157,7 @@ class App:
                     self.center_pages[center] = old_page
                     self.logical.blit(cur, r.topleft)
 
-            self._page_drag = {
+            drag = {
                 "center": center,
                 "cur": cur,
                 "neighbour": neighbour,
@@ -1050,30 +1166,19 @@ class App:
                 "has_next": has_next,
                 "rect": r,
             }
+            drag.update(self._page_drag_rot_fields(cur, neighbour, r))
+            self._page_drag = drag
 
         mono = time.monotonic()
         if mono - self._page_drag_at < PAN_BAND_INTERVAL:
             return
         self._page_drag_at = mono
 
-        cur = self._page_drag["cur"]
-        neighbour = self._page_drag["neighbour"]
-        drag_dir = self._page_drag["dir"]
         has_prev = self._page_drag["has_prev"]
         has_next = self._page_drag["has_next"]
 
         off = page_drag_offset(dx, r.w, has_prev, has_next)
-        prev_clip = self.logical.get_clip()
-        self.logical.set_clip(r)
-        self.logical.fill(theme.C["bg"], r)
-        self.logical.blit(cur, (int(r.x + off), r.y))
-        if neighbour is not None:
-            if drag_dir < 0:
-                self.logical.blit(neighbour, (int(r.x + off + r.w), r.y))
-            else:
-                self.logical.blit(neighbour, (int(r.x + off - r.w), r.y))
-        self.logical.set_clip(prev_clip)
-        self._flip(r)
+        self._blit_page_band_rotated(self._page_drag, off)
 
     def _render_page_settle_frame(self, now) -> None:
         """待辦/便條牆拖曳放手後的吸附動畫。
@@ -1093,6 +1198,9 @@ class App:
         if progress >= 1.0:
             self._page_drag = None
             self._page_settle = None
+            # 拖曳實機路徑會直接把 _rot_cache 改成暫時畫面；吸附完成後讓下一次
+            # 全量 _flip 重建快取，避免拖曳殘影留在後續局部更新的基底裡。
+            self._rot_angle = None
             self._last_seq = -1
             self._render()
             return
@@ -1100,22 +1208,7 @@ class App:
         ease_p = 1.0 - (1.0 - progress) ** 2
         off = from_off + (to_off - from_off) * ease_p
 
-        r = drag["rect"]
-        cur = drag["cur"]
-        neighbour = drag["neighbour"]
-        drag_dir = drag["dir"]
-
-        prev_clip = self.logical.get_clip()
-        self.logical.set_clip(r)
-        self.logical.fill(theme.C["bg"], r)
-        self.logical.blit(cur, (int(r.x + off), r.y))
-        if neighbour is not None:
-            if drag_dir < 0:
-                self.logical.blit(neighbour, (int(r.x + off + r.w), r.y))
-            else:
-                self.logical.blit(neighbour, (int(r.x + off - r.w), r.y))
-        self.logical.set_clip(prev_clip)
-        self._flip(r)
+        self._blit_page_band_rotated(drag, off)
 
 
     def _press_feedback(self, x: int, y: int) -> None:
@@ -1234,6 +1327,10 @@ class App:
     def _touch_down(self, x: int, y: int) -> None:
         """FINGERDOWN／MOUSEBUTTONDOWN 共用：熄屏中第一觸＝喚醒（吞掉不當操作）；
         平常＝記下拖曳起點＋狀態重置＋立即畫按壓高亮。"""
+        if self._page_settle is not None or self._page_drag is not None:
+            # 新觸控會中斷上一段拖曳；實機路徑可能已改過 _rot_cache，先失效化，
+            # 讓後續按壓高亮的局部 _flip 不會拿拖曳暫存畫面當基底。
+            self._rot_angle = None
         self._page_settle = None
         self._page_drag = None
         if self._screen_asleep():
