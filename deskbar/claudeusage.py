@@ -8,7 +8,7 @@ Claude Code 憑證、打官方 usage API，再主動 POST 推給這台裝置」�
 不再對外發出任何請求。
 
 這支模組因此只剩兩樣東西：
-- UsageInfo：usage 快照的資料形狀（session/weekly/fable 三組百分比＋重置時間，
+- UsageInfo：usage 快照的資料形狀（Claude/AG/OpenAI 各組百分比＋重置時間，
   外加 fetched_at 供油表判斷資料新鮮度）。
 - fmt_countdown：把「距某個時間點還有多久」格式成人看得懂的字串，油表渲染與
   舊版都共用的純函數，跟資料來源無關所以留在這裡。
@@ -32,6 +32,8 @@ class UsageInfo:
     ag_5h_resets_at: datetime | None = None
     ag_weekly_pct: float | None = None
     ag_weekly_resets_at: datetime | None = None
+    oa_weekly_pct: float | None = None
+    oa_weekly_resets_at: datetime | None = None
 
 
 def fmt_countdown(dt: datetime | None, now: datetime) -> str:
@@ -53,8 +55,8 @@ def fmt_countdown(dt: datetime | None, now: datetime) -> str:
 
 # ---------------------------------------------------------------- 配速判定
 
-# 各視窗長度（秒）：5 小時 session、7 天週限額、7 天 Fable 週限額、AG 5 小時、AG 週限額
-WINDOW_S = {"session": 5 * 3600, "weekly": 7 * 86400, "fable": 7 * 86400, "ag_5h": 5 * 3600, "ag_weekly": 7 * 86400}
+# 各視窗長度（秒）：5 小時 session、7 天週限額、7 天 Fable 週限額、AG 與 OpenAI 對應視窗
+WINDOW_S = {"session": 5 * 3600, "weekly": 7 * 86400, "fable": 7 * 86400, "ag_5h": 5 * 3600, "ag_weekly": 7 * 86400, "oa_weekly": 7 * 86400}
 PACE_GRACE_PCT = 5.0     # 容許超前配速的緩衝（百分點）：視窗剛開的小額使用不該轉紅
 
 

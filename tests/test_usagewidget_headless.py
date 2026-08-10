@@ -1,4 +1,4 @@
-"""右欄 usage 油表（deskbar.ui.usagewidget）：Claude Code 與 Antigravity 兩區塊渲染、
+"""右欄 usage 油表（deskbar.ui.usagewidget）：Claude Code、Antigravity 與 OpenAI 區塊渲染、
 分級顏色、未連結/需重新登入狀態、以及右欄內容不越界。"""
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -19,7 +19,7 @@ def _surf():
 
 
 def _usage(session_pct=42.0, weekly_pct=61.0, fable_pct=12.0, fetched_at=None,
-           ag_5h_pct=None, ag_weekly_pct=None):
+           ag_5h_pct=None, ag_weekly_pct=None, oa_weekly_pct=None):
     return UsageInfo(
         session_pct=session_pct, session_resets_at=NOW + timedelta(hours=2, minutes=3),
         weekly_pct=weekly_pct, weekly_resets_at=NOW + timedelta(days=1, hours=4),
@@ -27,6 +27,7 @@ def _usage(session_pct=42.0, weekly_pct=61.0, fable_pct=12.0, fetched_at=None,
         fetched_at=fetched_at if fetched_at is not None else NOW,
         ag_5h_pct=ag_5h_pct, ag_5h_resets_at=NOW + timedelta(hours=3),
         ag_weekly_pct=ag_weekly_pct, ag_weekly_resets_at=NOW + timedelta(days=5),
+        oa_weekly_pct=oa_weekly_pct, oa_weekly_resets_at=NOW + timedelta(days=7),
     )
 
 
@@ -41,7 +42,21 @@ def _scan_ink_outside(surf, x_lo, x_hi, bg):
     return bad
 
 
-# ---------------------------------------------------------------- 三組/兩區塊渲染
+def _rendered_texts(monkeypatch, usage):
+    texts = []
+    original = usagewidget._text
+
+    def spy(surface, s, size, color, x, y, anchor="topleft", bold=False):
+        texts.append(s)
+        return original(surface, s, size, color, x, y, anchor=anchor, bold=bold)
+
+    monkeypatch.setattr(usagewidget, "_text", spy)
+    surf = _surf()
+    usagewidget.render(surf, usage, NOW, 1540, 360)
+    return texts, surf
+
+
+# ---------------------------------------------------------------- 三組/三區塊渲染
 
 
 def test_render_three_groups_draws_ink_for_each_group():
@@ -49,7 +64,8 @@ def test_render_three_groups_draws_ink_for_each_group():
     usagewidget.render(surf, _usage(), NOW, 1540, 360)
     bg = theme.C["bg"]
     for i in range(3):     # 5H SESSION / 本週 / FABLE 三組的 label 列各抽一行檢查
-        y = usagewidget.GROUP_START_Y + i * usagewidget.GROUP_STEP
+        y = (usagewidget.TITLE_Y + usagewidget.SECTION_FIRST_GROUP
+             + i * usagewidget.GROUP_STEP)
         row_has_ink = any(
             surf.get_at((x, y + 8))[:3] != bg for x in range(1540, 1900, 2))
         assert row_has_ink, f"第 {i} 組應該畫出 label/百分比文字"
@@ -59,47 +75,141 @@ def test_fable_group_skipped_when_no_data():
     surf = _surf()
     usagewidget.render(surf, _usage(fable_pct=None), NOW, 1540, 360)
     bg = theme.C["bg"]
-    third_y = usagewidget.GROUP_START_Y + 2 * usagewidget.GROUP_STEP
+    third_y = (usagewidget.TITLE_Y + usagewidget.SECTION_FIRST_GROUP
+               + 2 * usagewidget.GROUP_STEP)
     row_has_ink = any(
         surf.get_at((x, third_y + 8))[:3] != bg for x in range(1540, 1900, 2))
     assert not row_has_ink, "FABLE 無資料時第三組不該畫任何東西"
 
 
-def test_antigravity_section_rendered_when_ag_data_present():
-    surf = _surf()
-    usage = _usage(ag_5h_pct=64.24, ag_weekly_pct=94.04)
-    usagewidget.render(surf, usage, NOW, 1540, 360)
-    bg = theme.C["bg"]
-    ag_has_ink = any(
-        surf.get_at((x, 212))[:3] != bg for x in range(1540, 1900, 2))
-    assert ag_has_ink, "有 AG 資料時應該畫出 ANTIGRAVITY · GEMINI 標題區塊"
+def test_antigravity_section_rendered_when_ag_data_present(monkeypatch):
+    texts, _ = _rendered_texts(monkeypatch, _usage(ag_5h_pct=64.24, ag_weekly_pct=94.04))
+    assert "ANTIGRAVITY · GEMINI" in texts, "有 AG 資料時應該畫出 ANTIGRAVITY · GEMINI 標題區塊"
 
 
-def test_antigravity_section_skipped_when_ag_data_is_none():
-    surf = _surf()
-    usage = _usage(ag_5h_pct=None, ag_weekly_pct=None)
-    usagewidget.render(surf, usage, NOW, 1540, 360)
-    bg = theme.C["bg"]
-    ag_has_ink = any(
-        surf.get_at((x, y))[:3] != bg
-        for y in range(195, 350, 4)
-        for x in range(1540, 1900, 4)
+def test_all_three_sections_render_titles(monkeypatch):
+    texts, _ = _rendered_texts(
+        monkeypatch,
+        _usage(ag_5h_pct=64.24, ag_weekly_pct=94.04, oa_weekly_pct=3.0),
     )
-    assert not ag_has_ink, "AG 兩個 pct 皆 None 時完全不畫該區塊（含分隔線與標題）"
+    assert "CLAUDE CODE" in texts
+    assert "ANTIGRAVITY · GEMINI" in texts
+    assert "OPENAI" in texts
 
 
-def test_layout_bottom_never_exceeds_y352():
+def test_antigravity_section_skipped_when_ag_data_is_none(monkeypatch):
+    texts, surf = _rendered_texts(
+        monkeypatch,
+        _usage(ag_5h_pct=None, ag_weekly_pct=None),
+    )
+    bg = theme.C["bg"]
+    separator_has_ink = any(
+        surf.get_at((x, 140))[:3] != bg for x in range(1540, 1901)
+    )
+    assert "ANTIGRAVITY · GEMINI" not in texts
+    assert not separator_has_ink, "AG 兩個 pct 皆 None 時連分隔線也不該畫"
+
+
+def test_openai_section_skipped_when_oa_data_is_none(monkeypatch):
+    texts, surf = _rendered_texts(
+        monkeypatch,
+        _usage(ag_5h_pct=64.24, ag_weekly_pct=94.04, oa_weekly_pct=None),
+    )
+    bg = theme.C["bg"]
+    separator_has_ink = any(
+        surf.get_at((x, 246))[:3] != bg for x in range(1540, 1901)
+    )
+    assert "OPENAI" not in texts
+    assert not separator_has_ink, "OpenAI 無資料時不該畫分隔線、標題或本週群組"
+
+
+def test_full_layout_uses_expected_section_positions(monkeypatch):
+    titles = []
+    groups = []
+    separators = []
+    original_text = usagewidget._text
+    original_line = pygame.draw.line
+
+    def text_spy(surface, s, size, color, x, y, anchor="topleft", bold=False):
+        if s in {"CLAUDE CODE", "ANTIGRAVITY · GEMINI", "OPENAI"}:
+            titles.append((s, y, size))
+        return original_text(surface, s, size, color, x, y, anchor=anchor, bold=bold)
+
+    def group_spy(surface, x0, w, y, label, pct, resets_at, now,
+                  muted=False, window_s=None):
+        groups.append((label, y))
+
+    def line_spy(surface, color, start_pos, end_pos, width=1):
+        if start_pos[1] == end_pos[1]:
+            separators.append((start_pos, end_pos))
+        return original_line(surface, color, start_pos, end_pos, width)
+
+    monkeypatch.setattr(usagewidget, "_text", text_spy)
+    monkeypatch.setattr(usagewidget, "_draw_group", group_spy)
+    monkeypatch.setattr(pygame.draw, "line", line_spy)
+    usagewidget.render(
+        _surf(),
+        _usage(ag_5h_pct=64.24, ag_weekly_pct=94.04, oa_weekly_pct=3.0),
+        NOW, 1540, 360,
+    )
+
+    assert titles == [
+        ("CLAUDE CODE", 2, 14),
+        ("ANTIGRAVITY · GEMINI", 148, 14),
+        ("OPENAI", 254, 14),
+    ]
+    assert groups == [
+        ("5H SESSION", 22), ("本週", 62), ("FABLE", 102),
+        ("5H", 168), ("本週", 208),
+        ("本週", 274),
+    ]
+    assert separators == [((1540, 140), (1900, 140)),
+                          ((1540, 246), (1900, 246))]
+
+
+def test_layout_bottom_never_exceeds_y340():
     surf = _surf()
-    usage = _usage(fable_pct=12.0, ag_5h_pct=64.24, ag_weekly_pct=94.04)
+    usage = _usage(fable_pct=12.0, ag_5h_pct=64.24, ag_weekly_pct=94.04,
+                   oa_weekly_pct=3.0)
     usagewidget.render(surf, usage, NOW, 1540, 360)
     bg = theme.C["bg"]
-    overshoot = [
-        (x, y)
-        for y in range(353, 480, 2)
-        for x in range(1540, 1900, 2)
-        if surf.get_at((x, y))[:3] != bg
+    ink_rows = [
+        y for y in range(surf.get_height())
+        if any(surf.get_at((x, y))[:3] != bg for x in range(1540, 1900))
     ]
-    assert not overshoot, f"版面最深超過 y=352：{overshoot[:10]}"
+    assert ink_rows
+    assert max(ink_rows) <= 340, f"版面最深畫到 y={max(ink_rows)}"
+
+
+def test_percentage_text_bottom_stays_above_bar(monkeypatch):
+    pct_rect = None
+    bar_tops = []
+    original_text = usagewidget._text
+    original_rect = pygame.draw.rect
+
+    def text_spy(surface, s, size, color, x, y, anchor="topleft", bold=False):
+        nonlocal pct_rect
+        rect = original_text(surface, s, size, color, x, y, anchor=anchor, bold=bold)
+        if s == "100%":
+            pct_rect = rect
+        return rect
+
+    def rect_spy(surface, color, rect, *args, **kwargs):
+        bar_tops.append(pygame.Rect(rect).top)
+        return original_rect(surface, color, rect, *args, **kwargs)
+
+    monkeypatch.setattr(usagewidget, "_text", text_spy)
+    monkeypatch.setattr(pygame.draw, "rect", rect_spy)
+    usagewidget._draw_group(
+        _surf(), 1540, 360, 22, "5H SESSION", 100.0,
+        NOW + timedelta(hours=1), NOW,
+    )
+
+    assert pct_rect is not None
+    assert bar_tops
+    assert pct_rect.bottom < min(bar_tops), (
+        f"百分比文字底部 {pct_rect.bottom} 必須與橫條頂端 {min(bar_tops)} 保持間距"
+    )
 
 
 # ---------------------------------------------------------------- 分級顏色
@@ -107,9 +217,10 @@ def test_layout_bottom_never_exceeds_y352():
 
 def _bar_fill_pixel(surf, group_index=0):
     x0 = 1540
-    y = usagewidget.GROUP_START_Y + group_index * usagewidget.GROUP_STEP
+    y = (usagewidget.TITLE_Y + usagewidget.SECTION_FIRST_GROUP
+         + group_index * usagewidget.GROUP_STEP)
     bar_x = x0 + usagewidget.BAR_MARGIN
-    bar_y = y + 24
+    bar_y = y + 19
     return surf.get_at((bar_x + 5, bar_y + usagewidget.BAR_H // 2))[:3]
 
 
@@ -137,7 +248,8 @@ def test_none_usage_shows_not_pushed_hint():
         surf.get_at((x, 220))[:3] != bg for x in range(1540, 1900, 2))
     assert has_ink, "usage 未推送時應該在中央畫出提示文字"
     card_probe = surf.get_at((1540 + usagewidget.BAR_MARGIN + 5,
-                              usagewidget.GROUP_START_Y + 24 + usagewidget.BAR_H // 2))[:3]
+                              usagewidget.TITLE_Y + usagewidget.SECTION_FIRST_GROUP
+                              + 19 + usagewidget.BAR_H // 2))[:3]
     assert card_probe == bg
 
 

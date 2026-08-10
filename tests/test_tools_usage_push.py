@@ -1,6 +1,4 @@
-"""tools/usage_push_snippet.py 與 tools/usage_push_demo.py：兩支都是 Mac 端
-獨立工具，不隨 deskbar 主程式跑，只需要 py_compile 過關；push_to_deskbar() 額外
-用 fake requests.post 驗證成功/失敗兩條路徑都不拋例外。"""
+"""tools 下 usage 推送與用量抓取工具測試。"""
 import importlib.util
 import sys
 from pathlib import Path
@@ -21,6 +19,10 @@ def test_usage_push_snippet_compiles():
 
 def test_usage_push_demo_compiles():
     _compile("usage_push_demo.py")
+
+
+def test_openai_usage_compiles():
+    _compile("openai_usage.py")
 
 
 def _load_snippet_module():
@@ -242,6 +244,66 @@ def test_build_payload_includes_ag_fields(monkeypatch):
     assert "ag_5h_pct" not in payload_no_ag
 
 
+def test_oa_payload_fields_normal_conversion():
+    from datetime import datetime, timezone
+    demo = _load_demo_module()
+
+    now = datetime(2026, 8, 10, 12, 0, 0, tzinfo=timezone.utc)
+    parsed = {
+        "used_pct": 3.0,
+        "resets_at_epoch": 1786932438,
+        "plan": "prolite",
+    }
+
+    res = demo.oa_payload_fields(parsed, now)
+
+    assert res["oa_weekly_pct"] == pytest.approx(3.0)
+    assert res["oa_weekly_resets_at"] == datetime.fromtimestamp(
+        1786932438, tz=timezone.utc
+    ).isoformat()
+
+
+def test_oa_payload_fields_all_none_input():
+    from datetime import datetime, timezone
+    demo = _load_demo_module()
+
+    now = datetime(2026, 8, 10, 12, 0, 0, tzinfo=timezone.utc)
+    parsed = {"used_pct": None, "resets_at_epoch": None, "plan": None}
+
+    res = demo.oa_payload_fields(parsed, now)
+
+    assert set(res.keys()) == {"oa_weekly_pct", "oa_weekly_resets_at"}
+    assert all(val is None for val in res.values())
+
+    res_empty = demo.oa_payload_fields({}, now)
+    assert set(res_empty.keys()) == {"oa_weekly_pct", "oa_weekly_resets_at"}
+    assert all(val is None for val in res_empty.values())
+
+
+def test_build_payload_includes_openai_fields(monkeypatch):
+    demo = _load_demo_module()
+
+    fake_oa = {
+        "oa_weekly_pct": 3.0,
+        "oa_weekly_resets_at": "2026-08-17T00:00:00+00:00",
+    }
+    monkeypatch.setattr(demo, "fetch_openai_usage", object())
+    monkeypatch.setattr(demo, "get_openai_fields", lambda: fake_oa)
+
+    usage = {
+        "five_hour": {"utilization": 12, "resets_at": "2026-08-04T04:00:00Z"},
+        "seven_day": {"utilization": 34, "resets_at": "2026-08-10T00:00:00Z"},
+    }
+
+    payload = demo.build_payload(usage, enable_antigravity=False, enable_openai=True)
+
+    assert payload["oa_weekly_pct"] == 3.0
+    assert payload["oa_weekly_resets_at"] == "2026-08-17T00:00:00+00:00"
+
+    payload_no_oa = demo.build_payload(usage, enable_antigravity=False, enable_openai=False)
+    assert "oa_weekly_pct" not in payload_no_oa
+
+
 def test_refresh_antigravity_async_keeps_old_value_on_failure(monkeypatch):
     demo = _load_demo_module()
 
@@ -262,7 +324,7 @@ def test_refresh_antigravity_async_keeps_old_value_on_failure(monkeypatch):
 
     assert demo.get_antigravity_fields() == initial_ag
 
-    # Test when fetch returns text but parse is empty
+    # 抓到文字但解析全空時也要保留舊值。
     monkeypatch.setattr(demo, "fetch_usage_text", lambda *a, **kw: "some text")
     monkeypatch.setattr(
         demo,
@@ -280,6 +342,47 @@ def test_refresh_antigravity_async_keeps_old_value_on_failure(monkeypatch):
         t.join()
 
     assert demo.get_antigravity_fields() == initial_ag
+
+
+def test_refresh_openai_async_keeps_old_value_on_failure(monkeypatch):
+    demo = _load_demo_module()
+
+    initial_oa = {
+        "oa_weekly_pct": 3.0,
+        "oa_weekly_resets_at": "2026-08-17T00:00:00+00:00",
+    }
+    with demo._OA_LOCK:
+        demo._OA_LATEST.update(initial_oa)
+
+    monkeypatch.setattr(demo, "fetch_openai_usage", lambda *a, **kw: None)
+    monkeypatch.setattr(demo.time, "monotonic", lambda: 1000.0)
+
+    t = demo.refresh_openai_async()
+    if t is not None:
+        t.join()
+
+    assert demo.get_openai_fields() == initial_oa
+
+
+def test_refresh_openai_async_min_interval(monkeypatch):
+    demo = _load_demo_module()
+    calls = []
+
+    def fake_fetch():
+        calls.append(True)
+        return {"used_pct": 3.0, "resets_at_epoch": 1786932438, "plan": "prolite"}
+
+    monkeypatch.setattr(demo, "fetch_openai_usage", fake_fetch)
+    monkeypatch.setattr(demo.time, "monotonic", lambda: 1000.0)
+
+    first = demo.refresh_openai_async()
+    if first is not None:
+        first.join()
+    second = demo.refresh_openai_async()
+
+    assert first is not None
+    assert second is None
+    assert len(calls) == 1
 
 
 @pytest.fixture(autouse=True)
@@ -318,6 +421,22 @@ def test_save_cache_includes_ag_fields(tmp_path):
     assert loaded["ag_weekly_resets_at"] == "2026-08-11T00:00:00+00:00"
 
 
+def test_save_cache_includes_openai_fields(tmp_path):
+    demo = _load_demo_module()
+    path = tmp_path / "usage.json"
+    payload = {
+        "session_pct": 42.0,
+        "weekly_pct": 10.0,
+        "oa_weekly_pct": 3.0,
+        "oa_weekly_resets_at": "2026-08-17T00:00:00+00:00",
+        "fetched_at": "2026-08-10T17:00:00+00:00",
+    }
+    demo.save_cache(payload, path)
+    loaded = demo.load_cache(path)
+    assert loaded["oa_weekly_pct"] == 3.0
+    assert loaded["oa_weekly_resets_at"] == "2026-08-17T00:00:00+00:00"
+
+
 def test_warm_ag_from_cache_with_ag_fields():
     demo = _load_demo_module()
     cached = {
@@ -333,6 +452,19 @@ def test_warm_ag_from_cache_with_ag_fields():
     assert fields["ag_5h_resets_at"] == "2026-08-04T18:00:00+00:00"
     assert fields["ag_weekly_pct"] == 25.0
     assert fields["ag_weekly_resets_at"] == "2026-08-11T00:00:00+00:00"
+
+
+def test_warm_openai_from_cache_with_openai_fields():
+    demo = _load_demo_module()
+    cached = {
+        "session_pct": 42.0,
+        "oa_weekly_pct": 3.0,
+        "oa_weekly_resets_at": "2026-08-17T00:00:00+00:00",
+    }
+    demo.warm_openai_from_cache(cached)
+    fields = demo.get_openai_fields()
+    assert fields["oa_weekly_pct"] == 3.0
+    assert fields["oa_weekly_resets_at"] == "2026-08-17T00:00:00+00:00"
 
 
 def test_warm_ag_from_cache_missing_fields_defaults_none():
@@ -506,6 +638,4 @@ def test_load_access_token_expired_still_expired_no_infinite_loop(monkeypatch):
         demo.load_access_token()
     assert "token 已過期且自動換發失敗" in str(exc_info.value)
     assert len(refresh_calls) == 1
-
-
 

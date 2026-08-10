@@ -1,10 +1,13 @@
-"""右欄：Claude Code 與 Antigravity (Gemini) usage 油表。
+"""右欄：Claude Code、Antigravity (Gemini) 與 OpenAI usage 油表。
 
-全寬單欄、上下兩區：
+全寬單欄、由上到下三區：
 1. CLAUDE CODE 區：5H SESSION / 本週 / FABLE（FABLE 無資料時略過）
 2. ANTIGRAVITY · GEMINI 區：5H / 本週（無資料時整區略過，不畫分隔線與標題）
+3. OPENAI 區：本週（無資料時整區略過，不畫分隔線與標題）
 
 usage 資料完全被動接收：Mac agent POST 到 deskbar 的 /api/usage。
+
+2026-08-10 實機確認：舊三行制造成文字與橫條重疊；每組因此固定改為文字一行、橫條一行。
 """
 from __future__ import annotations
 
@@ -15,12 +18,15 @@ import pygame
 from deskbar.claudeusage import WINDOW_S, fmt_countdown, over_pace, pace_pct
 from deskbar.ui import theme
 
-TITLE_Y = 8               # 原本 60，整個版面上移 52px
-GROUP_START_Y = 30
-GROUP_STEP = 54           # 原本 84
-BAR_H = 12
-BAR_RADIUS = 6
-BAR_MARGIN = 20           # 橫條 x = x0+20，寬 = w-40（維持全寬，不要縮成子欄）
+TITLE_Y = 2
+SECTION_FIRST_GROUP = 20
+GROUP_STEP = 40
+SECTION_SEP_GAP = 10
+SECTION_TITLE_GAP = 8
+BAR_H = 9
+BAR_RADIUS = 4
+BAR_MARGIN = 0            # 橫條滿寬，讓獨立的第二行清楚呈現可用範圍。
+BAR_Y_OFFSET = 19         # 文字列完整結束後再起橫條，避免字框與橫條相貼。
 STALE_AFTER_S = 300       # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
 VERY_STALE_AFTER_S = 3600 # 超過這麼久，整組轉 muted 灰（agent 可能已經停了）
 
@@ -49,13 +55,16 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
                 window_s: float | None = None) -> None:
     label_color = theme.C["muted"] if muted else theme.C["text2"]
     pct_color = theme.C["muted"] if muted else theme.C["text"]
-    _text(surface, label, 17, label_color, x0, y)
+    _text(surface, label, 15, label_color, x0, y)
+    countdown = fmt_countdown(resets_at, now)
+    _text(surface, f"剩 {countdown}", 12, theme.C["muted"],
+          x0 + w - 52, y + 2, "topright")
     pct_label = f"{round(pct)}%" if pct is not None else "—"
-    _text(surface, pct_label, 20, pct_color, x0 + w, y - 3, "topright", bold=True)
+    _text(surface, pct_label, 17, pct_color, x0 + w, y - 1, "topright", bold=True)
 
     bar_x = x0 + BAR_MARGIN
     bar_w = w - 2 * BAR_MARGIN
-    bar_y = y + 24
+    bar_y = y + BAR_Y_OFFSET
     pygame.draw.rect(surface, theme.C["card"],
                      pygame.Rect(round(bar_x), round(bar_y), round(bar_w), BAR_H),
                      border_radius=BAR_RADIUS)
@@ -78,16 +87,12 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
                              (round(px), round(bar_y - 3)),
                              (round(px), round(bar_y + BAR_H + 3)), 1)
 
-    countdown = fmt_countdown(resets_at, now)
-    _text(surface, f"剩 {countdown}", 13, theme.C["muted"], x0, y + 38)
-
 
 def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360) -> None:
     """usage：deskbar.claudeusage.UsageInfo｜None（來自 Snapshot.usage）。
     x0/w 由呼叫端（dashboard.py）帶入模組常量 USAGE_X0/USAGE_W。"""
-    _text(surface, "CLAUDE CODE", 16, theme.C["muted"], x0, TITLE_Y)
-
     if usage is None:
+        _text(surface, "CLAUDE CODE", 14, theme.C["muted"], x0, TITLE_Y)
         _center_text(surface, "usage 未推送", 22, theme.C["muted"], x0, w, 220)
         _center_text(surface, "Mac agent 未執行", 16, theme.C["muted"], x0, w, 250)
         return
@@ -98,34 +103,43 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360) -> N
         mins = int(age // 60)
         _text(surface, f"({mins} 分前)", 16, theme.C["muted"], x0 + w, TITLE_Y, "topright")
 
-    groups = [
+    claude_groups = [
         ("5H SESSION", usage.session_pct, usage.session_resets_at,
          WINDOW_S["session"]),
         ("本週", usage.weekly_pct, usage.weekly_resets_at, WINDOW_S["weekly"]),
     ]
     if usage.fable_pct is not None:
-        groups.append(("FABLE", usage.fable_pct, usage.fable_resets_at,
-                       WINDOW_S["fable"]))
+        claude_groups.append(("FABLE", usage.fable_pct, usage.fable_resets_at,
+                              WINDOW_S["fable"]))
 
-    y = GROUP_START_Y
-    for label, pct, resets_at, win in groups:
-        _draw_group(surface, x0, w, y, label, pct, resets_at, now, muted=muted,
-                    window_s=win)
-        y += GROUP_STEP
+    sections = [("CLAUDE CODE", claude_groups)]
 
     has_ag = (usage.ag_5h_pct is not None or usage.ag_weekly_pct is not None)
     if has_ag:
-        y += 6
-        pygame.draw.line(surface, theme.C["panel_line"],
-                         (round(x0), round(y)), (round(x0 + w), round(y)), 1)
-        y += 10
-        _text(surface, "ANTIGRAVITY · GEMINI", 16, theme.C["muted"], x0, y)
-        y += 26
-        ag_groups = [
+        sections.append(("ANTIGRAVITY · GEMINI", [
             ("5H", usage.ag_5h_pct, usage.ag_5h_resets_at, WINDOW_S["ag_5h"]),
             ("本週", usage.ag_weekly_pct, usage.ag_weekly_resets_at, WINDOW_S["ag_weekly"]),
-        ]
-        for label, pct, resets_at, win in ag_groups:
+        ]))
+
+    if usage.oa_weekly_pct is not None:
+        sections.append(("OPENAI", [
+            ("本週", usage.oa_weekly_pct, usage.oa_weekly_resets_at, WINDOW_S["oa_weekly"]),
+        ]))
+
+    title_y = TITLE_Y
+    previous_bar_bottom = None
+    for i, (title, groups) in enumerate(sections):
+        if i > 0:
+            sep_y = previous_bar_bottom + SECTION_SEP_GAP
+            pygame.draw.line(surface, theme.C["panel_line"],
+                             (round(x0), round(sep_y)),
+                             (round(x0 + w), round(sep_y)), 1)
+            title_y = sep_y + SECTION_TITLE_GAP
+
+        _text(surface, title, 14, theme.C["muted"], x0, title_y)
+        y = title_y + SECTION_FIRST_GROUP
+        for label, pct, resets_at, win in groups:
             _draw_group(surface, x0, w, y, label, pct, resets_at, now, muted=muted,
                         window_s=win)
+            previous_bar_bottom = y + BAR_Y_OFFSET + BAR_H
             y += GROUP_STEP
