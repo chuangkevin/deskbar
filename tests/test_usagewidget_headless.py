@@ -240,17 +240,12 @@ def test_bar_color_warn_tier_above_85_percent():
 # ---------------------------------------------------------------- 狀態：None／stale／very stale
 
 
-def test_none_usage_shows_not_pushed_hint():
+def test_none_usage_leaves_column_blank():
     surf = _surf()
     usagewidget.render(surf, None, NOW, 1540, 360)
     bg = theme.C["bg"]
-    has_ink = any(
-        surf.get_at((x, 220))[:3] != bg for x in range(1540, 1900, 2))
-    assert has_ink, "usage 未推送時應該在中央畫出提示文字"
-    card_probe = surf.get_at((1540 + usagewidget.BAR_MARGIN + 5,
-                              usagewidget.TITLE_Y + usagewidget.SECTION_FIRST_GROUP
-                              + 19 + usagewidget.BAR_H // 2))[:3]
-    assert card_probe == bg
+    assert not any(surf.get_at((x, y))[:3] != bg
+                   for x in range(1540, 1900, 2) for y in range(0, 480, 2))
 
 
 def test_stale_fetched_at_shows_minutes_ago_note():
@@ -287,6 +282,20 @@ def test_very_stale_fetched_at_turns_bars_muted_gray():
     usagewidget.render(surf2, stale, NOW, 1540, 360)
     stale_pixel = _bar_fill_pixel(surf2)
     assert stale_pixel == theme.C["muted"], "超過 1 小時沒推送，橫條應該整組轉 muted 灰"
+
+
+def test_per_source_selection_and_24h_expiry(monkeypatch):
+    usage = _usage(ag_5h_pct=20.0, ag_weekly_pct=30.0, oa_weekly_pct=5.0)
+    usage = UsageInfo(**{**usage.__dict__,
+        "claude_fetched_at": NOW - timedelta(hours=24),
+        "ag_fetched_at": NOW - timedelta(hours=24, seconds=1),
+        "oa_fetched_at": NOW - timedelta(minutes=1),
+    })
+    sections = usagewidget.visible_sections(usage, NOW)
+    assert [title for title, _groups, _age in sections] == ["OPENAI"]
+    assert usagewidget.visible_sections(usage, NOW, ["claude"]) == []
+    texts, _ = _rendered_texts(monkeypatch, usage)
+    assert "OPENAI" in texts and "CLAUDE CODE" not in texts
 
 
 # ---------------------------------------------------------------- 不越界

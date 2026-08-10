@@ -29,6 +29,8 @@ BAR_MARGIN = 0            # 橫條滿寬，讓獨立的第二行清楚呈現可�
 BAR_Y_OFFSET = 19         # 文字列完整結束後再起橫條，避免字框與橫條相貼。
 STALE_AFTER_S = 300       # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
 VERY_STALE_AFTER_S = 3600 # 超過這麼久，整組轉 muted 灰（agent 可能已經停了）
+HIDE_AFTER_S = 24 * 60 * 60
+DEFAULT_SOURCES = ("claude", "antigravity", "openai")
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft", bold=False):
@@ -88,20 +90,19 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
                              (round(px), round(bar_y + BAR_H + 3)), 1)
 
 
-def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360) -> None:
-    """usage：deskbar.claudeusage.UsageInfo｜None（來自 Snapshot.usage）。
-    x0/w 由呼叫端（dashboard.py）帶入模組常量 USAGE_X0/USAGE_W。"""
-    if usage is None:
-        _text(surface, "CLAUDE CODE", 14, theme.C["muted"], x0, TITLE_Y)
-        _center_text(surface, "usage 未推送", 22, theme.C["muted"], x0, w, 220)
-        _center_text(surface, "Mac agent 未執行", 16, theme.C["muted"], x0, w, 250)
-        return
+def visible_sections(usage, now: datetime, enabled_sources=None):
+    """純顯示決策：回傳仍應畫出的 ``(title, groups, age)`` 區塊。
 
-    age = (now - usage.fetched_at).total_seconds()
-    muted = age > VERY_STALE_AFTER_S
-    if age > STALE_AFTER_S:
-        mins = int(age // 60)
-        _text(surface, f"({mins} 分前)", 16, theme.C["muted"], x0 + w, TITLE_Y, "topright")
+    每個 provider 以自己的成功抓取時間判斷。舊 payload 沒有分來源時間時退回
+    fetched_at；這讓升級前的 Mac agent 照舊可用，也避免快取重送刷新資料年齡。
+    """
+    if usage is None:
+        return []
+    enabled = set(DEFAULT_SOURCES if enabled_sources is None else enabled_sources)
+
+    def age_for(field):
+        fetched = getattr(usage, field, None) or usage.fetched_at
+        return (now - fetched).total_seconds()
 
     claude_groups = [
         ("5H SESSION", usage.session_pct, usage.session_resets_at,
@@ -112,23 +113,37 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360) -> N
         claude_groups.append(("FABLE", usage.fable_pct, usage.fable_resets_at,
                               WINDOW_S["fable"]))
 
-    sections = [("CLAUDE CODE", claude_groups)]
+    sections = []
+    claude_age = age_for("claude_fetched_at")
+    if "claude" in enabled and claude_age < HIDE_AFTER_S:
+        sections.append(("CLAUDE CODE", claude_groups, claude_age))
 
     has_ag = (usage.ag_5h_pct is not None or usage.ag_weekly_pct is not None)
-    if has_ag:
+    ag_age = age_for("ag_fetched_at")
+    if "antigravity" in enabled and has_ag and ag_age < HIDE_AFTER_S:
         sections.append(("ANTIGRAVITY · GEMINI", [
             ("5H", usage.ag_5h_pct, usage.ag_5h_resets_at, WINDOW_S["ag_5h"]),
             ("本週", usage.ag_weekly_pct, usage.ag_weekly_resets_at, WINDOW_S["ag_weekly"]),
-        ]))
+        ], ag_age))
 
-    if usage.oa_weekly_pct is not None:
+    oa_age = age_for("oa_fetched_at")
+    if "openai" in enabled and usage.oa_weekly_pct is not None and oa_age < HIDE_AFTER_S:
         sections.append(("OPENAI", [
             ("本週", usage.oa_weekly_pct, usage.oa_weekly_resets_at, WINDOW_S["oa_weekly"]),
-        ]))
+        ], oa_age))
+    return sections
+
+
+def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
+           enabled_sources=None) -> None:
+    """畫可見 usage 區塊；未勾選、沒有資料或超過一天的來源完全不留痕跡。"""
+    sections = visible_sections(usage, now, enabled_sources)
+    if not sections:
+        return
 
     title_y = TITLE_Y
     previous_bar_bottom = None
-    for i, (title, groups) in enumerate(sections):
+    for i, (title, groups, age) in enumerate(sections):
         if i > 0:
             sep_y = previous_bar_bottom + SECTION_SEP_GAP
             pygame.draw.line(surface, theme.C["panel_line"],
@@ -137,9 +152,13 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360) -> N
             title_y = sep_y + SECTION_TITLE_GAP
 
         _text(surface, title, 14, theme.C["muted"], x0, title_y)
+        if age > STALE_AFTER_S:
+            _text(surface, f"({int(age // 60)} 分前)", 16, theme.C["muted"],
+                  x0 + w, title_y, "topright")
         y = title_y + SECTION_FIRST_GROUP
         for label, pct, resets_at, win in groups:
-            _draw_group(surface, x0, w, y, label, pct, resets_at, now, muted=muted,
+            _draw_group(surface, x0, w, y, label, pct, resets_at, now,
+                        muted=age > VERY_STALE_AFTER_S,
                         window_s=win)
             previous_bar_bottom = y + BAR_Y_OFFSET + BAR_H
             y += GROUP_STEP

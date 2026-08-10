@@ -134,7 +134,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         _text(surface, "待辦事項", 22, theme.C["text2"], TL_X0, 22)
         hits += linearview.render(surface, snap, settings, TL_AREA, now,
                                   page=linear_page)
-        usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
+        usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
+                           settings.usage_sources)
         return _finish(surface, snap, settings, now, hits)   # 中欄即完整待辦牆，右欄摘要免了
     if center == "notes":
         from deskbar.ui import notesview
@@ -143,7 +144,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         import time as _t
         hits += notesview.render(surface, notes, notes_ui or notesview.new_state(),
                                  TL_AREA, now, _t.monotonic(), page=notes_page)
-        usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
+        usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
+                           settings.usage_sources)
         _render_right_todo_mini(surface, snap, now)
         return _finish(surface, snap, settings, now, hits)
     if center == "scene":
@@ -153,7 +155,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                               enabled=getattr(settings, "scenes_enabled", None),
                               weather_code=snap.weather.code
                               if snap.weather else None)
-        usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
+        usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
+                           settings.usage_sources)
         _render_right_todo_mini(surface, snap, now)
         return _finish(surface, snap, settings, now, hits)
 
@@ -233,7 +236,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     # 狀態，使用者要求移除——隱私簾的「效果」本身就是狀態指示）。
     # 右欄：Claude usage 油表——獨立呼叫，不吃 TL_AREA、不產生 hits（純資訊面板，
     # 跟左欄時鐘/天氣一樣不可互動），畫在最後純粹是慣例（跟中欄內容互不重疊，順序無關）。
-    usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W)
+    usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
+                       settings.usage_sources)
     _render_right_todo_mini(surface, snap, now)
     return _finish(surface, snap, settings, now, hits)
 

@@ -127,6 +127,20 @@ def test_post_usage_preserves_cached_fetched_at(alarm_store):
     )
 
 
+def test_post_usage_parses_per_provider_fetched_timestamps(alarm_store):
+    state = AppState()
+    client = create_app(alarm_store, usage_state=state).test_client()
+    payload = dict(VALID_PAYLOAD, claude_fetched_at="2026-08-04T01:00:00Z",
+                   ag_fetched_at="2026-08-04T02:00:00Z",
+                   oa_fetched_at="2026-08-04T03:00:00Z")
+    assert client.post("/api/usage", json=payload).status_code == 204
+    usage = state.snapshot().usage
+    assert usage.claude_fetched_at == datetime.fromisoformat("2026-08-04T01:00:00+00:00")
+    assert usage.ag_fetched_at == datetime.fromisoformat("2026-08-04T02:00:00+00:00")
+    assert usage.oa_fetched_at == datetime.fromisoformat("2026-08-04T03:00:00+00:00")
+    assert client.post("/api/usage", json=dict(payload, ag_fetched_at="bad")).status_code == 400
+
+
 def test_post_usage_rejects_invalid_fetched_at(alarm_store):
     state = AppState()
     client = create_app(alarm_store, usage_state=state).test_client()

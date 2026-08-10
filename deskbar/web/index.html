@@ -3,14 +3,15 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>deskbar 鬧鐘</title>
 <style>
+*{box-sizing:border-box} html,body{max-width:100%;overflow-x:hidden}
 body{font-family:system-ui,-apple-system,"PingFang TC",sans-serif;background:#111;color:#eee;
- max-width:480px;margin:0 auto;padding:20px}
+ max-width:480px;margin:0 auto;padding:20px;width:100%}
 h1{font-size:20px;font-weight:600}
 .card{background:#1c1c1c;border:1px solid #333;border-radius:10px;padding:14px;margin:10px 0}
 .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .time{font-size:28px;font-variant-numeric:tabular-nums}
 .days,.label{color:#9a9a9a;font-size:13px}
-button{background:#2a2a2a;color:#eee;border:1px solid #444;border-radius:8px;padding:8px 14px}
+button{background:#2a2a2a;color:#eee;border:1px solid #444;border-radius:8px;padding:8px 14px;min-height:44px}
 button.del{color:#f09595}
 input,label.d{font-size:16px}
 input[type=time]{background:#2a2a2a;color:#eee;border:1px solid #444;border-radius:8px;padding:6px}
@@ -20,12 +21,21 @@ input[type=text]{background:#2a2a2a;color:#eee;border:1px solid #444;border-radi
 .wk input{margin-right:4px}
 .off{opacity:.45}
 h2{font-size:16px;font-weight:600;margin:24px 0 8px}
-.cal-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #2a2a2a}
+.cal-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #2a2a2a;flex-wrap:wrap}
 .cal-row:first-of-type{border-top:none}
 .cal-row label{font-size:15px;flex:1}
 .cal-row input{width:20px;height:20px}
+.scene-options{display:flex;flex-wrap:wrap;gap:6px 14px}
+.scene-options label{display:flex;align-items:center;gap:6px;flex:0 1 auto;min-height:44px;padding:6px 0;white-space:nowrap;cursor:pointer}
+.scene-options input{flex:0 0 auto;margin:0}
 .acc-email{color:#9a9a9a;font-size:13px;margin-top:-4px}
 .hint{color:#777;font-size:12px;margin:10px 2px 0}
+.usage-sources{border:0;border-top:1px solid #2a2a2a;margin:14px 0 0;padding:12px 0 0;min-width:0}
+.usage-sources legend{font-size:15px;font-weight:600;padding:0}
+.usage-source-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.usage-source-list label{display:flex;align-items:center;gap:7px;min-height:44px;padding:8px 10px;border:1px solid #444;border-radius:8px;cursor:pointer}
+.usage-source-list input{width:20px;height:20px;margin:0}
+@media(max-width:374px){body{padding:12px}.row{align-items:stretch;flex-wrap:wrap}.row input[type=text]{min-width:0;flex:1 1 180px}.cal-row select,.cal-row input[type=text]{max-width:100%}}
 </style></head><body>
 <h1>deskbar</h1>
 <h2 style="margin-top:8px">便條</h2>
@@ -135,15 +145,25 @@ async function loadPrefs(){
   <div class="cal-row">感應速度 <select id="p_pi">${spd.map(([v,n])=>
    `<option value="${v}" ${v===p.presence_interval_sec?"selected":""}>${n}</option>`).join("")}</select></div>
   <div class="cal-row">同步頻率 ${sel("p_si",[1,3,5,10,30],p.sync_interval_min,v=>v+" 分鐘")}</div>
+  <div class="cal-row"><input type="checkbox" id="p_pet" ${p.pet_enabled?"checked":""}>
+   <label for="p_pet">小喜喜桌面寵物（可直接在螢幕上拖曳）</label></div>
   <div class="cal-row" style="margin-top:10px"><b>氛圍場景</b>
    <select id="p_sm">${[["auto","自動（忙時進場景、閒時回便條）"],["manual","手動（只有自己切）"],
     ["force","強制（常駐場景，點畫面看 1 分鐘行事曆）"]].map(([v,n])=>
     `<option value="${v}" ${v===p.scene_mode?"selected":""}>${n}</option>`).join("")}</select></div>
-  <div class="cal-row" style="display:flex;flex-wrap:wrap;gap:6px 14px">
-   ${SCENE_NAMES.map(([k,n])=>`<label style="white-space:nowrap">
+  <div class="cal-row scene-options">
+   ${SCENE_NAMES.map(([k,n])=>`<label>
     <input type="checkbox" class="p_sc" value="${k}"
      ${(p.scenes_enabled||[]).includes(k)?"checked":""}> ${n}</label>`).join("")}
   </div>
+  <fieldset class="usage-sources">
+   <legend>AI 用量顯示</legend>
+   <div class="usage-source-list">
+    ${[["claude","Claude Code"],["antigravity","Antigravity / Gemini"],["openai","OpenAI"]].map(([key,label])=>`<label>
+     <input type="checkbox" class="p_us" value="${key}" ${(p.usage_sources||[]).includes(key)?"checked":""}>${label}</label>`).join("")}
+   </div>
+   <div class="hint">超過 24 小時未更新會自動隱藏</div>
+  </fieldset>
   <div class="cal-row">Linear Key（${p.linear_key_set?"已設定":"未設定"}）
    <input type="password" id="p_lk" placeholder="lin_api_… 貼上後按存">
    <button onclick="saveKey()">存 Key</button></div>
@@ -170,8 +190,10 @@ async function savePrefs(){
   presence_enabled:document.getElementById("p_pe").checked,
   presence_interval_sec:iv,presence_grace_sec:grace,
   sync_interval_min:+document.getElementById("p_si").value,
+  pet_enabled:document.getElementById("p_pet").checked,
   scene_mode:document.getElementById("p_sm").value,
-  scenes_enabled:[...document.querySelectorAll(".p_sc:checked")].map(c=>c.value)};
+  scenes_enabled:[...document.querySelectorAll(".p_sc:checked")].map(c=>c.value),
+  usage_sources:[...document.querySelectorAll(".p_us:checked")].map(c=>c.value)};
  const r=await fetch("/api/prefs",{method:"PATCH",
   headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
  if(r.ok){document.getElementById("p_msg").textContent=" 已儲存 ✓";setTimeout(loadPrefs,600);}

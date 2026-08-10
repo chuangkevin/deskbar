@@ -16,6 +16,23 @@ DEFAULT_SCENES = ("stars", "planet_horizon")
 VALID_VIEW_SPANS = {"half", "day", "week", "month"}
 VALID_VIEW_MODES = {"lanes", "agenda"}
 VALID_THEMES = {"dark", "light"}
+VALID_USAGE_SOURCES = ("claude", "antigravity", "openai")
+DEFAULT_PET_X, DEFAULT_PET_Y = 1660, 300
+
+
+def normalize_usage_sources(value, default=VALID_USAGE_SOURCES) -> tuple[str, ...]:
+    """回傳可儲存的用量來源清單。
+
+    舊設定沒有這個欄位時維持原本三個都顯示；空清單則是使用者明確選擇
+    完全不顯示。設定檔若被手動寫壞，寧可安全退回預設，不讓右欄因未知
+    provider 進入不一致狀態。
+    """
+    # tuple 是 Settings 的 in-memory 表示；JSON 設定檔讀進來則必為 list。
+    if not isinstance(value, (list, tuple)) or not all(isinstance(x, str) for x in value):
+        return tuple(default)
+    if any(x not in VALID_USAGE_SOURCES for x in value):
+        return tuple(default)
+    return tuple(key for key in VALID_USAGE_SOURCES if key in value)
 
 
 def config_dir() -> Path:
@@ -77,6 +94,10 @@ class Settings:
     center_view: str = "calendar"       # 中欄顯示：calendar｜linear（待辦）｜notes（便條）
     scene_mode: str = "auto"            # 場景進入方式：auto（忙閒排程）｜manual｜force
     scenes_enabled: tuple = DEFAULT_SCENES  # 要輪播的場景（網頁勾選）
+    usage_sources: tuple[str, ...] = VALID_USAGE_SOURCES  # 右欄要顯示的 AI 用量來源
+    pet_enabled: bool = True            # 小喜喜桌面寵物（全域 overlay，非場景）
+    pet_x: int = DEFAULT_PET_X          # 小喜喜左上角 logical x（拖曳後持久化）
+    pet_y: int = DEFAULT_PET_Y          # 小喜喜左上角 logical y
 
     def ensure_account(self, email: str) -> AccountCfg:
         if email not in self.accounts:
@@ -190,6 +211,13 @@ def load_settings() -> Settings:
         scenes_enabled = tuple(k for k in SCENE_KEYS
                                if isinstance(se_raw, list) and k in se_raw) \
             or DEFAULT_SCENES           # 全被反勾＝退回預設（空清單無意義）
+        usage_sources = normalize_usage_sources(
+            raw.get("usage_sources", list(VALID_USAGE_SOURCES)))
+        pet_enabled = raw.get("pet_enabled", True)
+        if not isinstance(pet_enabled, bool):
+            pet_enabled = True
+        pet_x = _int_in("pet_x", DEFAULT_PET_X, 0, 1919)
+        pet_y = _int_in("pet_y", DEFAULT_PET_Y, 0, 479)
         return Settings(
             rotation=raw.get("rotation", 90),
             weather_lat=raw.get("weather_lat", DEFAULT_LAT),
@@ -223,6 +251,10 @@ def load_settings() -> Settings:
             center_view=center_view,
             scene_mode=scene_mode,
             scenes_enabled=scenes_enabled,
+            usage_sources=usage_sources,
+            pet_enabled=pet_enabled,
+            pet_x=pet_x,
+            pet_y=pet_y,
         )
     except (OSError, ValueError, KeyError, TypeError):
         return Settings()
@@ -261,6 +293,10 @@ def save_settings(s: Settings) -> None:
         "center_view": s.center_view,
         "scene_mode": s.scene_mode,
         "scenes_enabled": list(s.scenes_enabled),
+        "usage_sources": list(normalize_usage_sources(s.usage_sources)),
+        "pet_enabled": s.pet_enabled,
+        "pet_x": int(s.pet_x),
+        "pet_y": int(s.pet_y),
         "accounts": {
             e: {"lane_label": a.lane_label, "color": a.color, "calendars": a.calendars}
             for e, a in s.accounts.items()

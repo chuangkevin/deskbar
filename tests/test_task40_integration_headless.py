@@ -16,10 +16,11 @@ from zoneinfo import ZoneInfo
 import pygame
 
 from deskbar.config import Settings
+from deskbar.layout import Rect
 from deskbar.models import Event
 from deskbar.presence import PresenceState
 from deskbar.store import AppState
-from deskbar.ui import dashboard, settings_view, theme
+from deskbar.ui import Hit, dashboard, settings_view, theme
 from deskbar.ui.app import App
 
 TZ = ZoneInfo("Asia/Taipei")
@@ -193,6 +194,28 @@ def test_start_transition_noop_without_logical_surface(tmp_path, monkeypatch):
     assert app._transition_start is None
 
 
+def test_sisi_pet_touch_capture_prevents_underlying_dispatch_and_saves(tmp_path, monkeypatch):
+    app = _make_dashboard_app(tmp_path, monkeypatch)
+    app.settings.pet_x = 100
+    app.settings.pet_y = 120
+    app.pet_ui.load_position(app.settings)
+    saved = []
+    app.on_save = lambda s: saved.append((s.pet_x, s.pet_y))
+    app.hits = [Hit(Rect(0, 0, 1920, 480), "open_settings", None)]
+
+    app._touch_down(120, 140)
+    assert app._pet_dragging is True
+    assert app._drag_start is None
+    assert app.view == "dashboard"
+
+    app._finish_pet_drag(360, 220)
+
+    assert app._pet_dragging is False
+    assert app.view == "dashboard", "拖小喜喜不得穿透觸發背後按鈕"
+    assert saved[-1] == app.pet_ui.position()
+    assert saved[-1] == (340, 200)
+
+
 # ---------------------------------------------------------------- 天氣氛圍幀
 
 
@@ -218,6 +241,7 @@ def _make_idle_dashboard_app(tmp_path, monkeypatch, weather_code=61) -> App:
     pygame.init()
     _freeze_now(monkeypatch)
     app = _make_dashboard_app(tmp_path, monkeypatch)
+    app.settings.pet_enabled = False
     if weather_code is not None:
         from deskbar.weather import Weather
         app.state.set_weather(Weather(temp=31.0, code=weather_code, tmax=33.0,

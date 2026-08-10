@@ -34,6 +34,11 @@ class UsageInfo:
     ag_weekly_resets_at: datetime | None = None
     oa_weekly_pct: float | None = None
     oa_weekly_resets_at: datetime | None = None
+    # 各來源最後一次「成功抓取」時間。舊 producer 只送 fetched_at 時，渲染端
+    # 會退回它，故這些欄位保持 optional 以相容既有 payload / cache。
+    claude_fetched_at: datetime | None = None
+    ag_fetched_at: datetime | None = None
+    oa_fetched_at: datetime | None = None
 
 
 def fmt_countdown(dt: datetime | None, now: datetime) -> str:

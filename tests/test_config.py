@@ -7,6 +7,23 @@ def test_defaults_when_missing(tmp_path, monkeypatch):
     s = config.load_settings()
     assert s.rotation == 90 and s.start_hour == 8 and s.end_hour == 24
     assert s.accounts == {}
+    assert s.usage_sources == config.VALID_USAGE_SOURCES
+    assert s.pet_enabled is True
+    assert (s.pet_x, s.pet_y) == (config.DEFAULT_PET_X, config.DEFAULT_PET_Y)
+
+
+def test_usage_sources_roundtrip_empty_and_invalid_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"usage_sources": []}), encoding="utf-8")
+    s = config.load_settings()
+    assert s.usage_sources == ()
+    config.save_settings(s)
+    assert config.load_settings().usage_sources == ()
+
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"usage_sources": ["claude", "unknown"]}), encoding="utf-8")
+    assert config.load_settings().usage_sources == config.VALID_USAGE_SOURCES
 
 
 def test_roundtrip(tmp_path, monkeypatch):
@@ -85,6 +102,35 @@ def test_default_rotation_only_contains_visually_approved_scenes():
         "flow", "ridges", "fireflies", "fish", "aurora", "train", "runner", "ink",
     }
     assert all(k in config.SCENE_KEYS for k in config.DEFAULT_SCENES)
+
+
+def test_sisi_is_not_a_scene_and_old_sisi_scene_setting_falls_back(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    assert "sisi" not in config.SCENE_KEYS
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"scenes_enabled": ["sisi"]}), encoding="utf-8")
+    s = config.load_settings()
+    assert s.scenes_enabled == config.DEFAULT_SCENES
+
+
+def test_pet_settings_roundtrip_and_validation(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    s = config.load_settings()
+    s.pet_enabled = False
+    s.pet_x = 123
+    s.pet_y = 45
+    config.save_settings(s)
+    loaded = config.load_settings()
+    assert loaded.pet_enabled is False
+    assert (loaded.pet_x, loaded.pet_y) == (123, 45)
+
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"pet_enabled": "yes", "pet_x": -1, "pet_y": 900}), encoding="utf-8")
+    invalid = config.load_settings()
+    assert invalid.pet_enabled is True
+    assert (invalid.pet_x, invalid.pet_y) == (config.DEFAULT_PET_X, config.DEFAULT_PET_Y)
+
+
 def test_presence_interval_below_20_falls_back_to_45(tmp_path, monkeypatch):
     monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
     (tmp_path / "settings.json").write_text(
@@ -149,6 +195,3 @@ def test_presence_source_ble_retained(tmp_path, monkeypatch):
         json.dumps({"presence_source": "ble"}), encoding="utf-8")
     s = config.load_settings()
     assert s.presence_source == "ble"
-
-
-

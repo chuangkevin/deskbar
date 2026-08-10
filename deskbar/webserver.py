@@ -17,6 +17,7 @@ _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _USAGE_TZ = ZoneInfo("Asia/Taipei")
 _PCT_FIELDS = ("session_pct", "weekly_pct", "fable_pct", "ag_5h_pct", "ag_weekly_pct", "oa_weekly_pct")
 _RESETS_FIELDS = ("session_resets_at", "weekly_resets_at", "fable_resets_at", "ag_5h_resets_at", "ag_weekly_resets_at", "oa_weekly_resets_at")
+_USAGE_FETCHED_FIELDS = ("fetched_at", "claude_fetched_at", "ag_fetched_at", "oa_fetched_at")
 
 
 def _valid_pct(v) -> bool:
@@ -62,7 +63,8 @@ _PREF_INT = {
     "presence_push_ttl_sec": (60, 86400),
     "sync_interval_min": (1, 120),
 }
-_PREF_BOOL = {"presence_enabled", "sleep_enabled", "weather_auto_locate"}
+_PREF_BOOL = {"presence_enabled", "sleep_enabled", "weather_auto_locate",
+              "pet_enabled"}
 _PREF_STR = {"linear_api_key": 200,      # 值=長度上限；GET 絕不回傳 key 原文
              "weather_label": 12,
              "weather_metar_station": 8}
@@ -258,6 +260,8 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             out["scenes_enabled"] = list(getattr(settings_provider,
                                                  "scenes_enabled", []))
             out["presence_source"] = getattr(settings_provider, "presence_source", "bluetooth")
+            out["usage_sources"] = list(getattr(settings_provider, "usage_sources",
+                                                   config.VALID_USAGE_SOURCES))
         return jsonify(out)
 
     @app.patch("/api/prefs")
@@ -297,6 +301,11 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
                     return jsonify({"error": "scenes_enabled has unknown scene"}), 400
                 # 保序去重；全反勾退回全部（空清單無意義，config 同一約定）
                 staged[k] = tuple(k2 for k2 in SCENE_KEYS if k2 in v) or SCENE_KEYS
+            elif k == "usage_sources":
+                if not isinstance(v, list) or not all(
+                        isinstance(x, str) and x in config.VALID_USAGE_SOURCES for x in v):
+                    return jsonify({"error": "usage_sources has unknown source"}), 400
+                staged[k] = config.normalize_usage_sources(v)
             elif k in _PREF_FLOAT:
                 lo, hi = _PREF_FLOAT[k]
                 if isinstance(v, bool) or not isinstance(v, (int, float)) \
@@ -425,13 +434,18 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
         for f in _RESETS_FIELDS:
             if not _valid_resets_at(d.get(f)):
                 return jsonify({"error": f"invalid {f}"}), 400
-        if "fetched_at" in d and not _valid_resets_at(d.get("fetched_at")):
-            return jsonify({"error": "invalid fetched_at"}), 400
+        for f in _USAGE_FETCHED_FIELDS:
+            if f in d and not _valid_resets_at(d.get(f)):
+                return jsonify({"error": f"invalid {f}"}), 400
 
         fetched_at = _parse_dt(d.get("fetched_at")) \
             if d.get("fetched_at") is not None else datetime.now(_USAGE_TZ)
         if fetched_at.tzinfo is None:
             fetched_at = fetched_at.replace(tzinfo=_USAGE_TZ)
+
+        def _optional_fetched(field):
+            value = _parse_dt(d.get(field))
+            return value.replace(tzinfo=_USAGE_TZ) if value is not None and value.tzinfo is None else value
 
         info = UsageInfo(
             session_pct=_to_float(d.get("session_pct")),
@@ -447,6 +461,9 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
             ag_weekly_resets_at=_parse_dt(d.get("ag_weekly_resets_at")),
             oa_weekly_pct=_to_float(d.get("oa_weekly_pct")),
             oa_weekly_resets_at=_parse_dt(d.get("oa_weekly_resets_at")),
+            claude_fetched_at=_optional_fetched("claude_fetched_at"),
+            ag_fetched_at=_optional_fetched("ag_fetched_at"),
+            oa_fetched_at=_optional_fetched("oa_fetched_at"),
         )
         usage_state.set_usage(info)
         return "", 204

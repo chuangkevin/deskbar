@@ -141,6 +141,8 @@ def warm_ag_from_cache(cached: dict | None) -> None:
         "ag_weekly_pct": cached.get("ag_weekly_pct"),
         "ag_weekly_resets_at": cached.get("ag_weekly_resets_at"),
     }
+    if "ag_fetched_at" in cached:
+        fields["ag_fetched_at"] = cached.get("ag_fetched_at")
     with _AG_LOCK:
         _AG_LATEST.update(fields)
 
@@ -160,6 +162,7 @@ def _ag_worker() -> None:
             return
         now = datetime.now().astimezone()
         fields = ag_payload_fields(parsed, now)
+        fields["ag_fetched_at"] = now.isoformat()
         with _AG_LOCK:
             _AG_LATEST.update(fields)
     except Exception as error:
@@ -232,6 +235,8 @@ def warm_openai_from_cache(cached: dict | None) -> None:
         "oa_weekly_pct": cached.get("oa_weekly_pct"),
         "oa_weekly_resets_at": cached.get("oa_weekly_resets_at"),
     }
+    if "oa_fetched_at" in cached:
+        fields["oa_fetched_at"] = cached.get("oa_fetched_at")
     with _OA_LOCK:
         _OA_LATEST.update(fields)
 
@@ -245,10 +250,12 @@ def _oa_worker() -> None:
         if not parsed:
             print("[OpenAI] 抓取失敗，保留上一次用量資料")
             return
-        fields = oa_payload_fields(parsed, datetime.now().astimezone())
+        now = datetime.now().astimezone()
+        fields = oa_payload_fields(parsed, now)
         if not any(v is not None for v in fields.values()):
             print("[OpenAI] 解析結果全空，保留上一次用量資料")
             return
+        fields["oa_fetched_at"] = now.isoformat()
         with _OA_LOCK:
             _OA_LATEST.update(fields)
     except Exception as error:
@@ -425,6 +432,7 @@ def build_payload(usage: dict, enable_antigravity: bool = True,
             fable_pct = limit.get("percent")
             fable_resets_at = limit.get("resets_at")
             break
+    fetched_at = datetime.now(timezone.utc).isoformat()
     payload = {
         "session_pct": five_hour.get("utilization"),
         "session_resets_at": five_hour.get("resets_at"),
@@ -432,7 +440,10 @@ def build_payload(usage: dict, enable_antigravity: bool = True,
         "weekly_resets_at": seven_day.get("resets_at"),
         "fable_pct": fable_pct,
         "fable_resets_at": fable_resets_at,
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        # Claude API 成功回應後才會走進 build_payload；因此此時間就是它真正
+        # 的最後成功抓取時間。補送 cache 的路徑完全不會改它。
+        "fetched_at": fetched_at,
+        "claude_fetched_at": fetched_at,
     }
     if enable_antigravity:
         payload.update(get_antigravity_fields())

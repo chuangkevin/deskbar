@@ -435,7 +435,7 @@ def test_transition_frame_renders_new_frame_only_once(tmp_path, monkeypatch):
     import time as _t
     app = _make_app(tmp_path, monkeypatch)
     calls = []
-    app._draw_frame = lambda snap, now, clock_anim=None: calls.append(1)
+    app._draw_frame = lambda snap, now, clock_anim=None, include_pet=True: calls.append(1)
     app._start_transition(+1)
     app._render_transition_frame(NOW)
     app._transition_start = _t.monotonic()   # 固定 elapsed，排除測試機速度干擾
