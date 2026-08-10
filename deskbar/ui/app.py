@@ -26,6 +26,11 @@ PAN_BAND_INTERVAL = 1 / 30               # 跟手位移的 flip 節流（帶狀 
 PAGE_FLIP_RATIO = 0.25      # 拖過帶寬的 1/4 就翻頁
 PAGE_EDGE_RESIST = 3        # 邊界外拖的阻尼倍率
 PAGE_SETTLE_S = 0.15        # 放手吸附動畫時長（秒）
+PREFETCH_IDLE_S = 2.0       # 相鄰頁預取前必須連續閒置的秒數
+
+
+def should_prefetch(idle_since: float, now_mono: float, threshold: float) -> bool:
+    return idle_since != 0.0 and now_mono - idle_since >= threshold
 
 
 def page_drag_offset(dx: float, width: int, has_prev: bool, has_next: bool) -> float:
@@ -125,6 +130,9 @@ class App:
         self._page_drag = None          # 待辦/便條牆跟手拖曳：中欄帶狀快照狀態
         self._page_drag_at = 0.0
         self._page_settle = None        # 待辦/便條牆放手吸附動畫狀態
+        self._band_cache = {}           # (中欄視圖, 頁碼) → 閒置時預畫的帶狀 Surface
+        self._band_cache_key = None     # (中欄視圖, snap.seq, 該視圖資料筆數)
+        self._idle_since = 0.0          # 相鄰頁預取的連續閒置起點（monotonic）
         self._transition_cache = None   # 過場期間的「新畫面」快照：只算一次，逐幀純合成
         self._dev = False
         self._dev_rotate = 0
@@ -1096,14 +1104,101 @@ class App:
         if pygame.display.get_init() and pygame.display.get_surface() is not None:
             pygame.display.flip()
 
+    def _prefetch_page_band_if_idle(self, snap, now) -> bool:
+        # 2026-08-10 實機量測預取單次需 673ms，期間完全不處理輸入；必須先
+        # 連續閒置 2 秒，確保昂貴工作落在使用者確實沒有操作的時候。
+        mono = time.monotonic()
+        if self._idle_since == 0.0:
+            self._idle_since = mono
+            return False
+        if not should_prefetch(self._idle_since, mono, PREFETCH_IDLE_S):
+            return False
+        if not self._prefetch_page_band(snap, now):
+            return False
+        self._idle_since = time.monotonic()
+        return True
+
+    def _prefetch_page_band(self, snap, now) -> bool:
+        """完全閒置時預畫一張相鄰頁帶狀快照；成功做事才回 True。
+
+        2026-08-10 Pi Zero 2W 實測：便條牆相鄰頁熱渲染約 304／286／178ms，
+        同步拖曳起手 507ms，但後續幀只要 13.3ms。這裡刻意每圈最多搬一頁
+        （約 300ms）到沒有輸入的閒置時刻，避免一次畫兩頁造成約 600ms 停頓。
+        預取只是最佳化；任何失敗都安靜略過，不能拖垮 render loop。
+        """
+        if (self.view != "dashboard"
+                or getattr(self.settings, "center_view", "calendar") not in ("linear", "notes")
+                or self._drag_start is not None
+                or self._page_drag is not None
+                or self._page_settle is not None
+                or self._transition_start is not None
+                or self.firing
+                or self.card_overlay is not None):
+            return False
+
+        center = self.settings.center_view
+        try:
+            if center == "linear":
+                from deskbar.ui import linearview
+                item_count = len(snap.linear)
+                total = linearview.page_count(item_count)
+            else:
+                from deskbar.ui import notesview
+                item_count = len(self.notes_store.list()) if self.notes_store else 0
+                total = notesview.page_count(item_count)
+
+            key = (center, snap.seq, item_count)
+            if key != self._band_cache_key:
+                self._band_cache.clear()
+                self._band_cache_key = key
+
+            raw_page = self.center_pages.get(center, 0)
+            cur_page = max(0, min(total - 1, raw_page))
+            neighbours = []
+            if cur_page > 0:
+                neighbours.append(cur_page - 1)
+            if cur_page < total - 1:
+                neighbours.append(cur_page + 1)
+            target_page = next(
+                (page for page in neighbours if (center, page) not in self._band_cache),
+                None,
+            )
+            if target_page is None:
+                return False
+
+            from deskbar.ui.dashboard import CENTER_SLIDE_AREA
+            r = pygame.Rect(int(CENTER_SLIDE_AREA.x), int(CENTER_SLIDE_AREA.y),
+                            int(CENTER_SLIDE_AREA.w), int(CENTER_SLIDE_AREA.h))
+            old_page = self.center_pages.get(center, 0)
+            old_hits = self.hits
+            original = self.logical.copy()
+            band = None
+            try:
+                self.center_pages[center] = target_page
+                self._draw_frame(snap, now)
+                band = self.logical.subsurface(r).copy()
+            finally:
+                # 離線畫鄰頁會改 logical 與 hits；兩者都要還原，使用者才不會看到
+                # 預取中的頁面，點擊區也仍對應目前頁。
+                self.center_pages[center] = old_page
+                self.hits = old_hits
+                self.logical.blit(original, (0, 0))
+
+            self._band_cache[(center, target_page)] = band
+            while len(self._band_cache) > 4:
+                del self._band_cache[next(iter(self._band_cache))]
+            return True
+        except Exception:
+            return False
+
     def _render_page_drag_band(self) -> None:
         """待辦/便條牆拖曳跟手：離線快照當前頁與鄰頁帶狀畫面，拖曳中 1:1 位移與節流 flip。
 
         第一版跟手是拖曳中逐幀全量重繪——Pi Zero 2W 一幀 100ms+，實際 8fps
         橡皮筋感（實機回報「非常不跟手的卡頓感」）。改成拖曳開始時快照中欄
         帶狀畫面與鄰頁，之後每幀只做一次帶狀 blit（幾 ms），內容跟著手指 1:1 移動。
-        離線渲染鄰頁一次約耗時 100ms，是刻意接受的一次性成本（只在拖曳起手發生一次，
-        之後每幀都只是 blit）。只在 dashboard 待辦/便條牆視圖生效。
+        鄰頁通常已由閒置預取；沒命中才保留同步離線渲染作保底。只在 dashboard
+        待辦／便條牆視圖生效。
         """
         if (self.view != "dashboard" or self._drag_start is None
                 or self._drag_last is None or self._transition_start is not None
@@ -1132,30 +1227,41 @@ class App:
         if self._page_drag is None:
             cur = self.logical.subsurface(r).copy()
             cur_page = self.center_pages.get(center, 0)
+            snap = self.state.snapshot()
             if center == "linear":
                 from deskbar.ui import linearview
-                total = linearview.page_count(len(self.state.snapshot().linear))
+                item_count = len(snap.linear)
+                total = linearview.page_count(item_count)
             else:
                 from deskbar.ui import notesview
-                total = notesview.page_count(
-                    len(self.notes_store.list()) if self.notes_store else 0)
+                item_count = len(self.notes_store.list()) if self.notes_store else 0
+                total = notesview.page_count(item_count)
+            key = (center, snap.seq, item_count)
+            if key != self._band_cache_key:
+                self._band_cache.clear()
+                self._band_cache_key = key
             has_prev = cur_page > 0
             has_next = cur_page < total - 1
 
             neighbour = None
             target_page = cur_page + (1 if dx < 0 else -1)
             if (dx < 0 and has_next) or (dx > 0 and has_prev):
-                old_page = self.center_pages.get(center, 0)
-                try:
-                    self.center_pages[center] = target_page
-                    from datetime import datetime
-                    from zoneinfo import ZoneInfo
-                    now = datetime.now(ZoneInfo("Asia/Taipei"))
-                    self._draw_frame(self.state.snapshot(), now)
-                    neighbour = self.logical.subsurface(r).copy()
-                finally:
-                    self.center_pages[center] = old_page
-                    self.logical.blit(cur, r.topleft)
+                neighbour = self._band_cache.get((center, target_page))
+                if neighbour is None:
+                    old_page = self.center_pages.get(center, 0)
+                    try:
+                        self.center_pages[center] = target_page
+                        from datetime import datetime
+                        from zoneinfo import ZoneInfo
+                        now = datetime.now(ZoneInfo("Asia/Taipei"))
+                        self._draw_frame(snap, now)
+                        neighbour = self.logical.subsurface(r).copy()
+                    except Exception:
+                        # 同步保底也不能讓輸入圈拋例外；沒有鄰頁快照時仍可做邊界阻尼。
+                        neighbour = None
+                    finally:
+                        self.center_pages[center] = old_page
+                        self.logical.blit(cur, r.topleft)
 
             drag = {
                 "center": center,
@@ -1388,6 +1494,8 @@ class App:
                     x, y = transform.dev_window_to_logical(
                         ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
                     self._handle_touch_up(x, y)
+        if had_input:
+            self._idle_since = 0.0
         if self._drag_start is not None:
             # 跟手位移每圈只做一次（motion 事件常一圈湧進 3-5 顆，逐顆 flip 白燒）
             self._pan_band_preview()
@@ -1504,5 +1612,7 @@ class App:
                 # 純閒置輪詢從 10fps 提到 30fps：一次觸控最慢 100ms 後才被看見，
                 # 是延遲感的最大單一來源。空圈只做事件泵＋幾個判斷，30fps 的
                 # CPU 成本 <3%，換來輸入延遲上限 33ms。
+                if not had_input:
+                    self._prefetch_page_band_if_idle(snap, now)
                 clock.tick(30)
         return running

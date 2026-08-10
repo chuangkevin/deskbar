@@ -12,7 +12,7 @@ from deskbar import transform
 from deskbar.config import Settings
 from deskbar.store import AppState
 from deskbar.ui.app import (App, PAGE_FLIP_RATIO, page_drag_decision,
-                            page_drag_offset, rot_offset)
+                            page_drag_offset, rot_offset, should_prefetch)
 from deskbar.ui.dashboard import CENTER_SLIDE_AREA, TL_X0, TL_X1
 
 TZ = ZoneInfo("Asia/Taipei")
@@ -75,6 +75,35 @@ def test_rot_offset_cardinal_angles():
 def test_rot_offset_unsupported_angle_degrades_to_logical_axis():
     assert rot_offset(12, 45) == (12, 0.0)
     assert rot_offset(-12, 45) == (-12, 0.0)
+
+
+def test_prefetch_waits_for_full_idle_threshold():
+    assert should_prefetch(idle_since=10.0, now_mono=11.999, threshold=2.0) is False
+
+
+def test_prefetch_starts_at_idle_threshold():
+    assert should_prefetch(idle_since=10.0, now_mono=12.0, threshold=2.0) is True
+
+
+def test_input_resets_prefetch_idle_since(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch)
+    app._idle_since = 10.0
+    app.firing = [object()]
+    app._firing_since = float("inf")
+    monkeypatch.setattr(
+        pygame.event, "get",
+        lambda: [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_r)],
+    )
+    monkeypatch.setattr(app, "_cycle_dev_rotate", lambda: None)
+    monkeypatch.setattr(app, "_render", lambda: None)
+
+    class Clock:
+        def tick(self, _fps):
+            pass
+
+    app._run_iteration(Clock(), running=True)
+
+    assert app._idle_since == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +170,162 @@ def test_render_page_drag_band_executes_without_exception_and_restores_page(tmp_
 
     # 驗證 2：離線渲染鄰頁後，center_pages["linear"] 必須被還原成原值 0
     assert app.center_pages["linear"] == 0
+
+
+def test_render_page_drag_band_uses_prefetched_neighbour_without_redraw(tmp_path, monkeypatch):
+    """鄰頁已預取時，拖曳起手不能再同步重畫昂貴頁面。"""
+    app = _make_app(tmp_path, monkeypatch, center_view="linear")
+    app.center_pages["linear"] = 0
+    prefetched = pygame.Surface((int(CENTER_SLIDE_AREA.w), int(CENTER_SLIDE_AREA.h)))
+    prefetched.fill((23, 45, 67))
+    app._band_cache = {("linear", 1): prefetched}
+    snap = app.state.snapshot()
+    app._band_cache_key = ("linear", snap.seq, len(snap.linear))
+
+    draw_calls = []
+    monkeypatch.setattr(app, "_draw_frame", lambda *_args, **_kwargs: draw_calls.append(1))
+    start_x = TL_X0 + 100
+    app._drag_start = (start_x, 100)
+    app._drag_last = (start_x - 100, 100)
+
+    app._render_page_drag_band()
+
+    assert app._page_drag is not None
+    assert app._page_drag["neighbour"] is prefetched
+    assert draw_calls == []
+
+
+def test_first_idle_iteration_only_starts_prefetch_timer(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch, center_view="linear")
+    calls = []
+    monkeypatch.setattr(app, "_prefetch_page_band",
+                        lambda *_args: calls.append(1) or True)
+    monkeypatch.setattr("deskbar.ui.app.time.monotonic", lambda: 20.0)
+
+    assert app._prefetch_page_band_if_idle(app.state.snapshot(), NOW) is False
+    assert app._idle_since == 20.0
+    assert calls == []
+
+
+def test_successful_prefetch_restarts_full_idle_wait(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch, center_view="linear")
+    app._idle_since = 10.0
+    calls = []
+    monkeypatch.setattr(app, "_prefetch_page_band",
+                        lambda *_args: calls.append(1) or True)
+    monotonic_values = iter((12.0, 12.1, 14.099))
+    monkeypatch.setattr("deskbar.ui.app.time.monotonic", monotonic_values.__next__)
+
+    assert app._prefetch_page_band_if_idle(app.state.snapshot(), NOW) is True
+    assert app._idle_since == 12.1
+    assert app._prefetch_page_band_if_idle(app.state.snapshot(), NOW) is False
+    assert calls == [1]
+
+
+def test_prefetch_page_band_does_nothing_during_drag(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch, center_view="linear")
+    cached = pygame.Surface((2, 2))
+    app._band_cache = {("linear", 7): cached}
+    app._band_cache_key = ("linear", -1, 99)
+    app._drag_start = (TL_X0 + 10, 20)
+
+    assert app._prefetch_page_band(app.state.snapshot(), NOW) is False
+    assert app._band_cache == {("linear", 7): cached}
+    assert app._band_cache_key == ("linear", -1, 99)
+
+
+def test_prefetch_page_band_ignores_calendar(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch, center_view="calendar")
+
+    assert app._prefetch_page_band(app.state.snapshot(), NOW) is False
+    assert app._band_cache == {}
+    assert app._band_cache_key is None
+
+
+def test_prefetch_page_band_adds_one_neighbour_and_restores_page(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch, center_view="linear")
+    app.center_pages["linear"] = 0
+    monkeypatch.setattr(app, "_draw_frame", lambda *_args, **_kwargs: None)
+    snap = app.state.snapshot()
+
+    assert app._prefetch_page_band(snap, NOW) is True
+    assert set(app._band_cache) == {("linear", 1)}
+    assert app._band_cache_key == ("linear", snap.seq, len(snap.linear))
+    assert app.center_pages["linear"] == 0
+
+
+def test_prefetch_page_band_fills_both_sides_one_at_a_time(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch, center_view="linear")
+    app.state.set_linear([_issue(i) for i in range(24)], NOW)
+    app.center_pages["linear"] = 1
+    monkeypatch.setattr(app, "_draw_frame", lambda *_args, **_kwargs: None)
+    snap = app.state.snapshot()
+
+    assert app._prefetch_page_band(snap, NOW) is True
+    assert set(app._band_cache) == {("linear", 0)}
+    assert app.center_pages["linear"] == 1
+
+    assert app._prefetch_page_band(snap, NOW) is True
+    assert set(app._band_cache) == {("linear", 0), ("linear", 2)}
+    assert app.center_pages["linear"] == 1
+
+    assert app._prefetch_page_band(snap, NOW) is False
+    assert app.center_pages["linear"] == 1
+
+
+def test_prefetch_page_band_rebuilds_after_snapshot_sequence_changes(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch, center_view="linear")
+    monkeypatch.setattr(app, "_draw_frame", lambda *_args, **_kwargs: None)
+    first_snap = app.state.snapshot()
+    assert app._prefetch_page_band(first_snap, NOW) is True
+    first_band = app._band_cache[("linear", 1)]
+
+    app.state.set_linear([_issue(i) for i in range(12)], NOW)
+    second_snap = app.state.snapshot()
+    assert second_snap.seq != first_snap.seq
+    assert app._prefetch_page_band(second_snap, NOW) is True
+
+    assert set(app._band_cache) == {("linear", 1)}
+    assert app._band_cache[("linear", 1)] is not first_band
+    assert app._band_cache_key == ("linear", second_snap.seq, len(second_snap.linear))
+
+
+def test_prefetch_page_band_failure_is_silent_and_restores_state(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch, center_view="linear")
+    app.center_pages["linear"] = 0
+    app.logical.fill((11, 22, 33))
+    old_hits = app.hits
+
+    def fail_draw(*_args, **_kwargs):
+        app.logical.fill((200, 10, 20))
+        app.hits = [object()]
+        raise RuntimeError("render failed")
+
+    monkeypatch.setattr(app, "_draw_frame", fail_draw)
+
+    assert app._prefetch_page_band(app.state.snapshot(), NOW) is False
+    assert app.center_pages["linear"] == 0
+    assert app._band_cache == {}
+    assert app.hits is old_hits
+    assert app.logical.get_at((0, 0))[:3] == (11, 22, 33)
+
+
+def test_prefetch_page_band_keeps_only_four_most_recent_pages(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch, center_view="linear")
+    app.state.set_linear([_issue(i) for i in range(48)], NOW)
+    monkeypatch.setattr(app, "_draw_frame", lambda *_args, **_kwargs: None)
+    snap = app.state.snapshot()
+
+    for page in range(6):
+        app.center_pages["linear"] = page
+        for _ in range(3):
+            if not app._prefetch_page_band(snap, NOW):
+                break
+            assert len(app._band_cache) <= 4
+
+    assert set(app._band_cache) == {
+        ("linear", 2), ("linear", 3), ("linear", 4), ("linear", 5),
+    }
 
 
 def test_touch_up_triggers_page_settle_and_flips_page(tmp_path, monkeypatch):
