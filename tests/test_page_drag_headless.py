@@ -11,8 +11,10 @@ import pytest
 from deskbar import transform
 from deskbar.config import Settings
 from deskbar.store import AppState
-from deskbar.ui.app import (App, PAGE_FLIP_RATIO, page_drag_decision,
-                            page_drag_offset, rot_offset, should_prefetch)
+from deskbar.ui.app import (App, DRAG_FPS, PAN_BAND_INTERVAL,
+                            PAN_BAND_INTERVAL_DRAG, PAGE_FLIP_RATIO, loop_fps,
+                            page_drag_decision, page_drag_offset, rot_offset,
+                            should_prefetch)
 from deskbar.ui.dashboard import CENTER_SLIDE_AREA, TL_X0, TL_X1
 
 TZ = ZoneInfo("Asia/Taipei")
@@ -22,6 +24,12 @@ NOW = datetime(2026, 7, 27, 14, 0, tzinfo=TZ)
 # ---------------------------------------------------------------------------
 # 任務 D：純函數測試
 # ---------------------------------------------------------------------------
+
+def test_loop_fps_uses_drag_rate_only_while_dragging():
+    assert loop_fps(True) == DRAG_FPS == 60
+    assert loop_fps(False) == 30
+    assert loop_fps(False, 10) == 10
+    assert PAN_BAND_INTERVAL_DRAG < PAN_BAND_INTERVAL
 
 def test_page_drag_offset_cases():
     # 有下一頁、dx=-100、width=800 → -100 (1:1)

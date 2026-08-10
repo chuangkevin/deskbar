@@ -19,6 +19,10 @@ ALARM_AUTO_DISMISS_S = 300               # 響鈴 5 分鐘沒人理＝自動解�
 AUTO_SWITCH_BEFORE_MIN = 15              # 迫近行程搶焦點：開始前 N 分鐘自動切回行事曆
 FORCE_SCENE_RETURN_S = 60                # force 場景模式：點回行事曆後 N 秒自動回場景
 PAN_BAND_INTERVAL = 1 / 30               # 跟手位移的 flip 節流（帶狀 blit 很便宜，30fps 上限即可）
+# 2026-08-10 Pi Zero 2W 實測頁面拖曳單圈工作只要 13.7ms，卻被 tick(30) 睡到
+# 33.2ms；拖曳／吸附改為 60fps，才能避免手指跟隨被多餘的約 20ms 睡眠拖慢。
+DRAG_FPS = 60
+PAN_BAND_INTERVAL_DRAG = 1 / 60          # 頁面拖曳帶狀 blit 要配合 60fps 跟手
 # 氛圍幀率不是常數：由 weatherfx.ambient_fps(code) 分級（雨/雷 15、雪 12、
 # 晴/雲/霧 8）——實務上 open-meteo 的每個 code 都有動態場景，氛圍模式是 24/7
 # 常態，分級幀率才是 Pi Zero 2W 上真正的省電槓桿。
@@ -31,6 +35,11 @@ PREFETCH_IDLE_S = 2.0       # 相鄰頁預取前必須連續閒置的秒數
 
 def should_prefetch(idle_since: float, now_mono: float, threshold: float) -> bool:
     return idle_since != 0.0 and now_mono - idle_since >= threshold
+
+
+def loop_fps(drag_active: bool, default_fps: int = 30) -> int:
+    """拖曳／吸附進行中回 DRAG_FPS，其餘回 default_fps。"""
+    return DRAG_FPS if drag_active else default_fps
 
 
 def page_drag_offset(dx: float, width: int, has_prev: bool, has_next: bool) -> float:
@@ -1276,7 +1285,7 @@ class App:
             self._page_drag = drag
 
         mono = time.monotonic()
-        if mono - self._page_drag_at < PAN_BAND_INTERVAL:
+        if mono - self._page_drag_at < PAN_BAND_INTERVAL_DRAG:
             return
         self._page_drag_at = mono
 
@@ -1536,7 +1545,7 @@ class App:
             return running
         if self._page_settle is not None:
             self._render_page_settle_frame(now)
-            clock.tick(30)
+            clock.tick(loop_fps(True))
             return running
         # 翻牌動畫（30fps 燒 400ms）只在 dashboard 頁才有意義；離開 dashboard 就不該
         # 燒 CPU（1GHz 的 Pi Zero 2 W 上，設定/鬧鐘頁跑這個純屬浪費）。
@@ -1592,6 +1601,11 @@ class App:
                 # 鍵盤 200ms 一格的回饋就是「十年前」體感的元凶之一。
                 self._render()
                 clock.tick(20 if had_input else 5)
+            elif self._drag_start is not None or self._page_settle is not None:
+                # 跟手拖曳／吸附時帶狀 blit 已在迴圈前段完成，不需全量重繪。
+                # 2026-08-10 Pi Zero 2W 實測單圈工作 13.7ms，tick(30) 卻讓
+                # 每圈變成 33.2ms；改為 60fps 才不會用約 20ms 睡眠拖慢跟手。
+                clock.tick(loop_fps(True))
             elif snap.seq != self._last_seq or now.minute != self._last_minute:
                 self._render()
                 clock.tick(30)
