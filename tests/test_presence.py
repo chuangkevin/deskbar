@@ -245,6 +245,26 @@ def test_next_sleep_combines_interval_and_backoff():
     assert presence.next_sleep(45, 7) == 1845
 
 
+def test_ble_backoff_delay_boundaries():
+    assert presence.backoff_delay(0, source="ble") == 0
+    assert presence.backoff_delay(1, source="ble") == 0
+    assert presence.backoff_delay(2, source="ble") == 15
+    assert presence.backoff_delay(6, source="ble") == 120
+    assert presence.backoff_delay(99, source="ble") == 120
+
+
+def test_bluetooth_backoff_delay_explicit_source_unchanged():
+    expected = (0, 0, 30, 60, 120, 300, 600, 1800, 1800)
+    actual = tuple(presence.backoff_delay(streak, source="bluetooth")
+                   for streak in range(9))
+    assert actual == expected
+
+
+def test_next_sleep_source_specific_backoff():
+    assert presence.next_sleep(45, 99, source="ble") == 45 + 120
+    assert presence.next_sleep(45, 99) == 45 + 1800
+
+
 def test_probe_once_lock_contention_returns_false_and_skips_runner():
     runner_called = False
 
@@ -537,6 +557,5 @@ def test_probe_ble_once_runner_exceptions_handled():
         present, rssi = presence.probe_ble_once("AA:BB:CC:DD:EE:FF", runner=boom)
         assert present is False
         assert rssi is None
-
 
 
