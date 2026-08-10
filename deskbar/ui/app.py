@@ -199,7 +199,11 @@ class App:
         實機路徑據此只旋轉髒區域、貼回持久的旋轉快取——整張 1920×480 旋轉
         （92 萬像素）是每幀固定稅，氛圍幀只動左欄(400 寬)、拖曳只動中欄，
         局部旋轉把這筆稅砍到 1/5～1/2（實機 70% CPU 的主成分）。
-        亮度疊黑改蓋在 screen 上，旋轉快取永遠保持乾淨原圖。"""
+        亮度疊黑改蓋在 screen 上，旋轉快取永遠保持乾淨原圖。
+
+        局部更新時整片重疊 veil 是每幀固定稅，實機量到 17.9ms，
+        佔 45.4ms 的四成，是拖曳掉到 22fps 的主因（2026-08-06 實機量測）。
+        """
         if self._dev:
             # dev：外層旋轉直接作用在邏輯畫面上（0=轉正全景），不經實機面板管線
             out = self.logical if self._dev_rotate == 0 \
@@ -212,6 +216,7 @@ class App:
                 self.screen.blit(out, (0, 0))
         else:
             angle = transform.pygame_rotation_angle(self.settings.rotation)
+            dst_rect = None
             if self._rot_cache is None or self._rot_angle != angle or dirty is None:
                 self._rot_cache = pygame.transform.rotate(self.logical, angle)
                 self._rot_angle = angle
@@ -219,12 +224,26 @@ class App:
                 r = pygame.Rect(dirty).clip(self.logical.get_rect())
                 if r.w > 0 and r.h > 0:
                     sub = pygame.transform.rotate(self.logical.subsurface(r), angle)
-                    self._rot_cache.blit(sub, self._map_rot(r, angle))
+                    rot_pos = self._map_rot(r, angle)
+                    self._rot_cache.blit(sub, rot_pos)
+                    screen_rect = self.screen.get_rect() if getattr(self, "screen", None) is not None \
+                        else pygame.Rect(0, 0, self._rot_cache.get_width(), self._rot_cache.get_height())
+                    dst_rect = pygame.Rect(rot_pos, sub.get_size()).clip(screen_rect)
+                else:
+                    dst_rect = pygame.Rect(0, 0, 0, 0)
             if getattr(self, "screen", None) is not None:
-                self.screen.blit(self._rot_cache, (0, 0))
                 veil = self._dim_veil(self._rot_cache.get_size())
-                if veil is not None:
-                    self.screen.blit(veil, (0, 0))
+                if dst_rect is None:
+                    # 全量更新：整片 blit rot_cache 與 veil
+                    self.screen.blit(self._rot_cache, (0, 0))
+                    if veil is not None:
+                        self.screen.blit(veil, (0, 0))
+                elif dst_rect.w > 0 and dst_rect.h > 0:
+                    # 局部更新：局部重疊 veil 是每幀固定稅 (17.9ms/45.4ms，2026-08-06 實機量測)
+                    # rot_cache 與 veil 都只 blit 旋轉後的髒區域 (dst_rect)
+                    self.screen.blit(self._rot_cache, dst_rect.topleft, dst_rect)
+                    if veil is not None:
+                        self.screen.blit(veil, dst_rect.topleft, dst_rect)
         if pygame.display.get_init() and pygame.display.get_surface() is not None:
             pygame.display.flip()
 
