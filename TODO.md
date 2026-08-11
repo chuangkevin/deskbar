@@ -8,6 +8,7 @@
 ## 1. 現狀任務分類
 
 ### 已完成 (Completed)
+- **工作中 sessions 功能（已部署／驗證）**：Mac LaunchAgent 每 15 秒彙整 Codex／Claude 最近 30 分鐘活動，最多保留 6 筆；Pi 只接收 display-safe 資料與一次性 opaque 開啟碼。場景／行事曆／待辦／便條中欄模式都會在右欄優先顯示 sessions；摘要顯示前三筆與總數、點入可檢視完整六筆。點擊目前僅帶來源 App 到前景，非精準對話深連結；815 tests passed，Pi 實機與 LaunchAgent 已驗證。
 - **交接指定 5 個場景重製與部署推送**：
   - `runner` (`b077998`): 跑者像素與障礙物重製。
   - `fish` (`65ccf60`): 錦鯉水洗場景重製。

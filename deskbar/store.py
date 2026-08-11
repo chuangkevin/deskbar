@@ -13,6 +13,8 @@ from deskbar.models import Event, event_from_json, event_to_json
 from deskbar.presence import PresenceState
 from deskbar.weather import Weather
 
+from deskbar.work_sessions import WorkSessionActionQueue, WorkSessionSnapshot, utc_now
+
 _DEFAULT_PRESENCE = PresenceState(present=True, rssi=None, last_seen=None, enabled=False)
 
 if TYPE_CHECKING:      # 只給型別檢查用，避免 store.py 平白多一條 runtime 依賴到 claudeusage
@@ -38,6 +40,7 @@ class Snapshot:
     usage: "UsageInfo | None" = None
     linear: list = field(default_factory=list)        # LinearIssue 清單（待辦卡）
     linear_at: datetime | None = None                  # 上次成功同步時間
+    work_sessions: WorkSessionSnapshot = field(default_factory=WorkSessionSnapshot)
 
 
 class AppState:
@@ -52,6 +55,8 @@ class AppState:
         self._presence: PresenceState = _DEFAULT_PRESENCE
         self._linear: list = []
         self._linear_at: datetime | None = None
+        self._work_sessions: WorkSessionSnapshot = WorkSessionSnapshot()
+        self._work_sessions_queue: WorkSessionActionQueue = WorkSessionActionQueue()
         self._cached_snapshot: Snapshot | None = None
         self._cached_seq: int | None = None
 
@@ -65,7 +70,8 @@ class AppState:
             events.sort(key=lambda e: (e.start, e.id))
             snap = Snapshot(events, self._weather, dict(self._statuses), self._seq,
                             self._syncing, self._presence, self._usage,
-                            list(self._linear), self._linear_at)
+                            list(self._linear), self._linear_at,
+                            self._work_sessions)
             self._cached_snapshot = snap
             self._cached_seq = self._seq
             return snap
@@ -119,6 +125,25 @@ class AppState:
         with self._lock:
             self._presence = ps
             self._seq += 1
+
+    def set_work_sessions(self, ws: WorkSessionSnapshot) -> None:
+        with self._lock:
+            self._work_sessions = ws
+            self._seq += 1
+
+    def enqueue_work_session_action(self, open_id: str) -> str | None:
+        """Queue a focus action only for a currently displayed opaque capability."""
+        with self._lock:
+            item = self._work_sessions.item_for_open_id(open_id, utc_now())
+            if item is None:
+                return None
+            return self._work_sessions_queue.enqueue(open_id=item.open_id, source=item.source)
+
+    def poll_work_session_actions(self) -> list[dict]:
+        return self._work_sessions_queue.poll()
+
+    def ack_work_session_action(self, action_id: str) -> bool:
+        return self._work_sessions_queue.ack(action_id)
 
     def save_cache(self) -> None:
         """原子寫入（tempfile + os.replace），比照 config.save_settings：斷電/例外中斷

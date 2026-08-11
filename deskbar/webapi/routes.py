@@ -24,7 +24,9 @@ from deskbar.webapi.validation import (
     _to_float,
     _valid_pct,
     _valid_resets_at,
+    validate_work_sessions_payload,
 )
+from deskbar.work_sessions import snapshot_from_payload, utc_now
 
 _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -415,4 +417,64 @@ def register_routes(app: Flask, context: WebContext) -> None:
             oa_fetched_at=_optional_fetched("oa_fetched_at"),
         )
         context.usage_state.set_usage(info)
+        return "", 204
+
+    @app.post("/api/work-sessions")
+    def push_work_sessions():
+        """Mac agent 定期推送 Session 快照。與 /api/usage 相同的認證慣例與 501 處理。"""
+        if context.usage_state is None:
+            return jsonify({"error": "not available"}), 501
+        push_token = os.environ.get("DESKBAR_PUSH_TOKEN")
+        if push_token and request.headers.get("X-Deskbar-Token") != push_token:
+            return jsonify({"error": "unauthorized"}), 401
+
+        d = request.get_json(silent=True)
+        valid, err_msg = validate_work_sessions_payload(d)
+        if not valid:
+            return jsonify({"error": err_msg}), 400
+        context.usage_state.set_work_sessions(snapshot_from_payload(d))
+        return "", 204
+
+    @app.get("/api/work-sessions")
+    def list_work_sessions():
+        """Read-only health view; deliberately omits opaque action capabilities."""
+        if context.usage_state is None:
+            return jsonify({"error": "not available"}), 501
+        snapshot = context.usage_state.snapshot().work_sessions
+        return jsonify({
+            "items": [{
+                "source": item.source,
+                "label": item.label,
+                "last_active_at": item.last_active_at.isoformat(),
+            } for item in snapshot.active_items(utc_now())],
+            "errors": [{"source": error.source, "code": error.code} for error in snapshot.errors],
+            "fetched_at": snapshot.fetched_at.isoformat(),
+        })
+
+    @app.get("/api/work-sessions/actions")
+    def poll_work_session_actions():
+        """Mac agent 輪詢待執行的帶至前景操作。"""
+        if context.usage_state is None:
+            return jsonify({"error": "not available"}), 501
+        push_token = os.environ.get("DESKBAR_PUSH_TOKEN")
+        if push_token and request.headers.get("X-Deskbar-Token") != push_token:
+            return jsonify({"error": "unauthorized"}), 401
+
+        actions = context.usage_state.poll_work_session_actions()
+        return jsonify({"actions": actions}), 200
+
+    @app.post("/api/work-sessions/actions/ack")
+    def ack_work_session_action():
+        """Mac agent 執行完畢後確認 ACK。"""
+        if context.usage_state is None:
+            return jsonify({"error": "not available"}), 501
+        push_token = os.environ.get("DESKBAR_PUSH_TOKEN")
+        if push_token and request.headers.get("X-Deskbar-Token") != push_token:
+            return jsonify({"error": "unauthorized"}), 401
+
+        d = request.get_json(force=True, silent=True)
+        if not isinstance(d, dict) or not isinstance(d.get("action_id"), str) or not d.get("action_id").strip():
+            return jsonify({"error": "invalid action_id"}), 400
+
+        context.usage_state.ack_work_session_action(d["action_id"].strip())
         return "", 204

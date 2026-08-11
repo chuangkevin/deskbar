@@ -59,3 +59,14 @@ def _parse_dt(v):
 
 def _to_float(v):
     return None if v is None else float(v)
+
+
+def validate_work_sessions_payload(data: object) -> tuple[bool, str | None]:
+    """Keep Flask's error shape while the deep work-session module owns schema."""
+    from deskbar.work_sessions import snapshot_from_payload
+
+    try:
+        snapshot_from_payload(data)
+    except ValueError as exc:
+        return False, str(exc)
+    return True, None

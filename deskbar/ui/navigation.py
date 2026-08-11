@@ -21,6 +21,7 @@ VALID_VIEWS = frozenset({
     "wifi",
     "bt",
     "screen",
+    "work_sessions",
 })
 
 DEFAULT_CENTER_PAGES = ("linear", "notes")

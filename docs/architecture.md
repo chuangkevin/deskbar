@@ -112,6 +112,8 @@ Google Calendar API ──┐                      Open-Meteo API
 
 Claude usage 沒有裝置端背景執行緒：資料改由 Mac 上的 agent（`tools/usage_push_snippet.py`／`tools/usage_push_demo.py`）每 60 秒主動 `POST /api/usage` 推送，deskbar 純被動接收（見上方 Web 執行緒那一列）。
 
+工作中 sessions 走同樣的跨機資料流，但有更窄的 trust seam：`tools/work_sessions_agent.py` 在 Mac 讀 Codex／Claude 的私有本機 session 格式，先轉為 display-safe snapshot，再 `POST /api/work-sessions`。最多只保留最近的 6 筆。Pi 的 `work_sessions` 模組只保存 source、專案 basename、活動時間與 opaque `open_id`；Pygame 點擊只把該 opaque id 放進 60 秒的一次性記憶體 action queue。Mac agent 輪詢後以固定 allowlist 帶 Codex（ChatGPT）或 Claude App 到前景。Pi 永遠拿不到原 session ID、完整 cwd、prompt、response、title 或 shell command；活動時間達 30 分鐘的項目在 Mac 與 Pi 渲染層都會消失。
+
 ### 關於天氣同步的錯誤可見性
 
 `weather_sync_once` 失敗（網路錯誤、API 格式變化等）過去是完全靜默的 `pass`，只在螢幕上以「資料變舊」被動察覺，除錯困難。目前改為失敗時印一行 `[deskbar] weather sync failed: ...` 到 stderr（systemd 環境下會進 `journalctl -u deskbar`）。

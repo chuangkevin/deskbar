@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deskbar.work-sessions</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/kevin/Documents/Projects/deskbar/.venv/bin/python</string>
+    <string>/Users/kevin/Documents/Projects/deskbar/tools/work_sessions_agent.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/kevin/Documents/Projects/deskbar</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/deskbar-work-sessions.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/deskbar-work-sessions.log</string>
+  <!-- Set DESKBAR_URL and optional DESKBAR_PUSH_TOKEN in a wrapper or launchctl
+       environment. Never put a token in this tracked template. -->
+</dict>
+</plist>

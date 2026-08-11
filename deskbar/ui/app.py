@@ -149,6 +149,7 @@ class App:
         self._rot_angle = None
         self._auto_center_check_at = 0.0
         self.card_overlay = None        # 待辦卡詳情浮層（LinearIssue|None）
+        self.work_sessions_page = 0     # 全螢幕工作 Session 清單頁碼
         from deskbar.presence import SedentaryTracker
         self.sedentary = SedentaryTracker()   # 久坐提示（公司場景：連續在座 60 分）
         self._sed_hint_last = False           # 提示出現/消失的邊緣觸發重繪用
@@ -470,6 +471,17 @@ class App:
                                                self.wifi_ui.get("selected_security", ""))
                     elif a == "open_detail":
                         self.view, self.detail_event = "detail", h.data
+                    elif a == "open_work_sessions":
+                        self.view = "work_sessions"
+                        self.work_sessions_page = 0
+                    elif a == "go_dashboard":
+                        self.view = "dashboard"
+                    elif a == "work_sessions_page":
+                        self.work_sessions_page = max(0, int(h.data))
+                    elif a == "enqueue_work_session_action":
+                        # h.data 是 Mac 產生的 opaque capability。AppState 會再次
+                        # 驗證它仍屬於 30 分鐘內顯示中的 item，絕不接收 command。
+                        self.state.enqueue_work_session_action(str(h.data))
                     elif a == "toggle_alarm":
                         if self.alarm_store is not None:
                             try:
@@ -695,7 +707,7 @@ class App:
         """把目前 view 畫進 self.logical（不 flip、不動 _last_* 記帳）。
         拆出這支給 _render()（正常重繪）與 _render_transition_frame()（切換過場，
         還要在這之上疊一層舊畫面滑出效果）共用。"""
-        from deskbar.ui import alarm_view, dashboard, detail, settings_view
+        from deskbar.ui import alarm_view, dashboard, detail, settings_view, worksessionwidget
         self.logical.fill(theme.C["bg"])
         self.pet_overlay.clear_background()
         # sync 現在只在 phase (a) 短暫持鎖（微秒級），這裡加鎖不會再造成長時間凍結；
@@ -717,6 +729,9 @@ class App:
             elif self.view == "alarms":
                 self.hits = alarm_view.render(self.logical, self.alarm_store,
                                               self.alarm_draft, now)
+            elif self.view == "work_sessions":
+                self.hits = worksessionwidget.render_full_view(
+                    self.logical, snap, now, page=self.work_sessions_page)
             else:
                 self.hits = dashboard.render(self.logical, snap, self.settings, now, clock_anim,
                                              anchor=self.view_anchor,

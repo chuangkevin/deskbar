@@ -136,6 +136,21 @@ make test    # .venv/bin/python -m pytest -q
 | 觸控方向跟畫面對不起來 / 點哪都不準 | 先確認設定頁「旋轉螢幕」是否切到正確的 90°/270°；`deskbar/transform.py` 的觸控反解矩陣跟目前旋轉角度綁定，兩者要一致 |
 | Claude usage 油表一直顯示「usage 未推送」 | deskbar 本身不抓取 usage，要靠 Mac 上的 agent 主動 POST `/api/usage`（見 `tools/usage_push_snippet.py`／`tools/usage_push_demo.py`）；確認該 agent 有在跑、網路能連到 Pi，若 Pi 上設了 `DESKBAR_PUSH_TOKEN` 環境變數，推送端也要帶同樣的 `X-Deskbar-Token` header 否則會被 401 拒絕 |
 
+## 工作中 sessions（Codex／Claude）
+
+Deskbar 的「工作中 sessions」只顯示最近活動**少於 30 分鐘**的 session，最多保留最新 **6 筆**。1920×480 主畫面會顯示前三筆與總數，點入可看完整六筆。Mac collector 只會送來源、專案資料夾名稱、最後活動時間與一次性開啟碼；不會送 prompt、回覆、對話標題、完整路徑、session ID 或任何憑證。
+
+先在 Mac 驗證一次推送：
+
+```bash
+DESKBAR_URL=http://100.98.35.59:8080 \
+  .venv/bin/python tools/work_sessions_agent.py --once
+```
+
+長駐時可將 [`deploy/com.deskbar.work-sessions.plist`](deploy/com.deskbar.work-sessions.plist) 複製到 `~/Library/LaunchAgents/`，再以 `launchctl bootstrap gui/$(id -u) ...` 載入；若 Pi 設定了 `DESKBAR_PUSH_TOKEN`，請在啟動 agent 的環境提供同名變數，勿寫進 plist 或版控。停止／回滾：`launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.deskbar.work-sessions.plist` 後刪除該副本即可。
+
+點 session 目前只會把對應的 **Codex（ChatGPT）或 Claude App 帶到前景**。兩者目前都沒有經驗證的特定對話深連結，因此不會假稱可精準跳進某一個 private session。
+
 ## 授權與資料範圍
 
 僅使用 Google Calendar `calendar.readonly` 唯讀 scope；token 與 client secret 檔案權限一律 600；SSH 僅金鑰登入。Repo 本身可公開：任何帳號憑證、快取、實際地點座標都在 `.gitignore` 排除範圍，只留 `*.example` 範例檔。

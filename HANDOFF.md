@@ -8,6 +8,7 @@
 ## 0. 現狀任務分類與狀態摘要
 
 ### 已完成 (Completed)
+- **工作中 sessions 功能（已部署／驗證）**：Mac LaunchAgent 每 15 秒推送最近 30 分鐘、最多 6 筆 Codex／Claude 活動；Pi 只保留來源、專案 basename、活動時間與 opaque 開啟碼，不接收 prompt、title、完整 cwd 或 native session ID。1920×480 儀表板摘要顯示前三筆與總數，點入可檢視／操作完整六筆；點擊目前只帶 Codex（ChatGPT）／Claude App 到前景，沒有經驗證的精準對話跳轉。2026-08-11 實機驗證：Pi 收到 4 筆安全資料、場景模式右欄正常顯示，815 tests passed。
 - **指定 5 個場景重製、部署與推送**：
   - `runner` (`b077998`): 跑者像素與障礙物重製。
   - `fish` (`65ccf60`): 錦鯉水洗場景重製。

@@ -136,6 +136,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                                   page=linear_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources)
+        _render_right_lower(surface, snap, now, hits, todo_fallback=False)
         return _finish(surface, snap, settings, now, hits)   # 中欄即完整待辦牆，右欄摘要免了
     if center == "notes":
         from deskbar.ui import notesview
@@ -146,7 +147,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                                  TL_AREA, now, _t.monotonic(), page=notes_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources)
-        _render_right_todo_mini(surface, snap, now)
+        _render_right_lower(surface, snap, now, hits)
         return _finish(surface, snap, settings, now, hits)
     if center == "scene":
         from deskbar.ui import scenes
@@ -157,7 +158,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                               if snap.weather else None)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources)
-        _render_right_todo_mini(surface, snap, now)
+        _render_right_lower(surface, snap, now, hits)
         return _finish(surface, snap, settings, now, hits)
 
     lane_emails = [e for e in settings.accounts if settings.accounts[e].calendars] \
@@ -238,7 +239,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     # 跟左欄時鐘/天氣一樣不可互動），畫在最後純粹是慣例（跟中欄內容互不重疊，順序無關）。
     usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                        settings.usage_sources)
-    _render_right_todo_mini(surface, snap, now)
+    _render_right_lower(surface, snap, now, hits)
     return _finish(surface, snap, settings, now, hits)
 
 
@@ -259,6 +260,24 @@ def _render_right_todo_mini(surface, snap, now) -> None:
     if snap.linear:
         from deskbar.ui import linearview
         linearview.render_mini(surface, snap, USAGE_X0, 362, USAGE_W, now)
+
+
+def _render_right_lower(surface, snap, now, hits, *, todo_fallback: bool = True) -> None:
+    """右欄下半在所有中欄模式都一致：活躍 sessions 優先，其次才是待辦。"""
+    # 1920×480 實體面板容不下待辦 mini 與多列 session；摘要顯示前三筆與總數，
+    # 進入專頁可檢視／操作最多六筆。linear 中欄本身已是待辦牆，無 session 時不重複。
+    if snap.work_sessions.active_items(now):
+        _render_right_work_sessions(surface, snap, now, hits)
+    elif todo_fallback:
+        _render_right_todo_mini(surface, snap, now)
+
+
+def _render_right_work_sessions(surface, snap, now, hits) -> None:
+    """右欄工作 Session 摘要：僅在有資料且 strictly < 30m 時出現。"""
+    from deskbar.ui import worksessionwidget
+    ws_hits, _ = worksessionwidget.render_summary(
+        surface, snap, now, USAGE_X0, 362, USAGE_W, max_rows=3)
+    hits.extend(ws_hits)
 
 
 def render_panel_only(surface, snap, settings, now, weather_t=0.0,
