@@ -17,6 +17,7 @@ fi
 DEPLOY_HOME="${DESKBAR_DEPLOY_HOME:-/home/kevin/deskbar}"
 SYSTEMD_DIR="${DESKBAR_DEPLOY_SYSTEMD_DIR:-/etc/systemd/system}"
 WATCHDOG_PATH="${DESKBAR_DEPLOY_WATCHDOG_PATH:-/usr/local/bin/deskbar-net-watchdog.sh}"
+OBSERVER_PATH="${DESKBAR_DEPLOY_OBSERVER_PATH:-$(dirname "$WATCHDOG_PATH")/deskbar-net-observer.sh}"
 
 if [ "$RUNTIME_ONLY" = "false" ]; then
   sudo apt-get update -qq
@@ -68,15 +69,22 @@ PKEOF
   fi
 fi
 
-# 連線看門狗：用 NetworkManager 裝置狀態分 CONNECTED / PROGRESSING / DEAD。
-# 連續 DEAD 才先請 NM 喚醒已知 profile，失敗才踢 radio（見 deploy/net-watchdog.sh 檔頭）。
-sudo mkdir -p "$(dirname "$WATCHDOG_PATH")"
-sudo install -m 755 deploy/net-watchdog.sh "$WATCHDOG_PATH"
-sudo cp deploy/deskbar-net-watchdog.service deploy/deskbar-net-watchdog.timer "$SYSTEMD_DIR/"
-sudo systemctl daemon-reload
-sudo systemctl enable --now deskbar-net-watchdog.timer
-
 if [ "$RUNTIME_ONLY" = "false" ]; then
+  # 網路元件只能在明確的完整 bootstrap 安裝。日常 make deploy 僅更新
+  # deskbar app 並重啟它，絕不新增、啟用或重設任何網路 service／設定檔。
+  # 看門狗會對長時間斷線做自動復原，故不可在例行部署中重新啟用。
+  sudo mkdir -p "$(dirname "$WATCHDOG_PATH")"
+  sudo install -m 755 deploy/net-watchdog.sh "$WATCHDOG_PATH"
+  sudo cp deploy/deskbar-net-watchdog.service deploy/deskbar-net-watchdog.timer "$SYSTEMD_DIR/"
+
+  # 網路純觀測診斷：唯讀記錄狀態變化，不執行任何救援動作。
+  sudo mkdir -p "$(dirname "$OBSERVER_PATH")"
+  sudo install -m 755 deploy/net-observer.sh "$OBSERVER_PATH"
+  sudo cp deploy/deskbar-net-observer.service deploy/deskbar-net-observer.timer "$SYSTEMD_DIR/"
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now deskbar-net-watchdog.timer
+  sudo systemctl enable --now deskbar-net-observer.timer
+
   # 2026-08-05 教訓：RPi OS 預設 Storage=volatile，重開機日誌全失，事故查不到
   # 死因。用 drop-in 蓋掉（優先權高於 journald.conf），上限 200M 保護 SD 卡。
   sudo mkdir -p /var/log/journal /etc/systemd/journald.conf.d

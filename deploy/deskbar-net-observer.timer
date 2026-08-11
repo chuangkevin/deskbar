@@ -1,0 +1,9 @@
+[Unit]
+Description=deskbar 網路純觀測診斷排程（每 60 秒）
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+
+[Install]
+WantedBy=timers.target

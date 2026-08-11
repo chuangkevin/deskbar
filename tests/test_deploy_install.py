@@ -94,14 +94,18 @@ with open(os.environ["DESKBAR_TEST_LOG"], "a", encoding="utf-8") as f:
 
     assert proc.returncode == 0, f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
     assert (fake_systemd_dir / "deskbar.service").exists()
-    assert fake_watchdog_path.exists()
-    assert (fake_systemd_dir / "deskbar-net-watchdog.service").exists()
-    assert (fake_systemd_dir / "deskbar-net-watchdog.timer").exists()
+    assert not fake_watchdog_path.exists()
+    assert not (fake_systemd_dir / "deskbar-net-watchdog.service").exists()
+    assert not (fake_systemd_dir / "deskbar-net-watchdog.timer").exists()
+    assert not fake_watchdog_path.with_name("deskbar-net-observer.sh").exists()
+    assert not (fake_systemd_dir / "deskbar-net-observer.service").exists()
+    assert not (fake_systemd_dir / "deskbar-net-observer.timer").exists()
 
     log_content = log_file.read_text(encoding="utf-8") if log_file.exists() else ""
     assert "PIP install -q -r requirements.txt" in log_content
     assert "SYSTEMCTL daemon-reload" in log_content
-    assert "SYSTEMCTL enable --now deskbar-net-watchdog.timer" in log_content
+    assert "deskbar-net-watchdog" not in log_content
+    assert "deskbar-net-observer" not in log_content
 
     # Ensure forbidden operations were NOT logged
     for forbidden in ["APT-GET", "SETCAP", "NMCLI", "IW", "SYSTEMD-TMPFILES"]:

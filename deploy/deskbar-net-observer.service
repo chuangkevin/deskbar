@@ -1,0 +1,9 @@
+[Unit]
+Description=deskbar 網路純觀測診斷（Passive Observer）
+After=network.target
+
+[Service]
+Type=oneshot
+User=kevin
+RuntimeDirectory=deskbar-net-observer
+ExecStart=/usr/local/bin/deskbar-net-observer.sh

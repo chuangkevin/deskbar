@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deskbar.net-probe</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/kevin/Documents/Projects/deskbar/.venv/bin/python</string>
+    <string>/Users/kevin/Documents/Projects/deskbar/tools/deskbar_net_probe.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/kevin/Documents/Projects/deskbar</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/deskbar-net-probe.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/deskbar-net-probe.log</string>
+</dict>
+</plist>

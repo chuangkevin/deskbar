@@ -151,6 +151,19 @@ DESKBAR_URL=http://100.98.35.59:8080 \
 
 點 session 目前只會把對應的 **Codex（ChatGPT）或 Claude App 帶到前景**。兩者目前都沒有經驗證的特定對話深連結，因此不會假稱可精準跳進某一個 private session。
 
+## 雙端網路診斷觀測（Net Observer & Probe）
+
+為了排查長時閒置後 Pi 與 Mac 間 Tailnet / Wi-Fi 的連線狀況，系統提供雙端純觀測診斷工具（僅記錄狀態變化，永不觸發重連、radio 或修復動作）：
+
+> 日常 `make deploy` 不會安裝、啟用或重設任何網路元件；這些診斷／復原元件只會在明確執行 `make bootstrap` 時處理。
+
+- **Pi 側 Observer (`deploy/net-observer.sh`)**：由 `deskbar-net-observer.timer` 每 60 秒啟動一次，純唯讀檢查 `wlan0_connected`、`route_via_wlan0`、`dns_resolution`、`public_ip_http` 與 `deskbar_local_http` 5 項狀態。DNS 與公開 HTTP 檢查刻意不走私有 Tailnet／反向代理路徑；僅在狀態發生變化時透過 systemd logger 寫入一列結構化日誌。
+  - **查看 Pi 日誌**：`journalctl -u deskbar-net-observer.service -t deskbar-net-observer -n 50`
+- **Mac 側 Probe (`tools/deskbar_net_probe.py`)**：Mac 端常駐 probe，預設每 15 秒檢查 Pi Tailnet HTTP 與 `desk.sisihome.org` HTTPS。僅在狀態變化時記錄至 `/tmp/deskbar-net-probe.log`。
+  - **單次執行測試**：`.venv/bin/python tools/deskbar_net_probe.py --once`
+  - **查看 Mac 日誌**：`tail -f /tmp/deskbar-net-probe.log`
+
+
 ## 授權與資料範圍
 
 僅使用 Google Calendar `calendar.readonly` 唯讀 scope；token 與 client secret 檔案權限一律 600；SSH 僅金鑰登入。Repo 本身可公開：任何帳號憑證、快取、實際地點座標都在 `.gitignore` 排除範圍，只留 `*.example` 範例檔。
