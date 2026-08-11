@@ -444,12 +444,13 @@ class App:
                             self.wifi_ui["msg"] = f"已連線 {net.ssid}"
                         elif net.secured and not net.known:
                             self.wifi_ui.update(phase="password", selected=net.ssid,
+                                                selected_profile_id=net.profile_id,
                                                 selected_secured=True,
                                                 selected_security=net.security,
                                                 pw="", msg="",
                                                 shift=False, sym=False, show_pw=False)
                         else:
-                            self._wifi_connect(net.ssid, None, net.security)
+                            self._wifi_connect(net.ssid, None, net.security, net.profile_id)
                     elif a == "wifi_key":
                         from deskbar.ui import wifi_view
                         if len(self.wifi_ui["pw"]) < wifi_view.PW_MAX:
@@ -468,7 +469,8 @@ class App:
                         if self.wifi_ui["pw"]:
                             self._wifi_connect(self.wifi_ui["selected"],
                                                self.wifi_ui["pw"],
-                                               self.wifi_ui.get("selected_security", ""))
+                                               self.wifi_ui.get("selected_security", ""),
+                                               self.wifi_ui.get("selected_profile_id", ""))
                     elif a == "open_detail":
                         self.view, self.detail_event = "detail", h.data
                     elif a == "open_work_sessions":
@@ -781,7 +783,8 @@ class App:
 
         threading.Thread(target=work, daemon=True, name="wifi-scan").start()
 
-    def _wifi_connect(self, ssid: str, password, security: str = "") -> None:
+    def _wifi_connect(self, ssid: str, password: "str | None" = None,
+                      security: str = "", profile_id: str = "") -> None:
         """背景連線（nmcli 最長 60 秒）。成功→清密碼、回列表、重掃；
         失敗→留在原畫面顯示原因讓使用者改密碼重試。"""
         ui = self.wifi_ui
@@ -789,22 +792,26 @@ class App:
             return
         ui["busy"] = "connect"
         ui["selected"] = ssid
+        ui["selected_profile_id"] = profile_id
+        ui["selected_security"] = security
         ui["msg"] = ""
         import threading
         from deskbar import wifi
 
         def work():
-            ok, msg = wifi.connect(ssid, password, security)
+            ok, msg = wifi.connect(ssid, password, security, profile_id)
             if ok:
                 ui.update(phase="list", pw="", msg=f"已連線 {ssid}")
                 ui["nets"] = wifi.scan()
                 ui["active"] = wifi.active_info()
-            elif password is None:
-                # 「已儲存」網路用舊 profile 連失敗（密碼改了/profile 壞了）：
-                # 直接彈密碼鍵盤讓使用者重新輸入，而不是卡在清單反覆失敗。
-                ui.update(phase="password", selected=ssid, selected_secured=True,
+            elif password is None and profile_id and security not in ("", "--"):
+                # 已存 secure profile 無密碼 start 失敗時進入原有 password 畫面
+                ui.update(phase="password", selected=ssid,
+                          selected_profile_id=profile_id,
+                          selected_secured=True,
+                          selected_security=security,
                           pw="", shift=False, sym=False, show_pw=False,
-                          msg=f"連線失敗：{msg}｜請輸入密碼重試")
+                          msg="已儲存連線失敗，請輸入密碼重試；原設定會保留")
             else:
                 ui["msg"] = f"連線失敗：{msg}"
             ui["busy"] = None

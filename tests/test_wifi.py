@@ -15,7 +15,33 @@ def test_split_t_handles_escaped_colons_in_ssid():
 
 def test_parse_known_only_wifi_connections():
     text = "Home5G:802-11-wireless\nWired 1:802-3-ethernet\nlo:loopback\nOffice:802-11-wireless"
-    assert wifi.parse_known(text) == {"Home5G", "Office"}
+    assert wifi.parse_known(text) == {"Home5G": "Home5G", "Office": "Office"}
+
+
+def test_parse_known_actual_ssid_mapping():
+    text = "interagent:802-11-wireless:InterAgent - Enterprise\nHome5G:802-11-wireless:\nOffice:802-11-wireless:--"
+    known = wifi.parse_known(text)
+    assert known == {
+        "InterAgent - Enterprise": "interagent",
+        "Home5G": "Home5G",
+        "Office": "Office",
+    }
+
+
+def test_parse_wifi_list_known_and_profile_id():
+    text = "no:InterAgent - Enterprise:80:WPA2\nno:OtherSSID:60:WPA2"
+    mapping = {"InterAgent - Enterprise": "interagent"}
+    nets = wifi.parse_wifi_list(text, known=mapping)
+    assert nets[0].ssid == "InterAgent - Enterprise"
+    assert nets[0].known is True
+    assert nets[0].profile_id == "interagent"
+    assert nets[1].known is False
+    assert nets[1].profile_id == ""
+
+    # 維持 set 型 known 的向後相容
+    nets_set = wifi.parse_wifi_list(text, known={"InterAgent - Enterprise"})
+    assert nets_set[0].known is True
+    assert nets_set[0].profile_id == "InterAgent - Enterprise"
 
 
 def test_parse_wifi_list_dedupes_and_sorts():
@@ -103,6 +129,54 @@ def test_connect_without_password_prefers_saved_profile_then_falls_back(monkeypa
     assert calls[0][:3] == ["nmcli", "connection", "up"], "先試既有 profile"
     assert calls[1][:4] == ["nmcli", "dev", "wifi", "connect"], "沒 profile 退回開放網路路徑"
     assert all("password" not in c for c in calls)
+
+
+def test_connect_without_password_uses_profile_id_and_no_fallback(monkeypatch):
+    calls = []
+
+    def fake_run(args, capture_output, text, timeout):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="error")
+
+    monkeypatch.setattr(wifi.subprocess, "run", fake_run)
+    ok, msg = wifi.connect("InterAgent - Enterprise", profile_id="interagent")
+    assert ok is False
+    assert len(calls) == 1, "傳 profile_id 失敗時不得再走 dev wifi connect fallback"
+    assert calls[0] == ["nmcli", "connection", "up", "id", "interagent"]
+
+
+def test_connect_password_success_replaces_non_matching_existing_profile(monkeypatch):
+    calls = []
+
+    def fake_run(args, capture_output, text, timeout):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="activated", stderr="")
+
+    monkeypatch.setattr(wifi.subprocess, "run", fake_run)
+    ok, _ = wifi.connect("InterAgent - Enterprise", "secret123", security="WPA2", profile_id="interagent")
+    assert ok is True
+    # 啟動成功後刪除舊 target profile id "interagent"
+    assert ["nmcli", "connection", "delete", "id", "interagent"] in calls
+    modify_call = next(c for c in calls if c[:3] == ["nmcli", "connection", "modify"])
+    temp_id = calls[0][4]
+    assert modify_call == ["nmcli", "connection", "modify", "id", temp_id,
+                           "connection.id", "interagent", "connection.autoconnect", "yes"]
+
+
+def test_connect_password_failure_preserves_non_matching_existing_profile(monkeypatch):
+    calls = []
+
+    def fake_run(args, capture_output, text, timeout):
+        calls.append(args)
+        rc = 4 if args[:3] == ["nmcli", "connection", "up"] and len(args) >= 5 and args[4].startswith("temp-") else 0
+        return subprocess.CompletedProcess(args, rc, stdout="", stderr="Error: Connection activation failed")
+
+    monkeypatch.setattr(wifi.subprocess, "run", fake_run)
+    ok, _ = wifi.connect("InterAgent - Enterprise", "wrongpass", security="WPA2", profile_id="interagent")
+    assert ok is False
+    deleted_ids = [c[4] for c in calls if c[:4] == ["nmcli", "connection", "delete", "id"]]
+    assert "interagent" not in deleted_ids, "失敗時保留既有 existing profile_id"
+    assert "InterAgent - Enterprise" not in deleted_ids
 
 
 def test_connect_failure_returns_false_with_short_message(monkeypatch):

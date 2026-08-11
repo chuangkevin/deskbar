@@ -28,6 +28,7 @@ class WifiNet:
     active: bool
     known: bool             # NetworkManager 已存過的連線（不用再輸入密碼）
     security: str = ""      # nmcli SECURITY 原文（如 "WPA2"/"WPA3"），連線時選 key-mgmt 用
+    profile_id: str = ""    # NetworkManager connection profile ID (NAME)
 
 
 def _run(args: list, timeout: int) -> "tuple[int, str]":
@@ -63,17 +64,19 @@ def _split_t(line: str) -> list:
     return fields
 
 
-def parse_known(text: str) -> set:
-    """`nmcli -t -f NAME,TYPE connection show` → 已儲存的 Wi-Fi 連線名集合。"""
-    known = set()
+def parse_known(text: str) -> dict[str, str]:
+    """`nmcli -t -f NAME,TYPE,802-11-wireless.ssid connection show` → {SSID: profile_id}。"""
+    known = {}
     for line in text.splitlines():
         f = _split_t(line.strip())
         if len(f) >= 2 and f[1] == "802-11-wireless" and f[0]:
-            known.add(f[0])
+            profile_id = f[0]
+            ssid = f[2] if (len(f) >= 3 and f[2] and f[2] != "--") else f[0]
+            known[ssid] = profile_id
     return known
 
 
-def parse_wifi_list(text: str, known: set) -> list:
+def parse_wifi_list(text: str, known: dict | set) -> list:
     """`nmcli -t -f ACTIVE,SSID,SIGNAL,SECURITY dev wifi list` → [WifiNet]。
     同名 SSID（多 AP）只留訊號最強者；空 SSID（隱藏網路）跳過；ACTIVE=yes
     優先保留（active 旗標不能被較強的非活動 AP 蓋掉）。"""
@@ -86,11 +89,18 @@ def parse_wifi_list(text: str, known: set) -> list:
             signal = int(f[2])
         except ValueError:
             continue
+        ssid = f[1]
+        is_known = ssid in known
+        if isinstance(known, dict):
+            profile_id = known.get(ssid, "")
+        else:
+            profile_id = ssid if is_known else ""
         net = WifiNet(
-            ssid=f[1], signal=max(0, min(100, signal)),
+            ssid=ssid, signal=max(0, min(100, signal)),
             secured=f[3].strip() not in ("", "--"),
-            active=f[0] == "yes", known=f[1] in known,
-            security=f[3].strip())
+            active=f[0] == "yes", known=is_known,
+            security=f[3].strip(),
+            profile_id=profile_id)
         old = best.get(net.ssid)
         if old is None or net.active or (not old.active and net.signal > old.signal):
             if old is not None and old.active and not net.active:
@@ -99,9 +109,9 @@ def parse_wifi_list(text: str, known: set) -> list:
     return sorted(best.values(), key=lambda n: (not n.active, -n.signal))
 
 
-def known_ssids() -> set:
-    rc, out = _run(["-t", "-f", "NAME,TYPE", "connection", "show"], _TIMEOUT_SCAN)
-    return parse_known(out) if rc == 0 else set()
+def known_ssids() -> dict[str, str]:
+    rc, out = _run(["-t", "-f", "NAME,TYPE,802-11-wireless.ssid", "connection", "show"], _TIMEOUT_SCAN)
+    return parse_known(out) if rc == 0 else {}
 
 
 def scan() -> list:
@@ -141,21 +151,22 @@ def active_info() -> "tuple[str, str] | None":
 
 
 def connect(ssid: str, password: "str | None" = None,
-            security: str = "") -> "tuple[bool, str]":
+            security: str = "", profile_id: str = "") -> "tuple[bool, str]":
     """連線。回 (成功?, 給人看的短訊息——絕不含密碼)。
 
-    有給密碼＝（重）設定這個網路：先建立暫時 profile（con-name 不等於 SSID）
-    並帶起；成功後才刪舊 id=SSID profile 並將暫時 profile 改名為 SSID，維持
-    known_ssids 邏輯。若失敗僅刪除暫時 profile，保留既有 id=SSID profile 作
+    有給密碼＝（重）設定這個網路：先建立暫時 profile（con-name 不等於 target profile id）
+    並帶起；成功後才刪 target profile id (profile_id 無則 SSID) 並將暫時 profile 改名為 target profile id，
+    維持 known_ssids 邏輯。若失敗僅刪除暫時 profile，保留既有 profile 作
     回退。key-mgmt 由掃描結果的 SECURITY 欄自選：WPA3-only → sae，
     其餘 → wpa-psk（WPA2/WPA3 過渡模式用 wpa-psk 可連）。
 
-    沒給密碼＝開放網路或已儲存的網路：先 `connection up`（用既有 profile，
-    同樣不依賴掃描快取），沒有 profile 再退回 `dev wifi connect`（開放網路）。
+    沒給密碼＝開放網路或已儲存的網路：傳 profile_id 則優先 `connection up id <profile_id>`
+    且失敗不得 fallback；未傳 profile_id 則先 `connection up id <ssid>`，沒有 profile 再退回 `dev wifi connect`。
     """
     if password:
+        target_id = profile_id if profile_id else ssid
         temp_id = f"temp-{hashlib.sha256(ssid.encode()).hexdigest()[:8]}"
-        if temp_id == ssid:
+        if temp_id == target_id:
             temp_id = f"temp2-{hashlib.sha256(ssid.encode()).hexdigest()[:8]}"
         _run(["connection", "delete", "id", temp_id], 10)   # rc 忽略：本來就可能不存在
         key_mgmt = "sae" if ("WPA3" in security and "WPA2" not in security) \
@@ -167,15 +178,18 @@ def connect(ssid: str, password: "str | None" = None,
         if rc == 0:
             rc, out = _run(["connection", "up", "id", temp_id], _TIMEOUT_CONNECT)
         if rc == 0:
-            _run(["connection", "delete", "id", ssid], 10)
-            _run(["connection", "modify", "id", temp_id, "connection.id", ssid,
+            _run(["connection", "delete", "id", target_id], 10)
+            _run(["connection", "modify", "id", temp_id, "connection.id", target_id,
                   "connection.autoconnect", "yes"], 10)
         else:
-            # 失敗僅清理暫時 profile，保留既有 id=SSID profile 作回退。
+            # 失敗僅清理暫時 profile，保留既有 target_id profile 作回退。
             _run(["connection", "delete", "id", temp_id], 10)
     else:
-        rc, out = _run(["connection", "up", "id", ssid], _TIMEOUT_CONNECT)
-        if rc != 0:
-            rc, out = _run(["dev", "wifi", "connect", ssid], _TIMEOUT_CONNECT)
+        if profile_id:
+            rc, out = _run(["connection", "up", "id", profile_id], _TIMEOUT_CONNECT)
+        else:
+            rc, out = _run(["connection", "up", "id", ssid], _TIMEOUT_CONNECT)
+            if rc != 0:
+                rc, out = _run(["dev", "wifi", "connect", ssid], _TIMEOUT_CONNECT)
     msg = " ".join(out.split())[:140]      # 壓成單行截短；nmcli 輸出不含密碼原文
     return rc == 0, msg

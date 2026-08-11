@@ -130,8 +130,8 @@ def test_full_flow_scan_pick_type_connect(tmp_path, monkeypatch):
     monkeypatch.setattr(wifi_mod, "scan", lambda: list(NETS))
     monkeypatch.setattr(wifi_mod, "active_info", lambda: ("Hotspot", "1.2.3.4"))
     monkeypatch.setattr(wifi_mod, "connect",
-                        lambda ssid, pw=None, sec="": (connect_calls.append((ssid, pw))
-                                               or (True, "activated")))
+                        lambda ssid, pw=None, sec="", profile_id="": (connect_calls.append((ssid, pw))
+                                                                       or (True, "activated")))
     app = _make_app(tmp_path, monkeypatch)
     app.view = "settings"
     from deskbar.ui import settings_view
@@ -168,7 +168,7 @@ def test_open_or_known_network_connects_without_keyboard(tmp_path, monkeypatch):
     monkeypatch.setattr(wifi_mod, "scan", lambda: list(NETS))
     monkeypatch.setattr(wifi_mod, "active_info", lambda: None)
     monkeypatch.setattr(wifi_mod, "connect",
-                        lambda ssid, pw=None, sec="": (calls.append((ssid, pw)) or (True, "ok")))
+                        lambda ssid, pw=None, sec="", profile_id="": (calls.append((ssid, pw)) or (True, "ok")))
     app = _make_app(tmp_path, monkeypatch)
     app.view = "wifi"
     app.wifi_ui["nets"] = list(NETS)
@@ -182,7 +182,7 @@ def test_open_or_known_network_connects_without_keyboard(tmp_path, monkeypatch):
 def test_connect_failure_keeps_password_phase_with_message(tmp_path, monkeypatch):
     monkeypatch.setattr(wifi_mod, "scan", lambda: list(NETS))
     monkeypatch.setattr(wifi_mod, "active_info", lambda: None)
-    monkeypatch.setattr(wifi_mod, "connect", lambda ssid, pw=None, sec="": (False, "bad key"))
+    monkeypatch.setattr(wifi_mod, "connect", lambda ssid, pw=None, sec="", profile_id="": (False, "bad key"))
     app = _make_app(tmp_path, monkeypatch)
     app.view = "wifi"
     app.wifi_ui.update(phase="password", selected="OfficeWifi", pw="wrong")
@@ -192,6 +192,33 @@ def test_connect_failure_keeps_password_phase_with_message(tmp_path, monkeypatch
     assert app.wifi_ui["phase"] == "password", "失敗要留在鍵盤讓人改密碼重試"
     assert "連線失敗" in app.wifi_ui["msg"]
     assert app.wifi_ui["pw"] == "wrong", "失敗不清使用者打的字"
+
+
+def test_saved_profile_connect_failure_opens_password_screen(tmp_path, monkeypatch):
+    net = WifiNet("InterAgent - Enterprise", 80, True, False, True, "WPA2", "interagent")
+    monkeypatch.setattr(wifi_mod, "scan", lambda: [net])
+    monkeypatch.setattr(wifi_mod, "active_info", lambda: None)
+    connect_calls = []
+
+    def fake_connect(ssid, password=None, security="", profile_id=""):
+        connect_calls.append((ssid, password, security, profile_id))
+        return False, "activation failed"
+
+    monkeypatch.setattr(wifi_mod, "connect", fake_connect)
+
+    app = _make_app(tmp_path, monkeypatch)
+    app.view = "wifi"
+    app.wifi_ui["nets"] = [net]
+    _render_hits(app)
+    _tap(app, "wifi_pick", net)
+    _wait_idle(app)
+
+    assert connect_calls == [("InterAgent - Enterprise", None, "WPA2", "interagent")]
+    assert app.wifi_ui["phase"] == "password"
+    assert app.wifi_ui["msg"] == "已儲存連線失敗，請輸入密碼重試；原設定會保留"
+    assert app.wifi_ui["selected"] == "InterAgent - Enterprise"
+    assert app.wifi_ui["selected_profile_id"] == "interagent"
+    assert app.wifi_ui["selected_security"] == "WPA2"
 
 
 def test_wifi_view_rerenders_every_iteration(tmp_path, monkeypatch):

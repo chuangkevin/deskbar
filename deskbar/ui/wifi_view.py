@@ -36,6 +36,7 @@ PW_MAX = 63                     # WPA-PSK 上限
 
 def new_state() -> dict:
     return {"phase": "list", "nets": [], "busy": None, "selected": "",
+            "selected_profile_id": "",
             "selected_secured": False, "selected_security": "", "pw": "",
             "shift": False, "sym": False, "show_pw": False, "msg": "", "active": None}
 
