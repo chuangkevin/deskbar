@@ -1,3 +1,47 @@
+# deskbar 交接文件 (Handoff Documentation)
+
+> [!IMPORTANT]
+> **目前狀態／以此為準 (Ground Truth)**（最後更新：2026-08-11）
+> - **專案基線**：Repo `/Users/kevin/Documents/Projects/deskbar` | 分支 `build/v1` | HEAD `0cbd44b` | 測試 `785 passed` | Pi 可連線且已部署。
+> - **說明**：本頁最上方為最新現況。下方舊章節（如 2026-08-04 的美術重烘交接記錄、舊分支 `cinematic-scene-redesign`、舊工作目錄 `/Users/kevin/Documents/Projects/deskbar-cinematic-worktree` 以及 Pi 離線等描述）**均已過期**，僅保留作為歷史脈絡，不可視為現況。
+
+## 0. 現狀任務分類與狀態摘要
+
+### 已完成 (Completed)
+- **指定 5 個場景重製、部署與推送**：
+  - `runner` (`b077998`): 跑者像素與障礙物重製。
+  - `fish` (`65ccf60`): 錦鯉水洗場景重製。
+  - `fireflies` (`42ff5b6`): 暮色草原螢火蟲重製。
+  - `train` (`d9d1ada`): 車窗鐵道路景重製。
+  - `ink` (`01cb7ce`): 宣紙水墨場景重製。
+  - **預設輪播狀態**：上述 5 款重製場景**均未進入預設輪播 `DEFAULT_SCENES`**。目前預設輪播仍維持 `stars` + `planet_horizon`，需待 Kevin 視覺審核核可後方得調整。
+- **全場景審查工具修復與單元測試**：
+  - 2026-08-11 修正審查工具 `dawn=05:30` (`0cbd44b`)，全數 785 項測試通過 (`785 passed`)。
+  - `flow` 與 `aurora` 現況審查無發現需要重製的明確退化（此為現況評估，非「經 Kevin 核可加入預設」）。
+- **Pi 部署**：
+  - 代碼已更新至 HEAD `0cbd44b` 並成功部署至 Pi 實機運行。
+
+### 待 Kevin 確認 (Pending Kevin Confirmation)
+- **重製場景進預設輪播**：
+  - 重製完成之 5 款場景（`runner`, `fish`, `fireflies`, `train`, `ink`）需經 Kevin 視覺審查核可後，方可加入 `config.DEFAULT_SCENES`。
+- **未實作新場景構想排程**：
+  - 較早 TODO 列出之 `black hole`（黑洞吸積盤）、`alien valley`（異星山谷）、`liquid marble`（流彩大理石）等為未實作之產品構想。因缺少本次確認，標記為「需 Kevin 確認後才排入」，不可列作本次未完成 bug。
+- **安全決策項目（不可擅自描述為已修復）**：
+  1. **LAN 控制認證模型**：區域網路控制端點之驗證機制與權限存取策略。
+  2. **Pi `kevin` 帳戶權限最小化**：縮減 `/etc/sudoers` 中 `NOPASSWD: ALL` 之權限設定。
+
+### 需外部實測 (Requires Real-World Testing)
+- **網路連線與 watchdog 重連實機觀察**：
+  - 經 SSH 直接實測證實：Pi 2.4GHz AP 在 2026-08-11 13:43–13:51 出現 `ssid-not-found` / `association timeout`。
+  - Watchdog v3 未重開無線電 (radio)，並於第 5 次失敗後安全重新連回。
+  - **尚未結案**：尚待真實手機離席超過 2 小時之實機運作證據與完整日誌，不可以為網路根因已完全結案。
+
+---
+
+## 歷史紀錄（以下內容最後更新於 2026-08-04，已過期）
+
+> ⚠️ **歷史備忘**：以下內容為 2026-08-04 舊版電影感場景重製交接說明。文中涉及之 `cinematic-scene-redesign` 分支、`deskbar-cinematic-worktree` 工作目錄、HEAD `2d94b6b`、以及「Pi 離線 / 需要 Kevin 提供 Pi 位址」等描述**已全數過期**。
+
 # deskbar 電影感場景重製 — 交接（美術重烘）
 
 最後更新：2026-08-04
