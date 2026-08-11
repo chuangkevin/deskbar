@@ -23,6 +23,7 @@ PROBE_BACKOFF_S = (0, 0, 30, 60, 120, 300, 600, 1800)
 BLE_BACKOFF_S = (0, 0, 15, 30, 60, 90, 120)
 _PROBE_LOCK = threading.Lock()
 RECOVERY_AFTER_FAILS = 3      # 連續失敗幾次才檢查控制器健康
+RECOVERY_RECHECK_EVERY_FAILS = 3  # 第一次檢查後，每 N 次失敗再重查一次
 UNHEALTHY_RECHECK_S = 1800    # 控制器不健康、停止探測時，每 30 分鐘重試一次健康檢查
 UNHEALTHY_RECHECK_BLE_S = 300  # BLE 不建立連線，控制器不健康時縮短重查，避免無謂卡住 30 分鐘
 
@@ -53,6 +54,31 @@ def backoff_delay(fail_streak: int, source: str = "bluetooth") -> int:
 def next_sleep(interval_sec: int, fail_streak: int, source: str = "bluetooth") -> int:
     """這一輪結束後要睡幾秒＝正常間隔＋退避。純函數，方便測試。"""
     return interval_sec + backoff_delay(fail_streak, source=source)
+
+
+def should_check_adapter_health(fail_streak: int) -> bool:
+    """連續探測失敗時，何時要檢查藍牙 adapter 是否還健康。
+
+    舊版只在 fail_streak == 3 檢查一次；實機 BLE 離席觀察到 fail_streak 可累到
+    300+，若控制器在第 4 次之後才壞，就永遠不會進復原流程。改成第 3 次先查，
+    之後每 RECOVERY_RECHECK_EVERY_FAILS 次再查一次。
+    """
+    return fail_streak >= RECOVERY_AFTER_FAILS and (
+        (fail_streak - RECOVERY_AFTER_FAILS) % RECOVERY_RECHECK_EVERY_FAILS == 0
+    )
+
+
+def should_log_backoff(fail_streak: int, interval_sec: int,
+                       source: str = "bluetooth") -> bool:
+    """退避 log 節流。
+
+    長時間離席是正常狀態，不能每輪都刷 journal；但初期與整數節點要保留，方便
+    對照 kernel Bluetooth / Wi-Fi 事件。
+    """
+    delay = backoff_delay(fail_streak, source=source)
+    if delay <= interval_sec * 2:
+        return False
+    return fail_streak <= 6 or fail_streak % 10 == 0
 
 
 def expire_push(prev: PresenceState, now: datetime, ttl_s: int) -> PresenceState:
@@ -364,9 +390,9 @@ def start_presence_thread(state: "AppState", settings: "Settings",
                             now = datetime.now(TZ)
                             new = decide(present_probe, rssi, threshold, prev, now, grace)
                             state.set_presence(replace(new, enabled=True))
-                            delay = backoff_delay(fail_streak, source=source_now)
                             sleep_time = next_sleep(effective_interval, fail_streak, source=source_now)
-                            if delay > effective_interval * 2:
+                            if should_log_backoff(fail_streak, effective_interval,
+                                                  source=source_now):
                                 print(f"[presence] 探測退避：fail_streak={fail_streak}，"
                                       f"sleep_seconds={sleep_time}，source={source_now}")
                         else:
@@ -379,7 +405,7 @@ def start_presence_thread(state: "AppState", settings: "Settings",
                             fail_streak = 0
                         else:
                             fail_streak += 1
-                            if fail_streak == RECOVERY_AFTER_FAILS:
+                            if should_check_adapter_health(fail_streak):
                                 if not adapter_healthy(runner=runner):
                                     print("[presence] 藍牙控制器不健康，嘗試自動復原...")
                                     if try_recover_adapter(runner=runner):
@@ -397,9 +423,9 @@ def start_presence_thread(state: "AppState", settings: "Settings",
                         else:
                             new = decide(present_probe, rssi, threshold, prev, now, grace)
                             state.set_presence(replace(new, enabled=True))
-                            delay = backoff_delay(fail_streak, source=source_now)
                             sleep_time = next_sleep(effective_interval, fail_streak, source=source_now)
-                            if delay > effective_interval * 2:
+                            if should_log_backoff(fail_streak, effective_interval,
+                                                  source=source_now):
                                 print(f"[presence] 探測退避：fail_streak={fail_streak}，"
                                       f"sleep_seconds={sleep_time}，source={source_now}")
                 else:

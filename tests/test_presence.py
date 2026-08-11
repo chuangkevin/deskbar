@@ -265,6 +265,21 @@ def test_next_sleep_source_specific_backoff():
     assert presence.next_sleep(45, 99) == 45 + 1800
 
 
+def test_should_check_adapter_health_repeats_after_initial_threshold():
+    checks = [n for n in range(1, 13) if presence.should_check_adapter_health(n)]
+    assert checks == [3, 6, 9, 12]
+
+
+def test_should_log_backoff_throttles_long_absence_journal_noise():
+    # BLE 45s interval：fail 6 已達 120s 退避，先 log 一次；之後只留整數節點。
+    assert presence.should_log_backoff(5, 45, source="ble") is False
+    assert presence.should_log_backoff(6, 45, source="ble") is True
+    assert presence.should_log_backoff(7, 45, source="ble") is False
+    assert presence.should_log_backoff(10, 45, source="ble") is True
+    assert presence.should_log_backoff(227, 45, source="ble") is False
+    assert presence.should_log_backoff(230, 45, source="ble") is True
+
+
 def test_probe_once_lock_contention_returns_false_and_skips_runner():
     runner_called = False
 
@@ -557,5 +572,4 @@ def test_probe_ble_once_runner_exceptions_handled():
         present, rssi = presence.probe_ble_once("AA:BB:CC:DD:EE:FF", runner=boom)
         assert present is False
         assert rssi is None
-
 
