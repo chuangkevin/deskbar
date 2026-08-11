@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > **目前狀態／以此為準 (Ground Truth)**（最後更新：2026-08-11）
-> - **專案基線**：Repo `/Users/kevin/Documents/Projects/deskbar` | 分支 `build/v1` | HEAD `a7a5b94` | 測試 `786 passed` | Pi 可連線且已部署。
+> - **已部署程式碼基線**：Repo `/Users/kevin/Documents/Projects/deskbar` | 分支 `build/v1` | 程式碼 `a7a5b94` | 測試 `786 passed` | Pi 可連線且已部署；文件提交請以 `git log -1` 為準。
 > - **說明**：本頁最上方為最新現況。下方舊章節（如 2026-08-04 的美術重烘交接記錄、舊分支 `cinematic-scene-redesign`、舊工作目錄 `/Users/kevin/Documents/Projects/deskbar-cinematic-worktree` 以及 Pi 離線等描述）**均已過期**，僅保留作為歷史脈絡，不可視為現況。
 
 ## 0. 現狀任務分類與狀態摘要

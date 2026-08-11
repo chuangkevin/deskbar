@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > **目前狀態／以此為準 (Ground Truth)**（最後更新：2026-08-11）
-> - **專案基線**：Repo `/Users/kevin/Documents/Projects/deskbar` | 分支 `build/v1` | HEAD `a7a5b94` | 測試 `786 passed` | Pi 可連線且已部署。
+> - **已部署程式碼基線**：Repo `/Users/kevin/Documents/Projects/deskbar` | 分支 `build/v1` | 程式碼 `a7a5b94` | 測試 `786 passed` | Pi 可連線且已部署；文件提交請以 `git log -1` 為準。
 > - **說明**：本頁上方為現況最新資訊。下方舊章節（如 2026-08-03 交接記錄）均已過期，僅保留作為歷史參考，不可視為現況。
 
 ## 1. 現狀任務分類
