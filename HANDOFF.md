@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > **目前狀態／以此為準 (Ground Truth)**（最後更新：2026-08-11）
-> - **已部署程式碼基線**：Repo `/Users/kevin/Documents/Projects/deskbar` | 分支 `build/v1` | 測試 `788 passed` | Pi 可連線且已部署；提交版本請以 `git log -1` 為準。
+> - **已部署程式碼基線**：Repo `/Users/kevin/Documents/Projects/deskbar` | 分支 `build/v1` | 測試 `792 passed` | Pi 可連線且已部署；提交版本請以 `git log -1` 為準。
 > - **說明**：本頁最上方為最新現況。下方舊章節（如 2026-08-04 的美術重烘交接記錄、舊分支 `cinematic-scene-redesign`、舊工作目錄 `/Users/kevin/Documents/Projects/deskbar-cinematic-worktree` 以及 Pi 離線等描述）**均已過期**，僅保留作為歷史脈絡，不可視為現況。
 
 ## 0. 現狀任務分類與狀態摘要
@@ -22,8 +22,10 @@
   - `a7a5b94` 已修正 Pi 實機方形光斑：圓形徑向透明裁切＋逐像素亮度快取，並以裁切邊緣／角落透明度測試與 Pi 實機截圖驗證。
 - **網路 watchdog 硬重置熔斷**：
   - `37de8bc` 將 Wi-Fi radio 硬重啟限制在 6 小時最多 2 次；熔斷期間不放棄已知 profile 的溫和重連。已完成 shell 模擬回歸測試、Pi 安裝 hash 與服務驗證。
+- **部署流程拆分**：
+  - `cf36358` 將首次 Pi／OS bootstrap (`make bootstrap`) 與日常 runtime deploy (`make deploy`) 分開；日常更新不再執行 apt 或 Wi-Fi 系統設定，已以 shell integration test 及 Pi 新 PID／截圖驗證。
 - **Pi 部署**：
-  - 代碼已更新至 `37de8bc` 並成功部署至 Pi 實機運行。
+  - 代碼已更新至 `cf36358` 並成功部署至 Pi 實機運行。
 
 ### 待 Kevin 確認 (Pending Kevin Confirmation)
 - **重製場景進預設輪播**：
@@ -38,6 +40,7 @@
 - **網路連線與 watchdog 重連實機觀察**：
   - 經 SSH 直接實測證實：Pi 2.4GHz AP 在 2026-08-11 13:43–13:51 出現 `ssid-not-found` / `association timeout`。
   - Watchdog v3 未重開無線電 (radio)，並於第 5 次失敗後安全重新連回。
+  - **2026-08-11 14:34 實證**：NetworkManager 對全部已存 profile 記錄 `ssid-not-found`／association timeout；watchdog 14:40 做本次 boot 的第一次 radio restart，Bluetooth／kernel 無 HCI timeout 或控制器死鎖證據。48 秒後使用者即重開機，因此未能量到 radio restart 後的自然復原結果。
   - **尚未結案**：watchdog 已加硬重置熔斷，仍待真實手機離席超過 2 小時之實機運作證據與完整日誌，不可以為網路根因已完全結案。
 
 ---
