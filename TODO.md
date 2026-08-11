@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > **目前狀態／以此為準 (Ground Truth)**（最後更新：2026-08-11）
-> - **已部署程式碼基線**：Repo `/Users/kevin/Documents/Projects/deskbar` | 分支 `build/v1` | 程式碼 `a7a5b94` | 測試 `786 passed` | Pi 可連線且已部署；文件提交請以 `git log -1` 為準。
+> - **已部署程式碼基線**：Repo `/Users/kevin/Documents/Projects/deskbar` | 分支 `build/v1` | 測試 `788 passed` | Pi 可連線且已部署；提交版本請以 `git log -1` 為準。
 > - **說明**：本頁上方為現況最新資訊。下方舊章節（如 2026-08-03 交接記錄）均已過期，僅保留作為歷史參考，不可視為現況。
 
 ## 1. 現狀任務分類
@@ -20,6 +20,8 @@
   - `flow` 與 `aurora` 現況審查無發現需要重製的明確退化（此為現況評估，非「經 Kevin 核可加入預設」）。
 - **螢火蟲圓形光暈回歸修正**：
   - `a7a5b94` 修正實機出現的方形光斑：以圓形徑向透明裁切取代方形遮罩，並改為逐像素亮度快取；已加上裁切邊緣／角落透明度回歸測試、Pi 實機截圖驗證、部署與推送。
+- **網路 watchdog 硬重置熔斷**：
+  - `37de8bc` 限制 Wi-Fi radio 在 6 小時內最多硬重啟 2 次；熔斷期間仍會依原規則嘗試已知 NetworkManager profile，防止長時間 AP 不可見時反覆切換組合式 Wi-Fi／藍牙晶片。已完成 shell 模擬回歸測試、Pi 安裝 hash 與服務驗證。
 
 ### 待 Kevin 確認 (Pending Kevin Confirmation)
 - **新場景產品構想排程**：
@@ -34,7 +36,7 @@
 - **網路斷線與自動重連實機驗證**：
   - 經 SSH 直接實測證實：Pi 2.4GHz AP 於 2026-08-11 13:43–13:51 出現 `ssid-not-found` / `association timeout`。
   - Watchdog v3 未重開無線電 (radio)，並於第 5 次失敗後安全重新連回。
-  - **尚未結案**：尚待真實手機離席超過 2 小時之實機維運紀錄與 Log 證據，不可以為網路根因已完全結案。
+  - **尚未結案**：watchdog 已加硬重置熔斷，但仍待真實手機離席超過 2 小時之實機維運紀錄與 Log 證據，不可以為網路根因已完全結案。
 
 ---
 
