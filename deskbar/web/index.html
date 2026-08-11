@@ -4,10 +4,16 @@
 <title>deskbar 鬧鐘</title>
 <style>
 *{box-sizing:border-box} html,body{max-width:100%;overflow-x:hidden}
+html{scroll-behavior:smooth;scroll-padding-top:60px}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+*:focus-visible{outline:2px solid #78beff;outline-offset:2px}
 body{font-family:system-ui,-apple-system,"PingFang TC",sans-serif;background:#111;color:#eee;
  max-width:480px;margin:0 auto;padding:20px;width:100%}
 h1{font-size:20px;font-weight:600}
-.card{background:#1c1c1c;border:1px solid #333;border-radius:10px;padding:14px;margin:10px 0}
+.sticky-nav{position:sticky;top:0;z-index:100;background:rgba(17,17,17,0.85);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;gap:8px;align-items:center;overflow-x:auto;padding:8px 0;margin:10px 0 16px;max-width:100%}
+.nav-pill{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 16px;border-radius:22px;background:#2a2a2a;color:#eee;text-decoration:none;font-size:14px;font-weight:500;border:1px solid #444;flex:0 0 auto;white-space:nowrap}
+.nav-pill:hover,.nav-pill:focus-visible{background:#3a3a3a;color:#fff}
+.card{background:#1c1c1c;border:1px solid #333;border-radius:10px;padding:14px;margin:10px 0;min-width:0;overflow-wrap:anywhere}
 .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .time{font-size:28px;font-variant-numeric:tabular-nums}
 .days,.label{color:#9a9a9a;font-size:13px}
@@ -35,10 +41,40 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
 .usage-source-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .usage-source-list label{display:flex;align-items:center;gap:7px;min-height:44px;padding:8px 10px;border:1px solid #444;border-radius:8px;cursor:pointer}
 .usage-source-list input{width:20px;height:20px;margin:0}
+
+.note-card{display:flex;flex-direction:column;gap:8px;min-width:0;overflow-wrap:anywhere}
+.note-card-main{display:flex;flex-direction:column;gap:8px;width:100%}
+.note-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%}
+.note-head-left{display:flex;align-items:center;gap:6px}
+.note-drag-handle{width:44px;height:44px;min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:8px;color:#9a9a9a;font-size:18px;cursor:grab;padding:0;touch-action:none;user-select:none}
+.note-drag-handle:focus-visible{border-color:#78beff}
+.note-idx{color:#9a9a9a;min-width:22px;font-variant-numeric:tabular-nums;font-size:14px}
+.note-actions{display:flex;gap:6px;align-items:center}
+.note-actions button{min-height:44px;padding:8px 14px}
+.note-body{width:100%;min-width:0;overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap;font-size:15px;line-height:1.5;color:#eee}
+.note-colors{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:4px;width:100%}
+.color-btn{width:44px;height:44px;min-width:44px;min-height:44px;border-radius:50%;border:2px solid rgba(255,255,255,.15);cursor:pointer;padding:0;flex:0 0 auto}
+.color-btn.active,.color-btn:focus-visible{border-color:#fff}
+
+@media(min-width:768px){
+ .note-card-main{display:flex;flex-direction:row;align-items:center;gap:10px}
+ .note-card-head{display:contents}
+ .note-head-left{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+ .note-body{flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap}
+ .note-actions{flex:0 0 auto}
+ .note-colors{margin-top:8px}
+}
+
 @media(max-width:374px){body{padding:12px}.row{align-items:stretch;flex-wrap:wrap}.row input[type=text]{min-width:0;flex:1 1 180px}.cal-row select,.cal-row input[type=text]{max-width:100%}}
 </style></head><body>
 <h1>deskbar</h1>
-<h2 style="margin-top:8px">便條</h2>
+<nav class="sticky-nav" aria-label="頁面快速導航">
+ <a href="#sec-notes" class="nav-pill">便條</a>
+ <a href="#sec-alarms" class="nav-pill">鬧鐘</a>
+ <a href="#sec-cals" class="nav-pill">日曆</a>
+ <a href="#sec-prefs" class="nav-pill">設定</a>
+</nav>
+<h2 id="sec-notes" style="margin-top:8px">便條</h2>
 <div class="card">
  <div class="row"><input type="text" id="nt" placeholder="閃念丟這裡，Enter 上牆"
   onkeydown="if(event.key==='Enter'&&!event.isComposing&&event.keyCode!==229)addNote()">
@@ -46,16 +82,16 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
  <div class="hint">Mac 終端機：note 指令兩秒上牆（設定方式問 Claude）</div>
 </div>
 <div id="notes"></div>
-<h2>鬧鐘</h2>
+<h2 id="sec-alarms">鬧鐘</h2>
 <div id="list"></div>
 <div class="card">
  <div class="row"><input type="time" id="t" value="09:00"><input type="text" id="lb" placeholder="標籤（例如：打卡）"></div>
  <div class="wk" id="wk"></div>
  <button onclick="add()">新增鬧鐘</button>
 </div>
-<h2>日曆</h2>
+<h2 id="sec-cals">日曆</h2>
 <div id="cals"></div>
-<h2>裝置設定</h2>
+<h2 id="sec-prefs">裝置設定</h2>
 <div id="prefs"></div>
 <script>
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -242,23 +278,35 @@ async function loadNotes(){
 }
 function renderNotes(){
  document.getElementById("notes").innerHTML=NOTES.map((n,i)=>editingNote===n.id?`
-  <div class="card note-card" data-id="${esc(n.id)}"><input type="text" id="ed_${esc(n.id)}" value="${esc(n.text)}"
-    onkeydown="if(event.key==='Enter'&&!event.isComposing&&event.keyCode!==229)saveEdit('${esc(n.id)}')">
-   <div class="row" style="margin-top:8px;justify-content:flex-end">
-    <button onclick="saveEdit('${esc(n.id)}')">存</button>
-    <button onclick="editingNote=null;renderNotes()">取消</button></div></div>`:`
-  <div class="card note-card" data-id="${esc(n.id)}" style="border-left:4px solid ${noteColor(n)}"><div class="row">
-   <span class="drag" style="touch-action:none;cursor:grab;padding:4px 10px 4px 2px;color:#9a9a9a;font-size:18px;user-select:none"
-    onpointerdown="dragStart(event)">☰</span>
-   <span style="color:#9a9a9a;min-width:22px;font-variant-numeric:tabular-nums">${i+1}.</span>
-   <div style="flex:1;white-space:pre-wrap">${esc(n.text)}</div>
-   <div style="display:flex;gap:6px"><button onclick="editingNote='${esc(n.id)}';renderNotes()">編輯</button>
-   <button class="del" onclick="delNote('${esc(n.id)}')">撕掉</button></div>
-  </div>
-  <div style="display:flex;gap:10px;margin-top:8px;align-items:center">
-   ${PAL.map((c,ci)=>`<span onclick="setColor('${esc(n.id)}',${ci})"
-    style="width:20px;height:20px;border-radius:50%;background:${c};display:inline-block;cursor:pointer;box-sizing:border-box;border:2px solid ${n.color===ci?"#fff":"rgba(255,255,255,.15)"}"></span>`).join("")}
-  </div></div>`).join("");
+  <div class="card note-card" data-id="${esc(n.id)}">
+   <div class="note-body">
+    <input type="text" id="ed_${esc(n.id)}" value="${esc(n.text)}"
+     onkeydown="if(event.key==='Enter'&&!event.isComposing&&event.keyCode!==229)saveEdit('${esc(n.id)}')">
+   </div>
+   <div class="note-actions" style="margin-top:8px;justify-content:flex-end">
+    <button type="button" onclick="saveEdit('${esc(n.id)}')">存</button>
+    <button type="button" onclick="editingNote=null;renderNotes()">取消</button>
+   </div>
+  </div>`:`
+  <div class="card note-card" data-id="${esc(n.id)}" style="border-left:4px solid ${noteColor(n)}">
+   <div class="note-card-main">
+    <div class="note-card-head">
+     <div class="note-head-left">
+      <button type="button" class="note-drag-handle drag" role="button" tabindex="0" aria-label="拖曳排序" style="touch-action:none"
+       onpointerdown="dragStart(event)" onkeydown="if(event.key==='Enter'||event.key===' ')event.preventDefault()">☰</button>
+      <span class="note-idx">${i+1}.</span>
+     </div>
+     <div class="note-actions">
+      <button type="button" onclick="editingNote='${esc(n.id)}';renderNotes()">編輯</button>
+      <button type="button" class="del" onclick="delNote('${esc(n.id)}')">撕掉</button>
+     </div>
+    </div>
+    <div class="note-body">${esc(n.text)}</div>
+   </div>
+   <div class="note-colors">
+    ${PAL.map((c,ci)=>`<button type="button" class="color-btn ${n.color===ci?"active":""}" aria-label="顏色 ${ci+1}" onclick="setColor('${esc(n.id)}',${ci})" style="background:${c};border:2px solid ${n.color===ci?"#fff":"rgba(255,255,255,.15)"}"></button>`).join("")}
+   </div>
+  </div>`).join("");
  const el=document.getElementById("ed_"+editingNote);if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length)}
 }
 // 拖動排序（順序＝優先序，第 1 張＝deskbar 牆左上）。用 Pointer Events 手做
@@ -305,6 +353,18 @@ async function addNote(){
  if(r.ok){el.value="";loadNotes()}
 }
 async function delNote(id){await fetch("/api/notes/"+id,{method:"DELETE"});loadNotes()}
+document.querySelectorAll('.sticky-nav a[href^="#sec-"]').forEach(a=>{
+ a.addEventListener("click",e=>{
+  const href=a.getAttribute("href");
+  let target=null;
+  try{target=href?document.querySelector(href):null}catch(_){}
+  if(!target)return;
+  e.preventDefault();
+  const behavior=window.matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth";
+  target.scrollIntoView({behavior,block:"start"});
+  if(history.pushState){history.pushState(null,"",href)}else{location.hash=href}
+ });
+});
 load();
 loadCals();
 loadPrefs();
