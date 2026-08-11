@@ -10,6 +10,7 @@ from deskbar.layout import Rect
 from deskbar.ui import Hit
 from deskbar.ui import theme
 from deskbar.ui.navigation import NavigationState
+from deskbar.ui.scene_mode import SceneModeController
 
 LOGICAL_W, LOGICAL_H = 1920, 480
 DRAG_THRESHOLD = 24                     # px，觸控拖曳判定門檻
@@ -103,6 +104,7 @@ class App:
         self.lock = settings_lock
         self.on_save = on_save          # callable：settings 變更後持久化
         self.nav = NavigationState(view="dashboard")
+        self.scene_controller = SceneModeController()
         self.detail_event = None
         self.hits: list[Hit] = []
         self._last_seq = -1
@@ -144,8 +146,6 @@ class App:
         self._dev_rotate = 0
         self._rot_cache = None          # 實機旋轉輸出快取：髒區域局部旋轉的基底
         self._rot_angle = None
-        self._auto_center_prev = None   # 迫近行程自動切回行事曆前，使用者原本的中欄視圖
-        self._auto_center_hold = False  # 使用者在迫近期間手動切走＝這一波不再搶（實機回報：看便條被踢回）
         self._auto_center_check_at = 0.0
         self.card_overlay = None        # 待辦卡詳情浮層（LinearIssue|None）
         from deskbar.presence import SedentaryTracker
@@ -160,9 +160,7 @@ class App:
         self._pet_bg = None                    # (logical rect, background under pet)
         self._pet_dragging = False
         self._pet_frame_at = 0.0
-        self._flow_last_target = None          # 忙/閒排程 edge-trigger 記憶
         self._flow_check_at = 0.0
-        self._force_scene_at = 0.0             # force 模式：此刻後回到場景（monotonic）
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
@@ -217,6 +215,38 @@ class App:
     @_transition_cache.setter
     def _transition_cache(self, value) -> None:
         self.nav.transition_cache = value
+
+    @property
+    def _auto_center_prev(self):
+        return self.scene_controller.auto_center_prev
+
+    @_auto_center_prev.setter
+    def _auto_center_prev(self, value) -> None:
+        self.scene_controller.auto_center_prev = value
+
+    @property
+    def _auto_center_hold(self) -> bool:
+        return self.scene_controller.auto_center_hold
+
+    @_auto_center_hold.setter
+    def _auto_center_hold(self, value: bool) -> None:
+        self.scene_controller.auto_center_hold = bool(value)
+
+    @property
+    def _flow_last_target(self):
+        return self.scene_controller.flow_last_target
+
+    @_flow_last_target.setter
+    def _flow_last_target(self, value) -> None:
+        self.scene_controller.flow_last_target = value
+
+    @property
+    def _force_scene_at(self) -> float:
+        return self.scene_controller.force_scene_at
+
+    @_force_scene_at.setter
+    def _force_scene_at(self, value: float) -> None:
+        self.scene_controller.force_scene_at = float(value)
 
     def _init_display(self) -> None:
         self._dev = os.environ.get("DESKBAR_DEV") == "1"
@@ -524,26 +554,28 @@ class App:
                         self.on_save(self.settings)
                     elif a == "toggle_center":
                         self._start_transition()
-                        order = ["calendar", "linear", "notes", "scene"]
                         cur = getattr(self.settings, "center_view", "calendar")
-                        idx = order.index(cur) if cur in order else 0
-                        self.settings.center_view = order[(idx + 1) % len(order)]
-                        self.nav.reset_center_pages()
+                        switch = self.scene_controller.manual_cycle(cur)
+                        self.settings.center_view = switch.center_view
+                        if switch.reset_center_pages:
+                            self.nav.reset_center_pages()
                         # 使用者手動切換＝接管：取消還原、且這一波迫近期間不再搶焦點
                         # （沒 hold 的話 5 秒後又被抓回行事曆——本機測試實測踩到）
-                        self._auto_center_prev = None
-                        self._auto_center_hold = True
-                        self.card_overlay = None
-                        self.on_save(self.settings)
+                        if switch.clear_card_overlay:
+                            self.card_overlay = None
+                        if switch.persist:
+                            self.on_save(self.settings)
                     elif a == "scene_tap":
                         # 點場景＝回行事曆看正事；force 模式 60 秒後自動回場景。
                         # 這整個 dispatch 鏈已在外層 with self.lock: 內（203 行），
                         # 不得再取鎖（非重入鎖，會死結——測試卡死抓到的）。
                         self._start_transition()
-                        self.settings.center_view = "calendar"
-                        if getattr(self.settings, "scene_mode", "auto") == "force":
-                            self._force_scene_at = time.monotonic() \
-                                + FORCE_SCENE_RETURN_S
+                        switch = self.scene_controller.scene_tap(
+                            getattr(self.settings, "scene_mode", "auto"),
+                            time.monotonic(),
+                            FORCE_SCENE_RETURN_S,
+                        )
+                        self.settings.center_view = switch.center_view
                         self._last_seq = -1
                     elif a == "note_arm":
                         # 撕除第一段：整卡點一下＝武裝（出現 ✕ 鈕）。第二段
@@ -884,34 +916,38 @@ class App:
         - edge-trigger：只在目標「變化」那一刻切一次；同一狀態內使用者手動
           切到哪就停在哪（不會被反覆搶回）
         - 記憶體內切換不持久化，跟迫近搶焦點同一套約定"""
-        if (self.view != "dashboard" or self._auto_center_prev is not None
-                or self._screen_asleep()):
-            return
         from deskbar.claudeusage import flow_target
         has_notes = bool(self.notes_store.list()) if self.notes_store else False
         target = flow_target(self.usage_activity.scene_ready(mono),
                              self.usage_activity.busy(mono), has_notes)
-        if target is None or target == self._flow_last_target:
-            return
-        self._flow_last_target = target
         with self.lock:
-            if getattr(self.settings, "center_view", "calendar") == target:
+            switch = self.scene_controller.flow_switch(
+                current_center=getattr(self.settings, "center_view", "calendar"),
+                target=target,
+                view=self.view,
+                screen_asleep=self._screen_asleep(),
+            )
+            if switch is None:
                 return
-            self.settings.center_view = target
-            self.nav.reset_center_pages()
+            self.settings.center_view = switch.center_view
+            if switch.reset_center_pages:
+                self.nav.reset_center_pages()
         self._start_transition()
         self._last_seq = -1
 
     def _check_force_scene(self, mono: float) -> None:
         """force 模式：中欄常駐場景。點畫面回行事曆（scene_tap 設了返回時刻），
         時間到自動回到場景；迫近接管期間讓路。"""
-        if (self.view != "dashboard" or self._auto_center_prev is not None
-                or self._screen_asleep()
-                or getattr(self.settings, "center_view", "") == "scene"
-                or mono < self._force_scene_at):
-            return
         with self.lock:
-            self.settings.center_view = "scene"
+            switch = self.scene_controller.force_switch(
+                current_center=getattr(self.settings, "center_view", "calendar"),
+                view=self.view,
+                screen_asleep=self._screen_asleep(),
+                mono=mono,
+            )
+            if switch is None:
+                return
+            self.settings.center_view = switch.center_view
         self._start_transition()
         self._last_seq = -1
 
@@ -1514,21 +1550,15 @@ class App:
                 break
         with self.lock:
             cur = getattr(self.settings, "center_view", "calendar")
-            if not soon:
-                self._auto_center_hold = False   # 這一波過了，下一波恢復搶焦點
-            if soon and not self._auto_center_hold \
-                    and cur != "calendar" and self._auto_center_prev is None:
-                self._auto_center_prev = cur
-                self.settings.center_view = "calendar"   # 記憶體內切換，不持久化
-                switched = True
-            elif not soon and self._auto_center_prev is not None:
-                if cur == "calendar":
-                    self.settings.center_view = self._auto_center_prev
-                self._auto_center_prev = None
-                switched = True
-            else:
-                switched = False
-        if switched:
+            switch = self.scene_controller.imminent_switch(
+                current_center=cur,
+                soon=soon,
+                view=self.view,
+                transition_active=self.nav.transition_active(),
+            )
+            if switch is not None:
+                self.settings.center_view = switch.center_view
+        if switch is not None:
             self._start_transition()
             self._last_seq = -1
 
