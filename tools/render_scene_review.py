@@ -25,7 +25,7 @@ from deskbar.weather import Weather  # noqa: E402
 
 
 TZ = ZoneInfo("Asia/Taipei")
-REVIEW_TIMES = (("night", 3), ("dawn", 7), ("day", 12))
+REVIEW_TIMES = (("night", 3, 0), ("dawn", 5, 30), ("day", 12, 0))
 MOTION_SECONDS = (0, 5, 15)
 SCENE_RECT = pygame.Rect(402, 8, 1118, 472)
 
@@ -167,8 +167,8 @@ def render_review(request: ReviewRequest) -> list[Path]:
         for directory in (dashboard_dir, crop_dir, motion_dir):
             directory.mkdir(parents=True, exist_ok=True)
         lighting_frames: list[pygame.Surface] = []
-        for label, hour in REVIEW_TIMES:
-            now = datetime(2026, 8, 3, hour, 0, tzinfo=TZ)
+        for label, hour, minute in REVIEW_TIMES:
+            now = datetime(2026, 8, 3, hour, minute, tzinfo=TZ)
             full = _dashboard_frame(scene, now)
             crop = full.subsurface(SCENE_RECT).copy()
             lighting_frames.append(crop)
@@ -193,7 +193,7 @@ def render_review(request: ReviewRequest) -> list[Path]:
         metrics.append(_metrics(scene, lighting_frames, motion_frames))
     metrics_path = request.out / "metrics.json"
     report = {
-        "review_times": [hour for _, hour in REVIEW_TIMES],
+        "review_times": [round(hour + minute / 60.0, 2) for _, hour, minute in REVIEW_TIMES],
         "motion_seconds": list(MOTION_SECONDS),
         "scenes": [asdict(scene_metrics) for scene_metrics in metrics],
     }

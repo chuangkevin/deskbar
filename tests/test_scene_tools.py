@@ -33,8 +33,35 @@ def test_render_review_writes_static_motion_contacts_and_metrics(tmp_path: Path)
     assert "stars/stars_motion_contact.png" in relative
     assert "metrics.json" in relative
     metrics = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["review_times"] == [3.0, 5.5, 12.0]
     assert metrics["scenes"][0]["scene"] == "stars"
     assert metrics["scenes"][0]["motion_changed_ratio"] > 0
+
+
+def test_render_review_dawn_time_sampling_uses_minute_30(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from datetime import datetime
+
+    import tools.render_scene_review as rsr
+
+    captured_times: list[datetime] = []
+    orig_dashboard_frame = rsr._dashboard_frame
+
+    def spy_dashboard_frame(scene: str, now: datetime):
+        captured_times.append(now)
+        return orig_dashboard_frame(scene, now)
+
+    monkeypatch.setattr(rsr, "_dashboard_frame", spy_dashboard_frame)
+
+    request = ReviewRequest(("stars",), tmp_path, "all")
+    render_review(request)
+
+    assert len(captured_times) == 3
+    night_time, dawn_time, day_time = captured_times
+    assert (night_time.hour, night_time.minute) == (3, 0)
+    assert (dawn_time.hour, dawn_time.minute) == (5, 30)
+    assert (day_time.hour, day_time.minute) == (12, 0)
 
 
 def test_render_review_all_selector_and_invalid_output_parent(tmp_path: Path) -> None:
