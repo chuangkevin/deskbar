@@ -83,14 +83,15 @@ class InkRenderer:
             progress = min(1.0, age / 9.0)
             stage = min(STAGE_COUNT - 1, int(progress * STAGE_COUNT))
             bloom = self._bloom(index % 3, stage)
-            fade = min(age / 1.5, (life - age) / 5.0, 1.0)
-            bloom.set_alpha(max(0, round(210 * fade)))
+            fade = min(age / 1.2, (life - age) / 4.0, 1.0)
+            bloom.set_alpha(max(0, round(230 * fade)))
             identity = int(born)
             x = hash_unit(identity, frame.day_seed, 1) * (width - 180) + 90
             y = hash_unit(identity, frame.day_seed, 2) * (height - 160) + 80
-            sway = math.sin(frame.t * 0.08 + identity) * 8.0
-            panel.blit(bloom, (round(x + sway) - bloom.get_width() // 2,
-                               round(y) - bloom.get_height() // 2))
+            sway_x = math.sin(frame.t * 0.75 + identity * 1.3) * 16.0
+            sway_y = math.cos(frame.t * 0.55 + identity * 0.9) * 10.0
+            panel.blit(bloom, (round(x + sway_x) - bloom.get_width() // 2,
+                               round(y + sway_y) - bloom.get_height() // 2))
 
     def close(self) -> None:
         self._scaled.clear()

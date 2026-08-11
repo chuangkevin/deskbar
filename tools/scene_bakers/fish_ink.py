@@ -38,40 +38,151 @@ def _smoothstep(values: FloatArray) -> FloatArray:
     return np.asarray(clipped * clipped * (3.0 - 2.0 * clipped), dtype=np.float32)
 
 
-def _paper(
-    palette: tuple[tuple[int, int, int], ...],
+def _ink_paper(
+    mode: str,
     noise: FloatArray,
     seed: int,
 ) -> FloatArray:
-    """Build the established paper wash used by the already-approved ink scene."""
+    """Build horizontal sumi-e landscape banner on Xuan paper with 3 distinct depth zones.
+
+    Features:
+    - Far: Soft mountain ridges veiled in mist.
+    - Mid: Winding river stream, wet ink washes, and organic ink channels.
+    - Near: Foreground shoreline, wet-on-wet paper wash, moss green / cinnabar point accents.
+    - Xuan paper texture: fine/medium fibers, dry-brush grain, and ink drying edge deposition.
+    - Organized left-to-right spatial rhythm across the 1240x472 banner.
+    """
     width, height = WORK_SIZE
     y, x = np.mgrid[0:height, 0:width].astype(np.float32)
-    fine = fbm(width, height, seed + 31, octaves=4, base=24)
-    amount = np.clip(y / height + (noise - 0.5) * 0.075, 0.0, 1.0)[..., None]
-    rgb = _color(palette[0])[None, None, :] + (
-        _color(palette[1]) - _color(palette[0])
-    )[None, None, :] * amount
 
-    wash_color = _color(palette[2])[None, None, :]
-    for index, (center, breadth, strength) in enumerate(
-        ((0.22, 0.10, 0.050), (0.51, 0.16, 0.065), (0.78, 0.13, 0.045))
-    ):
-        centerline = height * center + np.sin(x * (0.0024 + index * 0.0007) + seed) \
-            * height * (0.018 + index * 0.006)
-        centerline += (noise - 0.5) * height * 0.055
-        band = np.exp(-((y - centerline) / (height * breadth)) ** 2)
-        rgb += band[..., None] * wash_color * strength
+    # Multi-scale domain warping and noise fields
+    warp_x = fbm(width, height, seed + 11, octaves=4, base=5)
+    warp_y = fbm(width, height, seed + 23, octaves=4, base=5)
+    fine = fbm(width, height, seed + 37, octaves=5, base=22)
+    mid_noise = fbm(width, height, seed + 71, octaves=4, base=11)
+    stroke_noise = fbm(width, height, seed + 103, octaves=4, base=16)
 
-    diagonal_fibers = np.sin(x * 0.028 + y * 0.39 + fine * 11.0)
-    cross_fibers = np.sin(x * 0.071 - y * 0.23 + noise * 8.0)
-    fibers = np.clip(diagonal_fibers - 0.86, 0.0, 0.14) \
-        + np.clip(cross_fibers - 0.92, 0.0, 0.08)
-    rgb += (noise[..., None] - 0.5) * 0.095
-    rgb += (fine[..., None] - 0.5) * 0.035
-    rgb += fibers[..., None] * 0.12
-    vignette = ((x - width * 0.5) / width) ** 2 + ((y - height * 0.5) / height) ** 2
-    rgb -= vignette[..., None] * 0.025
-    return np.asarray(rgb, dtype=np.float32)
+    # 1. Color Palettes according to mode (Night / Dawn / Day)
+    if mode == "night":
+        # Night: Deep indigo ink & moon-white wet paper / river light
+        c_paper_bg = _color((14, 20, 32))
+        c_paper_wash = _color((26, 36, 54))
+        c_far_mist = _color((44, 62, 90))
+        c_mid_ink = _color((8, 12, 22))
+        c_river_light = _color((60, 88, 122))  # Moon-white wet wash
+        c_accent = _color((135, 168, 205))     # Moonlit paper luster
+    elif mode == "dawn":
+        # Dawn: Smoky pink, warm gray, pale gold
+        c_paper_bg = _color((52, 40, 48))
+        c_paper_wash = _color((118, 94, 92))
+        c_far_mist = _color((162, 122, 118))
+        c_mid_ink = _color((46, 32, 38))
+        c_river_light = _color((192, 148, 118))  # Pale gold light
+        c_accent = _color((182, 120, 130))      # Smoky rose accent
+    else:  # day
+        # Day: Rice-white xuan paper, moss green, minimal cinnabar
+        c_paper_bg = _color((232, 226, 210))    # Rice-white paper
+        c_paper_wash = _color((245, 241, 228))  # Luminous paper wash
+        c_far_mist = _color((138, 162, 155))    # Soft pale mist
+        c_mid_ink = _color((26, 34, 32))        # Deep sumi-e ink
+        c_river_light = _color((72, 128, 96))    # Moss green stream wash
+        c_accent = _color((215, 42, 30))        # Minimal organic cinnabar red
+
+    # Base Xuan Paper Gradient & Subtle Wash
+    grad = np.clip(y / height + (noise - 0.5) * 0.06, 0.0, 1.0)[..., None]
+    rgb = c_paper_bg[None, None, :] + (c_paper_wash - c_paper_bg)[None, None, :] * grad
+
+    # -------------------------------------------------------------------------
+    # DEPTH LAYER 1 (Far / 遠景): Layered Mountain Silhouettes & Horizon Mist
+    # -------------------------------------------------------------------------
+    # Peak 1 (Left to Center-Right mountain range)
+    r1_y = height * (0.16 + 0.14 * np.sin(x * 0.0022 + warp_x * 2.2)) + (warp_y - 0.5) * height * 0.06
+    r1_mask = _smoothstep((y - r1_y) / (height * 0.18)) * _smoothstep((height * 0.58 - y) / (height * 0.30))
+
+    # Peak 2 (Right distant peaks)
+    r2_y = height * (0.26 + 0.16 * np.cos(x * 0.0032 + seed * 0.1 + warp_y * 2.0)) + (warp_x - 0.5) * height * 0.05
+    r2_mask = _smoothstep((y - r2_y) / (height * 0.20)) * _smoothstep((height * 0.68 - y) / (height * 0.32))
+
+    far_mountains = np.clip(r1_mask * 0.70 + r2_mask * 0.60, 0.0, 1.0)[..., None]
+    rgb += far_mountains * c_far_mist[None, None, :] * 0.32
+
+    # -------------------------------------------------------------------------
+    # DEPTH LAYER 2 (Mid / 中景): Winding River Stream & Ink Shores (左高右低空間節奏)
+    # -------------------------------------------------------------------------
+    # Left Promontory Mass (x: 0.0 .. 0.50)
+    hill_left_profile = height * (0.28 + 0.32 * (x / width) ** 0.8 + (warp_x - 0.5) * 0.12)
+    hill_left = _smoothstep((y - hill_left_profile) / (height * 0.16)) * (1.0 - _smoothstep((x - width * 0.52) / (width * 0.22)))
+
+    # Right Island Promontory (x: 0.58 .. 1.0)
+    hill_right_profile = height * (0.32 + 0.28 * ((width - x) / width) ** 0.85 + (warp_y - 0.5) * 0.10)
+    hill_right = _smoothstep((y - hill_right_profile) / (height * 0.18)) * _smoothstep((x - width * 0.42) / (width * 0.25))
+
+    mid_land_mask = np.clip(hill_left * 0.88 + hill_right * 0.78, 0.0, 1.0)
+
+    # Dry-brush gaps & wet ink fissures
+    fissure = np.clip(1.0 - np.abs(mid_noise - 0.48) * 3.0, 0.0, 1.0)
+    ink_density = np.clip(mid_land_mask * (0.50 + fissure * 0.50) * (0.82 + fine * 0.18), 0.0, 1.0)[..., None]
+    rgb = rgb * (1.0 - ink_density * 0.55) + c_mid_ink[None, None, :] * (ink_density * 0.55)
+
+    # Winding River Stream Channel (溪流)
+    stream_y = height * (0.64 + 0.10 * np.sin(x * 0.0030 + warp_x * 2.0) - 0.08 * (x / width))
+    stream_dist = np.abs(y - stream_y) / (height * 0.15)
+    stream_mask = np.exp(-(stream_dist ** 2)) * (0.45 + 0.55 * np.sin(x * 0.007 + stroke_noise * 3.5) * 0.5 + 0.5)
+    stream_mask = np.clip(stream_mask * (0.75 + fine * 0.25), 0.0, 1.0)[..., None]
+    rgb += stream_mask * c_river_light[None, None, :] * 0.35
+
+    # -------------------------------------------------------------------------
+    # DEPTH LAYER 3 (Near / 近景): Horizontal Mist Bands & Wet Wash Accents
+    # -------------------------------------------------------------------------
+    # Mist Bands floating across mountains & stream
+    mist_top = np.exp(-((y - height * 0.22 - (warp_x - 0.5) * 35.0) / (height * 0.07)) ** 2)
+    mist_mid = np.exp(-((y - height * 0.50 - (warp_y - 0.5) * 45.0) / (height * 0.09)) ** 2) * (0.35 + 0.65 * np.sin(x * 0.003 + 1.0))
+    mist_bot = np.exp(-((y - height * 0.80 - (warp_x - 0.5) * 30.0) / (height * 0.08)) ** 2)
+    mist_layer = np.clip(mist_top * 0.35 + mist_mid * 0.45 + mist_bot * 0.30, 0.0, 1.0)[..., None]
+
+    # Blend mist into background
+    if mode == "day":
+        rgb = rgb * (1.0 - mist_layer * 0.25) + c_paper_wash[None, None, :] * (mist_layer * 0.25)
+    else:
+        rgb += mist_layer * c_accent[None, None, :] * 0.20
+
+    # Organic Cinnabar Red accents (Day mode ONLY): small organic stamp/dot clusters
+    if mode == "day":
+        # Small organic seal stamp near left bank: center (width * 0.24, height * 0.68)
+        dist_seal1 = np.sqrt(((x - width * 0.24) / 16.0) ** 2 + ((y - height * 0.68) / 20.0) ** 2)
+        seal1 = np.exp(-(dist_seal1 ** 2)) * (0.85 + fine * 0.15)
+        # Small organic dot mark near right bank: center (width * 0.76, height * 0.46)
+        dist_seal2 = np.sqrt(((x - width * 0.76) / 14.0) ** 2 + ((y - height * 0.46) / 16.0) ** 2)
+        seal2 = np.exp(-(dist_seal2 ** 2)) * (0.85 + stroke_noise * 0.15)
+
+        cinnabar_mask = np.clip(seal1 * 0.90 + seal2 * 0.85, 0.0, 1.0)[..., None]
+        rgb = rgb * (1.0 - cinnabar_mask * 0.92) + c_accent[None, None, :] * (cinnabar_mask * 0.92)
+
+    # -------------------------------------------------------------------------
+    # XUAN PAPER TEXTURE & MULTI-SCALE GRAIN
+    # -------------------------------------------------------------------------
+    # 1. Long diagonal primary fibers
+    diag_fibers = np.sin(x * 0.032 + y * 0.36 + fine * 11.0)
+    # 2. Fine cross fibers
+    cross_fibers = np.sin(x * 0.078 - y * 0.24 + noise * 8.0)
+    fibers = np.clip(diag_fibers - 0.82, 0.0, 0.18) + np.clip(cross_fibers - 0.88, 0.0, 0.12)
+
+    # 3. Ink edge deposition (邊緣沉積)
+    grad_x = np.abs(np.diff(ink_density[..., 0], axis=1, prepend=ink_density[:, :1, 0]))
+    grad_y = np.abs(np.diff(ink_density[..., 0], axis=0, prepend=ink_density[:1, :, 0]))
+    edge_depo = np.clip((grad_x + grad_y) * 4.5, 0.0, 1.0)[..., None]
+
+    # Combine texture layers
+    rgb += (noise[..., None] - 0.5) * 0.065
+    rgb += (fine[..., None] - 0.5) * 0.032
+    rgb += fibers[..., None] * 0.090
+    rgb -= edge_depo * 0.080
+
+    # Vignette subtle frame shading
+    vignette = ((x - width * 0.5) / (width * 0.55)) ** 2 + ((y - height * 0.5) / (height * 0.55)) ** 2
+    rgb -= vignette[..., None] * 0.030
+
+    return np.asarray(np.clip(rgb, 0.0, 1.0), dtype=np.float32)
 
 
 def _fish_paper(
@@ -355,75 +466,139 @@ def _pigment_bloom(
     y: FloatArray,
     index: int,
 ) -> tuple[FloatArray, FloatArray]:
-    """Create a soft watercolor deposit with granulation and capillary edges."""
+    """Create wide-range asymmetric wet ink / mineral pigment flows composed of
+    multiple irregular clusters, capillary bleeding, pigment accumulation edges,
+    and ink fractures.
+    """
     width, height = WORK_SIZE
-    local_x = x - width * 0.5
-    local_y = y - height * 0.5
-    low = fbm(width, height, 5400 + index * 71, octaves=5, base=7)
-    fine = fbm(width, height, 5440 + index * 71, octaves=4, base=23)
+    # `save_rgba` downsamples this 2x work canvas.  The renderer crops the
+    # 320x320 output tile centered at (620, 236), so the pigment must be
+    # centered at its corresponding 2x work coordinate.
+    cx, cy = width / 2.0, height / 2.0
 
-    angle = (-0.18, 0.26, -0.32)[index]
-    cosine, sine = np.cos(angle), np.sin(angle)
-    rotated_x = local_x * cosine - local_y * sine
-    rotated_y = local_x * sine + local_y * cosine
-    radius = np.sqrt((rotated_x / (1.12 + index * 0.04)) ** 2
-                     + (rotated_y / (0.84 + index * 0.04)) ** 2)
-    warped_radius = radius * (0.64 + low * 0.64) + (fine - 0.5) * 11.0
+    local_x = x - cx
+    local_y = y - cy
 
-    bloom_radius = 220.0 + index * 12.0
-    interior = _smoothstep(np.asarray((bloom_radius - warped_radius) / 42.0 + 0.54,
-                                      dtype=np.float32))
-    halo = np.exp(-(warped_radius / (bloom_radius * 1.19)) ** 4) * 0.20
-    broken_edge = np.clip(
-        0.16 + fine * 0.92
-        + np.sin(local_x * 0.031 - local_y * 0.026 + low * 7.0) * 0.18,
-        0.0,
-        1.0,
-    )
-    accumulation = np.exp(-((warped_radius - bloom_radius * 0.91) / 14.0) ** 2) \
-        * broken_edge * 0.28
+    low_noise = fbm(width, height, 5400 + index * 71, octaves=5, base=6)
+    mid_noise = fbm(width, height, 5420 + index * 71, octaves=4, base=14)
+    fine_noise = fbm(width, height, 5440 + index * 71, octaves=4, base=28)
 
-    deposits = np.zeros((height, width), dtype=np.float32)
-    deposit_specs = (
-        (-64.0, -31.0, 92.0),
-        (47.0, -39.0, 105.0),
-        (-8.0, 62.0, 116.0),
-        (78.0, 56.0, 76.0),
-    )
-    for lobe, (offset_x, offset_y, breadth) in enumerate(deposit_specs):
-        offset_x += index * (7 - lobe * 3)
-        offset_y += index * (lobe * 4 - 6)
-        deposits += np.exp(-(((local_x - offset_x) / breadth) ** 2
-                             + ((local_y - offset_y) / (breadth * 0.83)) ** 2)) \
-            * (0.10 + lobe * 0.018)
+    # Multi-cluster nodes per bloom index to guarantee asymmetric multi-lobed flows
+    # Node tuple: (offset_x, offset_y, radius_x, radius_y, tilt_angle, weight)
+    if index == 0:
+        # Indigo / Lapis flow: Upper-left to lower-right diagonal flow with multiple nodes
+        nodes = (
+            (-65.0, -45.0, 65.0, 42.0, 0.4, 0.85),
+            (55.0, 35.0, 58.0, 38.0, -0.3, 0.75),
+            (-10.0, 45.0, 48.0, 35.0, 0.8, 0.65),
+            (70.0, -50.0, 38.0, 26.0, 0.2, 0.55),
+        )
+    elif index == 1:
+        # Cinnabar / Madder flow: Lower-left to upper-right flow with multiple nodes + tiny seal mark
+        nodes = (
+            (-60.0, 50.0, 60.0, 40.0, -0.5, 0.85),
+            (48.0, -42.0, 52.0, 44.0, 0.3, 0.78),
+            (12.0, -10.0, 42.0, 30.0, 0.6, 0.62),
+            (-75.0, -35.0, 35.0, 25.0, -0.2, 0.50),
+        )
+    else:
+        # Moss Green / Malachite flow: Horizontal river-like flow with multiple nodes
+        nodes = (
+            (-80.0, 10.0, 52.0, 44.0, 0.1, 0.82),
+            (15.0, -48.0, 62.0, 36.0, -0.4, 0.80),
+            (72.0, 35.0, 55.0, 38.0, 0.5, 0.72),
+            (-15.0, 58.0, 40.0, 30.0, 0.2, 0.58),
+        )
 
-    veins = np.abs(np.sin(
-        local_x * (0.023 + index * 0.002)
-        + local_y * (0.017 - index * 0.001)
-        + low * 10.0,
-    ))
-    capillary = np.clip(0.17 - veins, 0.0, 0.17) / 0.17
-    capillary *= interior * np.clip((fine - 0.42) * 2.8, 0.0, 1.0) * 0.13
-    granulation = 0.48 + low * 0.31 + fine * 0.16
-    alpha = np.clip(interior * granulation * 0.62 + halo + accumulation + deposits + capillary,
-                    0.0, 0.88)
-    alpha *= np.clip(0.68 + fine * 0.50, 0.0, 1.0)
-    support_distance = np.sqrt(local_x * local_x + local_y * local_y)
-    support = _smoothstep(np.asarray((286.0 - support_distance) / 56.0,
-                                     dtype=np.float32))
-    alpha *= support
-    alpha[alpha < 0.018] = 0.0
-    # Runtime extracts a centered 320x320 source tile. Fade inside that tile so
-    # its bounds cannot appear as rectangular seams when the bloom is scaled.
-    crop_distance = np.maximum(np.abs(local_x), np.abs(local_y))
-    crop_fade = _smoothstep(np.asarray((310.0 - crop_distance) / 64.0,
-                                       dtype=np.float32))
-    alpha *= crop_fade
+    # Domain warping for organic fluid dynamics
+    work_scale = 2.0
+    warp_x = local_x + (low_noise - 0.5) * 140.0 * work_scale + (mid_noise - 0.5) * 50.0 * work_scale
+    warp_y = local_y + (mid_noise - 0.5) * 120.0 * work_scale + (fine_noise - 0.5) * 40.0 * work_scale
+
+    raw_alpha = np.zeros((height, width), dtype=np.float32)
+    accumulation = np.zeros((height, width), dtype=np.float32)
+
+    # Evaluate each node with directional distortion and wet ink edge accumulation
+    for off_x, off_y, rx, ry, tilt, weight in nodes:
+        off_x *= work_scale
+        off_y *= work_scale
+        rx *= work_scale
+        ry *= work_scale
+        cos_t, sin_t = np.cos(tilt), np.sin(tilt)
+        nx = (warp_x - off_x) * cos_t + (warp_y - off_y) * sin_t
+        ny = -(warp_x - off_x) * sin_t + (warp_y - off_y) * cos_t
+
+        dist_sq = (nx / rx) ** 2 + (ny / ry) ** 2
+        # Node core wash
+        node_wash = np.exp(-dist_sq * (0.85 + low_noise * 0.35)) * weight
+        raw_alpha = np.maximum(raw_alpha, node_wash)
+
+        # Edge accumulation (drying rim)
+        rim = np.exp(-((dist_sq - 0.75) / 0.18) ** 2) * weight * 0.30
+        accumulation = np.maximum(accumulation, rim)
+
+    # Capillary bleed & paper fiber absorption along edges
+    veins = np.abs(np.sin(warp_x * 0.030 + warp_y * 0.020 + low_noise * 10.0))
+    capillary = np.clip(0.20 - veins, 0.0, 0.20) / 0.20
+    capillary *= raw_alpha * np.clip((fine_noise - 0.35) * 2.8, 0.0, 1.0) * 0.25
+
+    # Internal dry-brush fractures
+    fractures = np.clip(1.0 - np.abs(mid_noise - 0.5) * 2.8, 0.20, 1.0)
+
+    combined_alpha = (raw_alpha * 0.88 + accumulation * 0.65 + capillary) * fractures
+    granulation = 0.68 + low_noise * 0.22 + fine_noise * 0.15
+    combined_alpha *= granulation
+
+    # The renderer crops a 320x320 output tile centered at (620, 236).  This
+    # is a 640x640 window on the 2x work canvas; feather inside that window.
+    crop_dist_x = np.abs(local_x)
+    crop_dist_y = np.abs(local_y)
+    crop_dist = np.maximum(crop_dist_x, crop_dist_y)
+    crop_fade = _smoothstep(np.clip((308.0 - crop_dist) / 48.0, 0.0, 1.0))
+
+    alpha = np.clip(combined_alpha * crop_fade * 1.40, 0.0, 0.95)
+    alpha[alpha < 0.015] = 0.0
     alpha = feather_alpha(np.asarray(alpha, dtype=np.float32), 4, 4)
 
-    pigment_light = np.clip(0.62 + low * 0.28 - accumulation * 0.42
-                            + (fine - 0.5) * 0.12, 0.34, 0.92)
-    return alpha, np.asarray(pigment_light, dtype=np.float32)
+    # Force every pixel outside the renderer's source crop to strict zero.
+    crop_x0, crop_x1 = round(cx - 320.0), round(cx + 320.0)
+    crop_y0, crop_y1 = round(cy - 320.0), round(cy + 320.0)
+    alpha[:crop_y0, :] = 0.0
+    alpha[crop_y1:, :] = 0.0
+    alpha[:, :crop_x0] = 0.0
+    alpha[:, crop_x1:] = 0.0
+
+    # Color tokens per bloom index
+    if index == 0:
+        base_color = _color((42, 95, 155))   # Lapis / Indigo
+        core_color = _color((18, 38, 68))
+        rim_color = _color((95, 155, 215))
+    elif index == 1:
+        base_color = _color((205, 65, 55))   # Cinnabar / Madder
+        core_color = _color((115, 32, 42))
+        rim_color = _color((240, 115, 95))
+    else:
+        base_color = _color((55, 135, 95))   # Malachite / Moss Green
+        core_color = _color((26, 68, 48))
+        rim_color = _color((115, 188, 145))
+
+    density = np.clip(raw_alpha * (0.6 + accumulation * 0.8), 0.0, 1.0)[..., None]
+    rgb = base_color[None, None, :] * (1.0 - density) + core_color[None, None, :] * density
+    rgb += accumulation[..., None] * (rim_color - base_color)[None, None, :] * 0.60
+    rgb += (fine_noise[..., None] - 0.5) * 0.05
+
+    # Cinnabar organic seal mark in index == 1:
+    if index == 1:
+        # Small organic seal mark near one pigment cluster.
+        seal_dx = np.abs(local_x - 35.0 * work_scale)
+        seal_dy = np.abs(local_y - 20.0 * work_scale)
+        seal_dist = np.maximum(seal_dx / (12.0 * work_scale), seal_dy / (14.0 * work_scale))
+        seal_mask = _smoothstep(np.clip(1.0 - seal_dist, 0.0, 1.0)) * (0.75 + fine_noise * 0.25)
+        seal_color = _color((195, 45, 35))[None, None, :]
+        rgb = rgb * (1.0 - seal_mask[..., None] * 0.85) + seal_color * (seal_mask[..., None] * 0.85)
+        alpha = np.maximum(alpha, seal_mask * 0.85 * crop_fade)
+
+    return alpha, np.asarray(np.clip(rgb, 0.0, 1.0), dtype=np.float32)
 
 
 def generate_ink_assets(out: Path) -> None:
@@ -431,26 +606,13 @@ def generate_ink_assets(out: Path) -> None:
     width, height = WORK_SIZE
     y, x = np.mgrid[0:height, 0:width].astype(np.float32)
     paper_noise = fbm(width, height, 5300, octaves=5, base=8)
-    for index, (name, palette) in enumerate(INK_PAPER_PALETTES.items()):
-        paper = _paper(palette, paper_noise, 5350 + index * 19)
-        stain_noise = fbm(width, height, 5370 + index * 19, octaves=4, base=5)
-        for center_x, center_y, radius, strength in (
-            (0.18, 0.68, 0.24, 0.025),
-            (0.54, 0.28, 0.31, 0.018),
-            (0.86, 0.73, 0.27, 0.022),
-        ):
-            distance = np.sqrt(((x / width - center_x) / radius) ** 2
-                               + ((y / height - center_y) / (radius * 0.62)) ** 2)
-            stain = np.exp(-(distance * (0.88 + stain_noise * 0.24)) ** 4)
-            paper -= stain[..., None] * _color(palette[2])[None, None, :] * strength
+    for index, name in enumerate(("night", "dawn", "day")):
+        paper = _ink_paper(name, paper_noise, 5350 + index * 19)
         save_rgba(out / f"ink_base_{name}.png",
                   _rgba(paper, np.ones((height, width), np.float32)), False)
 
-    colors = ((35, 74, 101), (120, 53, 72), (43, 91, 70))
-    for index, color in enumerate(colors):
-        alpha, pigment_light = _pigment_bloom(x, y, index)
-        rgb = _color(color)[None, None, :] * pigment_light[..., None]
-        rgb += (1.0 - pigment_light[..., None]) * _color((20, 24, 29))[None, None, :] * 0.10
+    for index in range(3):
+        alpha, rgb = _pigment_bloom(x, y, index)
         save_rgba(out / f"ink_bloom_{index}.png", _rgba(rgb, alpha), True)
 
 

@@ -155,3 +155,107 @@ def test_ink_quantized_cache_is_bounded() -> None:
     assert renderer.decoded_bytes <= 48 * 1024 * 1024
     renderer.close()
     assert renderer.decoded_bytes == 0
+
+
+def test_ink_rework_quality_and_contract_specifications() -> None:
+    """Validate ink scene quality contracts across time periods, background texture, and bloom shapes."""
+    night_img = pygame.image.load(str(ASSET_DIR / "ink_base_night.png"))
+    dawn_img = pygame.image.load(str(ASSET_DIR / "ink_base_dawn.png"))
+    day_img = pygame.image.load(str(ASSET_DIR / "ink_base_day.png"))
+
+    night_rgb = pygame.surfarray.array3d(night_img).astype(np.float32)
+    dawn_rgb = pygame.surfarray.array3d(dawn_img).astype(np.float32)
+    day_rgb = pygame.surfarray.array3d(day_img).astype(np.float32)
+
+    # 1. Distinct time period palettes and luminance contrast
+    assert float(night_rgb.mean()) < 60.0
+    assert float(day_rgb.mean()) > 160.0
+
+    diff_night_dawn = float(np.abs(night_rgb - dawn_rgb).mean())
+    diff_dawn_day = float(np.abs(dawn_rgb - day_rgb).mean())
+    diff_night_day = float(np.abs(night_rgb - day_rgb).mean())
+
+    assert diff_night_dawn > 25.0
+    assert diff_dawn_day > 25.0
+    assert diff_night_day > 50.0
+
+    # Dawn: Rose/pink/gold warmth (Red channel dominant over Blue)
+    assert float(dawn_rgb[:, :, 0].mean()) > float(dawn_rgb[:, :, 2].mean()) + 8.0
+
+    # Night: Indigo blue tone (Blue channel dominant over Red)
+    assert float(night_rgb[:, :, 2].mean()) > float(night_rgb[:, :, 0].mean()) + 4.0
+
+    # Day: Cinnabar red point accents exist (high red, low green/blue in accent regions)
+    cinnabar_spots = (day_rgb[:, :, 0] > 180) & (day_rgb[:, :, 1] < 100) & (day_rgb[:, :, 2] < 90)
+    assert 30 < int(cinnabar_spots.sum()) < 2000
+
+    # 2. Rich background texture, depth variance, and 3x3 spatial grid coverage
+    for name, arr in (("night", night_rgb), ("dawn", dawn_rgb), ("day", day_rgb)):
+        assert float(arr.std()) > 10.0, name
+
+        # 1118x472 crop region: [61:1179, 0:472]
+        crop = arr[61:1179, 0:472, :]
+        grid_w, grid_h = 1118 // 3, 472 // 3
+        high_std_cells = 0
+        for gx in range(3):
+            for gy in range(3):
+                cell = crop[gx * grid_w:(gx + 1) * grid_w, gy * grid_h:(gy + 1) * grid_h, :]
+                if float(cell.std()) >= 5.0:
+                    high_std_cells += 1
+        assert high_std_cells >= 7, f"{name} base 3x3 grid failed non-monotone coverage: {high_std_cells}/9 cells"
+
+    # Multi-scale Xuan paper texture (high-frequency grain vs base wash)
+    smooth_day = (
+        day_rgb
+        + np.roll(day_rgb, 1, axis=0)
+        + np.roll(day_rgb, -1, axis=0)
+        + np.roll(day_rgb, 1, axis=1)
+        + np.roll(day_rgb, -1, axis=1)
+    ) / 5.0
+    hf_grain = float(np.abs(day_rgb - smooth_day).mean())
+    assert hf_grain > 0.3
+
+    # 3. Organic, non-geometric pigment bloom shape verification (multi-cluster composition)
+    for index in range(3):
+        bloom_img = pygame.image.load(str(ASSET_DIR / f"ink_bloom_{index}.png"))
+        alpha = pygame.surfarray.array_alpha(bloom_img)
+        assert alpha.max() > 150
+
+        # Subsurface crop [460:780, 76:396] (320x320)
+        tile_alpha = alpha[460:780, 76:396]
+        border = np.concatenate((tile_alpha[:4, :].ravel(), tile_alpha[-4:, :].ravel(),
+                                 tile_alpha[:, :4].ravel(), tile_alpha[:, -4:].ravel()))
+        assert border.max() == 0, index
+
+        # Find local peaks in 320x320 crop tile to verify multi-cluster structure
+        # Downsample to 16x16 grid for robust cluster peak counting
+        grid_peaks = 0
+        grid = tile_alpha.reshape(16, 20, 16, 20).mean(axis=(1, 3))
+        for gx in range(1, 15):
+            for gy in range(1, 15):
+                val = grid[gx, gy]
+                if val > 40:
+                    neighbors = grid[gx - 1:gx + 2, gy - 1:gy + 2]
+                    if val >= neighbors.max():
+                        grid_peaks += 1
+        assert grid_peaks >= 2, f"bloom {index} must have at least 2 distinct clusters, got {grid_peaks}"
+
+        # Sample radii at 16 angles from center to confirm non-circular/non-regular shape
+        cx, cy = 620, 236
+        radii = []
+        for angle_deg in range(0, 360, 22):
+            rad = np.radians(angle_deg)
+            dx, dy = np.cos(rad), np.sin(rad)
+            r = 0
+            while r < 230:
+                px, py = int(cx + r * dx), int(cy + r * dy)
+                if px < 0 or px >= 1240 or py < 0 or py >= 472:
+                    break
+                if alpha[px, py] < 20 and r > 60:
+                    break
+                r += 2
+            radii.append(r)
+
+        radii_arr = np.array(radii, dtype=np.float32)
+        shape_irregularity = float(radii_arr.std() / (radii_arr.mean() + 1e-5))
+        assert shape_irregularity > 0.08, f"bloom {index} is too geometric: {shape_irregularity}"
