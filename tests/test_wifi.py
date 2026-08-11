@@ -60,13 +60,16 @@ def test_connect_with_password_builds_explicit_profile(monkeypatch):
     ssid_idx = calls[1].index("ssid")
     assert calls[1][ssid_idx + 1] == "Office"
     assert "wpa-psk" in calls[1] and "wifi-sec.psk" in calls[1]
+    auto_idx = calls[1].index("connection.autoconnect")
+    assert calls[1][auto_idx + 1] == "no"
 
     # 帶起暫時 profile
     assert calls[2] == ["nmcli", "connection", "up", "id", temp_id]
 
     # 啟動成功後才刪除舊 id=SSID profile，並將暫時 profile 改名為 SSID
     assert calls[3] == ["nmcli", "connection", "delete", "id", "Office"]
-    assert calls[4] == ["nmcli", "connection", "modify", "id", temp_id, "connection.id", "Office"]
+    assert calls[4] == ["nmcli", "connection", "modify", "id", temp_id,
+                        "connection.id", "Office", "connection.autoconnect", "yes"]
 
     assert "s3cret!pw" not in msg, "訊息不得含密碼"
 

@@ -162,12 +162,14 @@ def connect(ssid: str, password: "str | None" = None,
             else "wpa-psk"
         rc, out = _run(["connection", "add", "type", "wifi", "ifname", WLAN_DEV,
                         "con-name", temp_id, "ssid", ssid,
-                        "wifi-sec.key-mgmt", key_mgmt, "wifi-sec.psk", password], 15)
+                        "wifi-sec.key-mgmt", key_mgmt, "wifi-sec.psk", password,
+                        "connection.autoconnect", "no"], 15)
         if rc == 0:
             rc, out = _run(["connection", "up", "id", temp_id], _TIMEOUT_CONNECT)
         if rc == 0:
             _run(["connection", "delete", "id", ssid], 10)
-            _run(["connection", "modify", "id", temp_id, "connection.id", ssid], 10)
+            _run(["connection", "modify", "id", temp_id, "connection.id", ssid,
+                  "connection.autoconnect", "yes"], 10)
         else:
             # 失敗僅清理暫時 profile，保留既有 id=SSID profile 作回退。
             _run(["connection", "delete", "id", temp_id], 10)
