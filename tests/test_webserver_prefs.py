@@ -53,6 +53,12 @@ def test_phone_settings_lists_every_scene(client):
     assert "小喜喜桌面寵物" in html
 
 
+def test_phone_settings_escapes_weather_label_in_template(client):
+    html = client.get("/").get_data(as_text=True)
+    assert 'const weatherLabel=esc(p.weather_label||"—");' in html
+    assert '目前：${p.weather_label||"—"}' not in html
+
+
 def test_patch_prefs_applies_and_saves(client):
     r = client.patch("/api/prefs", json={
         "work_end_min": 1170, "brightness_night": 20,
