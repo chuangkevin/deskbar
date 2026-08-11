@@ -13,7 +13,8 @@
 # 2. 如果是 PROGRESSING，NM 正在努力，絕對不要碰它，清除計數並退出。
 # 3. 連續 FAIL_THRESHOLD 輪（每輪由 timer 觸發約 1 分鐘，預設 5 分鐘）皆為 DEAD，才開始動作。
 # 4. 動作分段：先溫和（請 NM 自己連已知設定檔），失敗才強硬（踢 radio）。
-# 5. 動作完成後退避 COOLDOWN_S 秒（10 分鐘），避免打斷 NM 的重連。
+# 5. 熔斷保護：若視窗內 radio 關開達上限 MAX_RADIO_RESTARTS，暫停強硬重置（避免重複硬重置導致 Wi-Fi/藍牙硬體或驅動不穩），但仍維持第一段溫和 profile 自動重連。
+# 6. 動作完成或熔斷後皆退避 COOLDOWN_S 秒，避免打斷 NM 重連。
 
 set -u
 
@@ -23,7 +24,8 @@ STATE_FILE="${DESKBAR_WATCHDOG_STATE_FILE:-/run/deskbar-watchdog.state}"
 ACTION_FILE="${DESKBAR_WATCHDOG_ACTION_FILE:-/run/deskbar-watchdog.actions}"
 FAIL_THRESHOLD="${DESKBAR_WATCHDOG_FAIL_THRESHOLD:-5}" # 2026-08-07 實測重連需時較長，連續 5 輪 DEAD 才能動作
 COOLDOWN_S="${DESKBAR_WATCHDOG_COOLDOWN_S:-600}"
-ACTION_WINDOW_S="${DESKBAR_WATCHDOG_ACTION_WINDOW_S:-3600}"
+ACTION_WINDOW_S="${DESKBAR_WATCHDOG_ACTION_WINDOW_S:-21600}"
+MAX_RADIO_RESTARTS="${DESKBAR_WATCHDOG_MAX_RADIO_RESTARTS:-2}"
 
 log() {
     logger -t deskbar-watchdog "$*"
@@ -50,17 +52,34 @@ record_state_transition() {
     fi
 }
 
+get_radio_action_count() {
+    action_now=$(date +%s)
+    cutoff=$((action_now - ACTION_WINDOW_S))
+    count=0
+    if [ -f "$ACTION_FILE" ]; then
+        while IFS=' ' read -r ts kind rest; do
+            case "$ts" in
+                ''|*[!0-9]*) continue ;;
+            esac
+            if [ "$kind" = "radio_restart" ] && [ "$ts" -ge "$cutoff" ]; then
+                count=$((count + 1))
+            fi
+        done < "$ACTION_FILE"
+    fi
+    printf '%s' "$count"
+}
+
 record_radio_action() {
     action_now=$(date +%s)
     cutoff=$((action_now - ACTION_WINDOW_S))
     tmp="${ACTION_FILE}.$$"
     {
         if [ -f "$ACTION_FILE" ]; then
-            while IFS=' ' read -r ts kind; do
+            while IFS=' ' read -r ts kind rest; do
                 case "$ts" in
                     ''|*[!0-9]*) continue ;;
                 esac
-                if [ "$ts" -ge "$cutoff" ]; then
+                if [ "$kind" = "radio_restart" ] && [ "$ts" -ge "$cutoff" ]; then
                     printf '%s %s\n' "$ts" "$kind"
                 fi
             done < "$ACTION_FILE"
@@ -154,11 +173,17 @@ if [ -n "$connections" ]; then
 fi
 
 if [ "$success" -eq 0 ]; then
-    action_count=$(record_radio_action)
-    log "第一段救援失敗，執行第二段(強硬)救援：重啟 WiFi radio；近 ${ACTION_WINDOW_S} 秒 radio_restart 次數=${action_count}"
-    nmcli radio wifi off 2>/dev/null || true
-    sleep 5
-    nmcli radio wifi on 2>/dev/null || true
+    action_count=$(get_radio_action_count)
+    if [ "$action_count" -ge "$MAX_RADIO_RESTARTS" ]; then
+        # 第一段救援失敗且 radio 硬重置已達上限，觸發熔斷保護（避免反覆硬重置導致 Wi-Fi/藍牙硬體不穩；溫和 profile 重連仍於下一輪繼續嘗試）
+        log "第一段救援失敗，觸發 radio 保護熔斷：近 ${ACTION_WINDOW_S} 秒已有 ${action_count}/${MAX_RADIO_RESTARTS} 次 radio_restart，暫停硬重置"
+    else
+        action_count=$(record_radio_action)
+        log "第一段救援失敗，執行第二段(強硬)救援：重啟 WiFi radio；近 ${ACTION_WINDOW_S} 秒 radio_restart 次數=${action_count}"
+        nmcli radio wifi off 2>/dev/null || true
+        sleep 5
+        nmcli radio wifi on 2>/dev/null || true
+    fi
 fi
 
 # 寫入冷卻戳記

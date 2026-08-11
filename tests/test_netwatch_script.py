@@ -182,7 +182,7 @@ def test_fifth_dead_restarts_radio_when_all_profiles_fail(tmp_path):
     assert proc.returncode == 0
     assert (run_dir / "cooldown").read_text(encoding="utf-8").strip() == "1000"
     log = log_file.read_text(encoding="utf-8")
-    assert "近 3600 秒 radio_restart 次數=1" in log
+    assert "近 21600 秒 radio_restart 次數=1" in log
     assert "NMCLI radio wifi off" in log
     assert "SLEEP 5" in log
     assert "NMCLI radio wifi on" in log
@@ -211,3 +211,59 @@ def test_cooldown_exits_before_reading_nmcli(tmp_path):
 
     assert proc.returncode == 0
     assert not log_file.exists()
+
+
+def test_radio_restart_circuit_breaker_when_max_restarts_reached(tmp_path):
+    fail_file = tmp_path / "run" / "fail"
+    fail_file.parent.mkdir(parents=True, exist_ok=True)
+    fail_file.write_text("4\n", encoding="utf-8")
+
+    action_file = tmp_path / "run" / "actions"
+    action_file.write_text("800 radio_restart\n900 radio_restart\n", encoding="utf-8")
+
+    proc, log_file, run_dir = _run_watchdog(
+        tmp_path,
+        DESKBAR_TEST_NMCLI_DEV_OUT="wlan0:disconnected\n",
+        DESKBAR_TEST_NMCLI_CONNECTIONS="Home:802-11-wireless\n",
+    )
+
+    assert proc.returncode == 0
+    log = log_file.read_text(encoding="utf-8")
+    assert "第一段救援候選 WiFi profile 數量=1" in log
+    assert "啟動連線 Home 失敗" in log
+    assert "radio 保護熔斷" in log
+    assert "近 21600 秒" in log
+    assert "已有 2/2 次" in log
+    assert "NMCLI radio wifi off" not in log
+    assert "SLEEP 5" not in log
+    assert "NMCLI radio wifi on" not in log
+    assert action_file.read_text(encoding="utf-8") == "800 radio_restart\n900 radio_restart\n"
+    assert (run_dir / "cooldown").read_text(encoding="utf-8").strip() == "1000"
+
+
+def test_radio_restart_outside_window_does_not_trigger_breaker(tmp_path):
+    fail_file = tmp_path / "run" / "fail"
+    fail_file.parent.mkdir(parents=True, exist_ok=True)
+    fail_file.write_text("4\n", encoding="utf-8")
+
+    action_file = tmp_path / "run" / "actions"
+    action_file.write_text("700 radio_restart\n800 radio_restart\n", encoding="utf-8")
+
+    proc, log_file, run_dir = _run_watchdog(
+        tmp_path,
+        DESKBAR_WATCHDOG_ACTION_WINDOW_S="100",
+        DESKBAR_TEST_NMCLI_DEV_OUT="wlan0:disconnected\n",
+        DESKBAR_TEST_NMCLI_CONNECTIONS="Home:802-11-wireless\n",
+    )
+
+    assert proc.returncode == 0
+    log = log_file.read_text(encoding="utf-8")
+    assert "第一段救援候選 WiFi profile 數量=1" in log
+    assert "啟動連線 Home 失敗" in log
+    assert "radio 保護熔斷" not in log
+    assert "NMCLI radio wifi off" in log
+    assert "SLEEP 5" in log
+    assert "NMCLI radio wifi on" in log
+    assert "近 100 秒 radio_restart 次數=1" in log
+    assert action_file.read_text(encoding="utf-8") == "1000 radio_restart\n"
+    assert (run_dir / "cooldown").read_text(encoding="utf-8").strip() == "1000"
