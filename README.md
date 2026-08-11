@@ -136,9 +136,11 @@ make test    # .venv/bin/python -m pytest -q
 | 觸控方向跟畫面對不起來 / 點哪都不準 | 先確認設定頁「旋轉螢幕」是否切到正確的 90°/270°；`deskbar/transform.py` 的觸控反解矩陣跟目前旋轉角度綁定，兩者要一致 |
 | Claude usage 油表一直顯示「usage 未推送」 | deskbar 本身不抓取 usage，要靠 Mac 上的 agent 主動 POST `/api/usage`（見 `tools/usage_push_snippet.py`／`tools/usage_push_demo.py`）；確認該 agent 有在跑、網路能連到 Pi，若 Pi 上設了 `DESKBAR_PUSH_TOKEN` 環境變數，推送端也要帶同樣的 `X-Deskbar-Token` header 否則會被 401 拒絕 |
 
-## 工作中 sessions（Codex／Claude）
+## 工作中 sessions（Codex／Claude 工作台）
 
-Deskbar 的「工作中 sessions」只顯示最近活動**少於 30 分鐘**的 session，最多保留最新 **6 筆**。與行事曆、待辦、便條、場景同為 Dashboard 中欄 Center View，頂列提供永遠可見直達鈕顯示 active 筆數與未查看新進度（如「工作 6 · 2新」）。點擊卡片可排入 opaque action queue 讓 Mac 對應 App 到前景。Mac collector 只會送來源、專案資料夾名稱、最後活動時間與一次性開啟碼；不會送 prompt、回覆、對話標題、完整路徑、session ID 或任何憑證。
+Deskbar 的「工作中 sessions」只顯示最近活動**少於 30 分鐘**的 session，最多保留最新 **6 筆**。依使用者授權顯示本機 Codex／Claude session 的短標題（`label`：Claude App `title` 優先，其次 Claude project JSONL `customTitle`；Codex 優先使用桌面 App 的本機 thread `title`，再退回 session metadata title；仍沒有 title 才用 cwd basename，最後才是「未命名 Session」）與專案 basename（`project_label`）。這是唯一放寬：對話 Prompt/Response 內文、Summary、Tool 輸入/輸出、完整 cwd 路徑與 Native Session ID 不會作為顯示或出站資料。Mac collector 相容 Codex 新版 wrapper `{type:"session_meta", payload:{session_id, cwd}}` 與舊格式，於 128KB 限制 tail 中僅檢視 `type`、`payload.type`、`payload.role` 等安全 schema 欄位匯出安全 `activity_state`（`result` / `working` / `waiting` / `unknown`）。
+
+中欄重設為緊湊 2×3 欄位的「工作台」，每格標示顯眼標題（第一層級）、專案 basename（第二層級）、來源 chip（Codex / Claude）與明確安全狀態 pill（`結果已就緒` / `執行中` / `等待更新` / `最近活動`）與相對時間。如有新完成結果，強調「結果待看」與頂欄「N結果」優先提示。點擊卡片可排入 opaque action queue 讓 Mac 對應 App 到前景。
 
 先在 Mac 驗證一次推送：
 

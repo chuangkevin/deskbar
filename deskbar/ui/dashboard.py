@@ -128,8 +128,15 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     next_label = {"calendar": "待辦", "linear": "便條", "notes": "工作",
                   "sessions": "場景", "scene": "行事曆"}
     active_cnt = len(snap.work_sessions.active_items(now)) if (snap and hasattr(snap, "work_sessions") and snap.work_sessions) else 0
-    unread_cnt = snap.work_sessions.unread_count(now) if (snap and hasattr(snap, "work_sessions") and snap.work_sessions) else 0
-    work_label = f"工作 {active_cnt} · {unread_cnt}新" if unread_cnt > 0 else f"工作 {active_cnt}"
+    unread_res_cnt = snap.work_sessions.unread_result_count(now) if (snap and hasattr(snap, "work_sessions") and snap.work_sessions) else 0
+    unread_tot_cnt = snap.work_sessions.unread_count(now) if (snap and hasattr(snap, "work_sessions") and snap.work_sessions) else 0
+    if unread_res_cnt > 0:
+        work_label = f"工作 {active_cnt} · {unread_res_cnt}結果"
+    elif unread_tot_cnt > 0:
+        work_label = f"工作 {active_cnt} · {unread_tot_cnt}新"
+    else:
+        work_label = f"工作 {active_cnt}"
+
     if center != "scene":
         _chip_btn(surface, next_label.get(center, "待辦"), CENTER_BTN,
                   "toggle_center", hits)
@@ -157,7 +164,13 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         return _finish(surface, snap, settings, now, hits)
     if center == "sessions":
         from deskbar.ui import worksessionwidget
-        _text(surface, "工作 Sessions", 22, theme.C["text2"], TL_X0, 22)
+        working_cnt = sum(1 for item in snap.work_sessions.active_items(now) if item.activity_state == "working") if (snap and hasattr(snap, "work_sessions") and snap.work_sessions) else 0
+        header_parts = ["工作台", f"活躍 {active_cnt}"]
+        if unread_res_cnt > 0:
+            header_parts.append(f"結果待看 {unread_res_cnt}")
+        if working_cnt > 0:
+            header_parts.append(f"執行中 {working_cnt}")
+        _text(surface, " · ".join(header_parts), 22, theme.C["text2"], TL_X0, 22)
         hits += worksessionwidget.render_center_view(surface, snap, settings, TL_AREA, now)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources)

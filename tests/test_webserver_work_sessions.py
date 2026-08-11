@@ -39,12 +39,14 @@ def test_push_filters_and_queues_action(alarm_store):
 
 def test_read_only_status_omits_action_capability(alarm_store):
     client = create_app(alarm_store, usage_state=AppState()).test_client()
-    assert client.post("/api/work-sessions", json=_payload()).status_code == 204
+    assert client.post("/api/work-sessions", json=_payload(activity_state="result", project_label="myproj")).status_code == 204
 
     body = client.get("/api/work-sessions").get_json()
     assert len(body["items"]) == 1
     assert body["items"][0]["source"] == "codex"
     assert body["items"][0]["label"] == "deskbar"
+    assert body["items"][0]["project_label"] == "myproj"
+    assert body["items"][0]["activity_state"] == "result"
     assert "open_id" not in body["items"][0]
 
 

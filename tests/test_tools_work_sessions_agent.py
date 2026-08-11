@@ -1,5 +1,6 @@
 import ast
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -31,7 +32,7 @@ def test_collector_dedupes_sources_filters_stale_and_never_pushes_private_fields
     app_file = tmp_path / "Library/Application Support/Claude/claude-code-sessions/a/b/c.json"
     app_file.parent.mkdir(parents=True)
     app_file.write_text(json.dumps({"sessionId": "native-claude", "cwd": "/private/other",
-                                    "lastActivityAt": recent.isoformat(), "title": "private title"}), encoding="utf-8")
+                                    "lastActivityAt": recent.isoformat(), "title": "authorized title"}), encoding="utf-8")
     import os
     os.utime(app_file, (recent.timestamp(), recent.timestamp()))
     _write_jsonl(tmp_path / ".codex/sessions/2026/08/10/stale.jsonl", [
@@ -42,9 +43,10 @@ def test_collector_dedupes_sources_filters_stale_and_never_pushes_private_fields
     collector = SessionCollector(home=tmp_path, now=lambda: NOW, token_factory=lambda: "opaque-token-abcdefghijkl")
     payload = collector.payload()
     assert len(payload["items"]) == 2
-    assert {item["label"] for item in payload["items"]} == {"deskbar", "other"}
+    assert {item["label"] for item in payload["items"]} == {"deskbar", "authorized title"}
+    assert {item["project_label"] for item in payload["items"]} == {"deskbar", "other"}
     encoded = json.dumps(payload)
-    for forbidden in ("native-codex", "native-claude", "private title", "not for Pi", "/private/"):
+    for forbidden in ("native-codex", "native-claude", "not for Pi", "/private/"):
         assert forbidden not in encoded
 
 
@@ -55,6 +57,15 @@ def test_missing_source_is_reported_without_crashing(tmp_path):
         (("source", "claude"), ("code", "unavailable")),
         (("source", "codex"), ("code", "unavailable")),
     }
+
+
+def test_collector_uses_login_home_when_launchagent_home_is_blank(monkeypatch, tmp_path):
+    class LoginUser:
+        pw_dir = str(tmp_path)
+
+    monkeypatch.setenv("HOME", "")
+    monkeypatch.setattr(session_agent.pwd, "getpwuid", lambda _uid: LoginUser())
+    assert SessionCollector().home == tmp_path
 
 
 def test_collector_only_parses_metadata_and_tail_record(monkeypatch, tmp_path):
@@ -120,3 +131,94 @@ def test_agent_only_opens_known_opaque_capability_and_acks(tmp_path):
     assert agent.poll_and_focus() == 2
     assert opened == ["codex"]
     assert [post[0] for post in client.posts].count("/api/work-sessions/actions/ack") == 2
+
+
+def test_new_codex_format_and_activity_state(tmp_path):
+    recent = NOW - timedelta(minutes=1)
+    # Test new Codex wrapper format: {"type":"session_meta", "payload":{"session_id":..., "cwd":...}}
+    _write_jsonl(tmp_path / ".codex/sessions/2026/08/11/new_codex.jsonl", [
+        {"type": "session_meta", "payload": {"session_id": "new-native-id", "cwd": "/private/new_deskbar"}},
+        {"type": "event", "payload": {"type": "user", "role": "user"}, "timestamp": (recent - timedelta(seconds=10)).isoformat()},
+        {"type": "event", "payload": {"type": "assistant_message", "role": "assistant"}, "timestamp": recent.isoformat()},
+    ], recent)
+
+    collector = SessionCollector(home=tmp_path, now=lambda: NOW, token_factory=lambda: "opaque-token-abcdefghijkl")
+    payload = collector.payload()
+    assert len(payload["items"]) == 1
+    item = payload["items"][0]
+    assert item["source"] == "codex"
+    assert item["label"] == "new_deskbar"
+    assert item["activity_state"] == "result"
+
+    encoded = json.dumps(payload)
+    for forbidden in ("new-native-id", "/private/", "prompt", "text", "message"):
+        assert forbidden not in encoded
+
+
+def test_codex_desktop_title_is_preferred_without_sending_private_thread_fields(tmp_path):
+    recent = NOW - timedelta(minutes=1)
+    _write_jsonl(tmp_path / ".codex/sessions/2026/08/11/new_codex.jsonl", [
+        {"type": "session_meta", "payload": {"session_id": "codex-native-id", "cwd": "/private/old-project"}},
+        {"type": "event_msg", "payload": {"type": "custom_tool_call"}, "timestamp": recent.isoformat()},
+    ], recent)
+    database = tmp_path / ".codex/state_5.sqlite"
+    connection = sqlite3.connect(database)
+    connection.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, cwd TEXT NOT NULL)")
+    connection.execute(
+        "INSERT INTO threads (id, title, cwd) VALUES (?, ?, ?)",
+        ("codex-native-id", "Deskbar 工作台視覺修正", "/private/deskbar"),
+    )
+    connection.commit()
+    connection.close()
+
+    payload = SessionCollector(home=tmp_path, now=lambda: NOW, token_factory=lambda: "opaque-token-abcdefghijkl").payload()
+    assert payload["items"] == [{
+        "source": "codex",
+        "label": "Deskbar 工作台視覺修正",
+        "project_label": "deskbar",
+        "last_active_at": recent.isoformat().replace("+00:00", "Z"),
+        "open_id": "opaque-token-abcdefghijkl",
+        "activity_state": "working",
+    }]
+    encoded = json.dumps(payload)
+    for forbidden in ("codex-native-id", "/private/", "old-project"):
+        assert forbidden not in encoded
+
+
+def test_duplicate_codex_rollout_records_become_one_opaque_item(tmp_path):
+    recent = NOW - timedelta(minutes=1)
+    earlier = NOW - timedelta(minutes=2)
+    for filename, stamp in (("first", earlier), ("second", recent)):
+        _write_jsonl(tmp_path / f".codex/sessions/2026/08/11/{filename}.jsonl", [
+            {"type": "session_meta", "payload": {"session_id": "same-native-id", "cwd": "/private/deskbar"}},
+            {"timestamp": stamp.isoformat()},
+        ], stamp)
+
+    payload = SessionCollector(home=tmp_path, now=lambda: NOW, token_factory=lambda: "opaque-token-abcdefghijkl").payload()
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["label"] == "deskbar"
+    assert payload["items"][0]["last_active_at"] == recent.isoformat().replace("+00:00", "Z")
+
+
+def test_claude_title_priority_order(tmp_path):
+    recent = NOW - timedelta(minutes=1)
+    _write_jsonl(tmp_path / ".claude/projects/p1/proj.jsonl", [
+        {"sessionId": "sess-1", "cwd": "/home/user/proj_alpha", "customTitle": "Project Custom Title"},
+        {"timestamp": recent.isoformat()},
+    ], recent)
+
+    app_file = tmp_path / "Library/Application Support/Claude/claude-code-sessions/a/b/sess-1.json"
+    app_file.parent.mkdir(parents=True)
+    app_file.write_text(json.dumps({
+        "sessionId": "sess-1",
+        "cwd": "/home/user/proj_alpha",
+        "lastActivityAt": recent.isoformat(),
+        "title": "App Override Title"
+    }), encoding="utf-8")
+
+    collector = SessionCollector(home=tmp_path, now=lambda: NOW, token_factory=lambda: "opaque-token-abcdefghijkl")
+    payload = collector.payload()
+    assert len(payload["items"]) == 1
+    item = payload["items"][0]
+    assert item["label"] == "App Override Title"
+    assert item["project_label"] == "proj_alpha"

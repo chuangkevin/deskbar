@@ -19,6 +19,8 @@ _PALETTES_RAW = {
         "grid": (55, 55, 55), "text": (255, 255, 255), "text2": (212, 212, 212),
         "muted": (186, 186, 186), "now": (255, 138, 101), "now_text": (60, 20, 8),
         "warn": (255, 105, 105), "ok": (60, 220, 170),
+        "work_codex": (92, 190, 255), "work_codex_text": (5, 27, 44),
+        "work_claude": (255, 150, 76), "work_claude_text": (58, 22, 4),
         # flipclock 數字卡底色／分隔線（原 flipclock.py 模組級 CARD/SPLIT 常量）。
         "clock_card": (34, 34, 34), "clock_split": (12, 12, 12),
         "clock_card_top": (44, 44, 47), "clock_card_bottom": (26, 26, 29),
@@ -37,6 +39,8 @@ _PALETTES_RAW = {
         "grid": (216, 212, 204), "text": (26, 26, 26), "text2": (70, 70, 70),
         "muted": (122, 120, 114), "now": (200, 88, 56), "now_text": (255, 255, 255),
         "warn": (178, 44, 44), "ok": (20, 140, 110),
+        "work_codex": (25, 106, 184), "work_codex_text": (255, 255, 255),
+        "work_claude": (194, 88, 29), "work_claude_text": (255, 255, 255),
         "clock_card": (255, 255, 255), "clock_split": (214, 210, 202),
         "clock_card_top": (255, 255, 255), "clock_card_bottom": (241, 238, 232),
         "date_dim": (168, 164, 156),

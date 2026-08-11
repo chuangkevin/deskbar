@@ -211,14 +211,14 @@ def test_topbar_work_button_rendered_with_active_and_unread_count(monkeypatch):
     settings = _settings_with_account()
     st = _busy_state()
 
-    item1 = WorkSessionItem("codex", "project-1", NOW - timedelta(minutes=1), "opaque-open-id-000000000001")
-    item2 = WorkSessionItem("claude", "project-2", NOW - timedelta(minutes=2), "opaque-open-id-000000000002")
+    item1 = WorkSessionItem("codex", "project-1", NOW - timedelta(minutes=1), "opaque-open-id-000000000001", activity_state="working")
+    item2 = WorkSessionItem("claude", "project-2", NOW - timedelta(minutes=2), "opaque-open-id-000000000002", activity_state="working")
 
     # Initial baseline
     st.set_work_sessions(WorkSessionSnapshot((item1, item2)), now=NOW)
 
-    # 1 item updated -> 1 unread
-    item1_upd = WorkSessionItem("codex", "project-1", NOW - timedelta(seconds=10), "opaque-open-id-000000000001")
+    # 1 item updated with activity_state="result" -> 1 unread result -> "工作 2 · 1結果"
+    item1_upd = WorkSessionItem("codex", "project-1", NOW - timedelta(seconds=10), "opaque-open-id-000000000001", activity_state="result")
     st.set_work_sessions(WorkSessionSnapshot((item1_upd, item2)), now=NOW)
 
     texts = []
@@ -237,7 +237,15 @@ def test_topbar_work_button_rendered_with_active_and_unread_count(monkeypatch):
     assert work_hits[0].rect == dashboard.WORK_BTN
 
     work_text = next(t[0] for t in texts if t[1] == "open_work_sessions")
-    assert work_text == "工作 2 · 1新"
+    assert work_text == "工作 2 · 1結果"
+
+    # When unread item is not result -> "工作 2 · 1新"
+    item1_work = WorkSessionItem("codex", "project-1", NOW - timedelta(seconds=5), "opaque-open-id-000000000001", activity_state="working")
+    st.set_work_sessions(WorkSessionSnapshot((item1_work, item2)), now=NOW)
+    texts.clear()
+    dashboard.render(surf, st.snapshot(), settings, NOW)
+    work_text2 = next(t[0] for t in texts if t[1] == "open_work_sessions")
+    assert work_text2 == "工作 2 · 1新"
 
 
 def test_center_view_sessions_renders_in_tl_area_preserving_side_columns():

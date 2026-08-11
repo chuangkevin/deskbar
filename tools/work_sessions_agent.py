@@ -2,20 +2,24 @@
 """Mac-side collector for Deskbar's display-safe active-session panel.
 
 It intentionally treats Codex and Claude files as private implementation
-details.  It reads only identifiers, timestamps and cwd to make a basename;
-conversation text is neither returned, logged nor sent to the Pi.
+details. It reads only identifiers, timestamps, a cwd basename, and the
+user-visible session title. Conversation text is never returned, logged, or
+sent to the Pi.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import pwd
 import secrets
+import sqlite3
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from http.client import HTTPException
 from pathlib import Path
 from typing import Callable, Iterable
 from urllib.error import HTTPError, URLError
@@ -42,6 +46,14 @@ APP_OPEN_ARGS = {
 _TAIL_BYTES = 128 * 1024
 
 
+def _current_user_home() -> Path:
+    """Resolve the login user's home without trusting a blank LaunchAgent HOME."""
+    try:
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except (KeyError, OSError):
+        return Path.home()
+
+
 def _iso(instant: datetime) -> str:
     return instant.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -55,7 +67,9 @@ class LocalSession:
     source: str
     native_id: str
     label: str
+    project_label: str
     last_active_at: datetime
+    activity_state: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -64,7 +78,73 @@ class SourceProblem:
     code: str
 
 
-def _json_lines(path: Path) -> tuple[dict | None, datetime | None]:
+_WORKING_TYPES = frozenset({
+    "reasoning", "thinking", "thought", "tool", "tool_use", "tool_call",
+    "tool_result", "function_call", "function_call_output", "exec", "bash",
+    "command", "agent_work", "turn_start", "agent_reasoning", "progress",
+    "tool_execution", "custom_tool_call", "custom_tool_call_output",
+    "mcp_tool_call", "mcp_tool_call_end",
+})
+_WAITING_TYPES = frozenset({"user", "user_message", "user_input", "human", "prompt", "input"})
+_RESULT_TYPES = frozenset({
+    "assistant", "assistant_message", "message", "response", "reply",
+    "agent_message", "message_stop", "turn_end", "completion", "text",
+})
+
+
+def _clean_label(value: object, max_len: int = 80) -> str:
+    """Clean and sanitize display title or label: press whitespace, strip path separators, limit length."""
+    if not isinstance(value, str):
+        return ""
+    cleaned = " ".join(value.split()).strip()
+    if not cleaned:
+        return ""
+    if "/" in cleaned or "\\" in cleaned:
+        cleaned = cleaned.replace("\\", "/").split("/")[-1].strip()
+    return cleaned[:max_len]
+
+
+def safe_session_labels(title_val: object, cwd_val: object, default_label: str = "未命名 Session") -> tuple[str, str]:
+    project_label = safe_project_label(cwd_val)
+    title = _clean_label(title_val)
+    if title:
+        label = title
+    elif project_label and project_label != "未命名專案":
+        label = project_label
+    else:
+        label = default_label
+    return label, project_label
+
+
+def _classify_event(value: dict) -> str:
+    """Classify activity state using ONLY safe schema fields: type, payload.type, payload.role.
+    Never inspect message text, content, summary, prompt, or output values.
+    """
+    if not isinstance(value, dict):
+        return "unknown"
+
+    top_type = value.get("type") if isinstance(value.get("type"), str) else ""
+    payload = value.get("payload") if isinstance(value.get("payload"), dict) else {}
+    pay_type = payload.get("type") if isinstance(payload.get("type"), str) else ""
+    pay_role = payload.get("role") if isinstance(payload.get("role"), str) else (
+        value.get("role") if isinstance(value.get("role"), str) else ""
+    )
+
+    if pay_role in ("user", "human") or top_type in _WAITING_TYPES or pay_type in _WAITING_TYPES:
+        return "waiting"
+
+    if top_type in _WORKING_TYPES or pay_type in _WORKING_TYPES:
+        return "working"
+
+    if pay_role in ("assistant", "agent"):
+        return "result"
+    if top_type in _RESULT_TYPES or pay_type in _RESULT_TYPES:
+        return "result"
+
+    return "unknown"
+
+
+def _json_lines(path: Path) -> tuple[dict | None, datetime | None, str]:
     """Read one metadata line and a bounded tail, never a whole transcript.
 
     Session files can contain hundreds of thousands of conversation events.
@@ -81,26 +161,87 @@ def _json_lines(path: Path) -> tuple[dict | None, datetime | None]:
         except json.JSONDecodeError:
             pass
 
+    tail_stamp: datetime | None = None
+    activity_state: str = "unknown"
+    tail_lines_checked = 0
+
     with path.open("rb") as handle:
         handle.seek(0, os.SEEK_END)
         size = handle.tell()
         handle.seek(max(0, size - _TAIL_BYTES))
         tail = handle.read()
+
     for raw_line in reversed(tail.splitlines()):
+        if not raw_line.strip():
+            continue
         try:
             value = json.loads(raw_line.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             continue
         if isinstance(value, dict):
-            stamp = parse_timestamp(value.get("timestamp"))
-            if stamp is not None:
-                return first, stamp
-    return first, None
+            tail_lines_checked += 1
+            if tail_stamp is None:
+                stamp = parse_timestamp(value.get("timestamp"))
+                if stamp is not None:
+                    tail_stamp = stamp
+            if activity_state == "unknown":
+                st = _classify_event(value)
+                if st != "unknown":
+                    activity_state = st
+            if (tail_stamp is not None and activity_state != "unknown") or tail_lines_checked >= 3:
+                break
+
+    return first, tail_stamp, activity_state
 
 
-def _best_time(*instants: datetime | None) -> datetime | None:
-    usable = [instant for instant in instants if instant is not None]
+def _best_time(*instants: datetime | str | None) -> datetime | None:
+    usable: list[datetime] = []
+    for instant in instants:
+        if isinstance(instant, datetime):
+            usable.append(instant)
+        elif isinstance(instant, str):
+            parsed = parse_timestamp(instant)
+            if parsed is not None:
+                usable.append(parsed)
     return max(usable) if usable else None
+
+
+def _codex_thread_details(home: Path, native_ids: Iterable[str]) -> dict[str, tuple[object, object]]:
+    """Read only the visible Codex title and cwd for known local session ids.
+
+    The desktop app keeps thread titles in a small SQLite index, while the
+    event JSONL deliberately does not. This query is read-only and selects no
+    prompts, previews, summaries, or transcript fields.
+    """
+    identifiers = tuple(dict.fromkeys(item for item in native_ids if isinstance(item, str) and item))
+    if not identifiers:
+        return {}
+
+    primary = home / ".codex" / "state_5.sqlite"
+    candidates = ([primary] if primary.exists() else []) + [
+        path for path in sorted((home / ".codex").glob("state_*.sqlite"), key=lambda path: path.stat().st_mtime, reverse=True)
+        if path != primary
+    ]
+    for database in candidates:
+        try:
+            connection = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True, timeout=0.2)
+            try:
+                details: dict[str, tuple[object, object]] = {}
+                for offset in range(0, len(identifiers), 900):
+                    part = identifiers[offset:offset + 900]
+                    placeholders = ",".join("?" for _ in part)
+                    rows = connection.execute(
+                        f"SELECT id, title, cwd FROM threads WHERE id IN ({placeholders})", part
+                    )
+                    for native_id, title, cwd in rows:
+                        if isinstance(native_id, str):
+                            details[native_id] = (title, cwd)
+                return details
+            finally:
+                connection.close()
+        except (OSError, sqlite3.Error):
+            continue
+    return {}
 
 
 class SessionCollector:
@@ -113,7 +254,7 @@ class SessionCollector:
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         token_factory: Callable[[], str] = lambda: secrets.token_urlsafe(24),
     ) -> None:
-        self.home = home or Path.home()
+        self.home = home or _current_user_home()
         self.now = now
         self._token_factory = token_factory
         self._open_ids: dict[tuple[str, str], str] = {}
@@ -123,8 +264,15 @@ class SessionCollector:
         codex, codex_problems = self._collect_codex()
         claude, claude_problems = self._collect_claude()
         cutoff = self.now().astimezone(timezone.utc)
-        records = [record for record in [*codex, *claude]
-                   if 0 <= (cutoff - record.last_active_at).total_seconds() < MAX_ACTIVE_AGE_SECONDS]
+        newest_by_native_id: dict[tuple[str, str], LocalSession] = {}
+        for record in [*codex, *claude]:
+            if not (0 <= (cutoff - record.last_active_at).total_seconds() < MAX_ACTIVE_AGE_SECONDS):
+                continue
+            key = (record.source, record.native_id)
+            old = newest_by_native_id.get(key)
+            if old is None or record.last_active_at > old.last_active_at:
+                newest_by_native_id[key] = record
+        records = list(newest_by_native_id.values())
         records.sort(key=lambda record: (-record.last_active_at.timestamp(), record.source, record.native_id))
         # Pi 端也會重新套用這個限制；Mac 端先截斷可避免把不會顯示、
         # 也不會被操作的 session 多送過 tailnet。
@@ -141,8 +289,10 @@ class SessionCollector:
             items.append({
                 "source": record.source,
                 "label": record.label,
+                "project_label": record.project_label,
                 "last_active_at": _iso(record.last_active_at),
                 "open_id": open_id,
+                "activity_state": record.activity_state,
             })
         self._open_sources = current_open_ids
         return {
@@ -164,8 +314,15 @@ class SessionCollector:
             paths = root.rglob("*.jsonl")
             for path in paths:
                 try:
-                    first, tail_stamp = _json_lines(path)
-                    meta = first.get("session_meta", {}) if isinstance(first, dict) else {}
+                    first, tail_stamp, activity_state = _json_lines(path)
+                    meta = {}
+                    if isinstance(first, dict):
+                        if first.get("type") == "session_meta" and isinstance(first.get("payload"), dict):
+                            meta = first["payload"]
+                        elif isinstance(first.get("session_meta"), dict):
+                            meta = first["session_meta"]
+                        else:
+                            meta = first
                     if not isinstance(meta, dict):
                         continue
                     native_id = meta.get("session_id") or meta.get("id")
@@ -173,7 +330,9 @@ class SessionCollector:
                         continue
                     active_at = _best_time(tail_stamp, _mtime(path))
                     if active_at is not None:
-                        records.append(LocalSession("codex", native_id, safe_project_label(meta.get("cwd")), active_at))
+                        title_candidate = meta.get("title") or meta.get("customTitle")
+                        label, project_label = safe_session_labels(title_candidate, meta.get("cwd"), "未命名 Session")
+                        records.append(LocalSession("codex", native_id, label, project_label, active_at, activity_state))
                 except PermissionError:
                     problems.add("permission")
                 except (OSError, UnicodeError, ValueError):
@@ -182,31 +341,67 @@ class SessionCollector:
             problems.add("permission")
         except OSError:
             problems.add("unavailable")
-        return records, [SourceProblem("codex", code) for code in sorted(problems)]
+        details = _codex_thread_details(self.home, (record.native_id for record in records))
+        titled_records: list[LocalSession] = []
+        for record in records:
+            title, cwd = details.get(record.native_id, (None, None))
+            label, project_label = safe_session_labels(
+                title or record.label,
+                cwd or record.project_label,
+                "未命名 Session",
+            )
+            titled_records.append(LocalSession(
+                record.source,
+                record.native_id,
+                label,
+                project_label,
+                record.last_active_at,
+                record.activity_state,
+            ))
+        return titled_records, [SourceProblem("codex", code) for code in sorted(problems)]
 
     def _collect_claude(self) -> tuple[list[LocalSession], list[SourceProblem]]:
         projects = self.home / ".claude" / "projects"
         app_sessions = self.home / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
         if not projects.exists() and not app_sessions.exists():
             return [], [SourceProblem("claude", "unavailable")]
-        found: dict[str, LocalSession] = {}
+        found: dict[str, dict] = {}
         problems: set[str] = set()
 
-        def remember(native_id: object, cwd: object, active_at: datetime | None) -> None:
+        def update_candidate(native_id: object, *, title: object = None, custom_title: object = None,
+                             cwd: object = None, active_at: datetime | None = None, activity_state: str = "unknown") -> None:
             if not isinstance(native_id, str) or not native_id or active_at is None:
                 return
-            candidate = LocalSession("claude", native_id, safe_project_label(cwd), active_at)
-            old = found.get(native_id)
-            if old is None or candidate.last_active_at > old.last_active_at:
-                found[native_id] = candidate
+            entry = found.setdefault(native_id, {
+                "native_id": native_id,
+                "title": None,
+                "custom_title": None,
+                "cwd": None,
+                "active_at": active_at,
+                "activity_state": "unknown",
+            })
+            if title and isinstance(title, str) and title.strip():
+                entry["title"] = title
+            if custom_title and isinstance(custom_title, str) and custom_title.strip():
+                entry["custom_title"] = custom_title
+            if cwd and isinstance(cwd, str) and cwd.strip():
+                entry["cwd"] = cwd
+            if active_at > entry["active_at"]:
+                entry["active_at"] = active_at
+            if activity_state != "unknown":
+                entry["activity_state"] = activity_state
 
         if projects.exists():
             try:
-                for path in projects.glob("*/*.jsonl"):
+                for path in projects.rglob("*.jsonl"):
                     try:
-                        first, tail_stamp = _json_lines(path)
+                        first, tail_stamp, activity_state = _json_lines(path)
                         if isinstance(first, dict):
-                            remember(first.get("sessionId"), first.get("cwd"), _best_time(tail_stamp, _mtime(path)))
+                            sid = first.get("sessionId")
+                            cust_t = first.get("customTitle")
+                            cwd = first.get("cwd")
+                            active_at = _best_time(tail_stamp, _mtime(path))
+                            update_candidate(sid, custom_title=cust_t, cwd=cwd, active_at=active_at, activity_state=activity_state)
                     except PermissionError:
                         problems.add("permission")
                     except (OSError, UnicodeError, ValueError):
@@ -218,12 +413,16 @@ class SessionCollector:
 
         if app_sessions.exists():
             try:
-                for path in app_sessions.glob("*/*/*.json"):
+                for path in app_sessions.rglob("*.json"):
                     try:
                         value = json.loads(path.read_text(encoding="utf-8", errors="replace"))
                         if isinstance(value, dict):
-                            remember(value.get("sessionId"), value.get("cwd"), _best_time(
-                                parse_timestamp(value.get("lastActivityAt")), _mtime(path)))
+                            sid = value.get("sessionId")
+                            title = value.get("title")
+                            cwd = value.get("cwd")
+                            act_state = _classify_event(value)
+                            active_at = _best_time(parse_timestamp(value.get("lastActivityAt")), _mtime(path))
+                            update_candidate(sid, title=title, cwd=cwd, active_at=active_at, activity_state=act_state)
                     except PermissionError:
                         problems.add("permission")
                     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
@@ -232,7 +431,14 @@ class SessionCollector:
                 problems.add("permission")
             except OSError:
                 problems.add("unavailable")
-        return list(found.values()), [SourceProblem("claude", code) for code in sorted(problems)]
+
+        records: list[LocalSession] = []
+        for native_id, info in found.items():
+            chosen_title = info["title"] or info["custom_title"]
+            label, project_label = safe_session_labels(chosen_title, info["cwd"], "未命名 Session")
+            records.append(LocalSession("claude", native_id, label, project_label, info["active_at"], info["activity_state"]))
+
+        return records, [SourceProblem("claude", code) for code in sorted(problems)]
 
 
 class DeskbarClient:
@@ -305,7 +511,7 @@ class WorkSessionsAgent:
                     self.collect_and_push()
                     next_collect = now + interval
                 self.poll_and_focus()
-            except (HTTPError, URLError, OSError, ValueError):
+            except (HTTPError, URLError, HTTPException, OSError, ValueError):
                 # Deliberately no exception interpolation: URLs/session data can be private.
                 print("[work-sessions] Deskbar 暫時無法同步", flush=True)
             time.sleep(poll_interval)
@@ -323,7 +529,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             agent.collect_and_push()
             return 0
         agent.run_forever(interval=max(5.0, args.interval))
-    except (HTTPError, URLError, OSError, ValueError):
+    except (HTTPError, URLError, HTTPException, OSError, ValueError):
         print("[work-sessions] Deskbar 暫時無法同步", flush=True)
         return 1
     return 0

@@ -445,7 +445,9 @@ def register_routes(app: Flask, context: WebContext) -> None:
             "items": [{
                 "source": item.source,
                 "label": item.label,
+                "project_label": item.project_label,
                 "last_active_at": item.last_active_at.isoformat(),
+                "activity_state": item.activity_state,
             } for item in snapshot.active_items(utc_now())],
             "errors": [{"source": error.source, "code": error.code} for error in snapshot.errors],
             "fetched_at": snapshot.fetched_at.isoformat(),

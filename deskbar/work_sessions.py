@@ -15,10 +15,12 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 Source = Literal["codex", "claude"]
+ActivityState = Literal["result", "working", "waiting", "unknown"]
 MAX_ACTIVE_AGE_SECONDS = 30 * 60
 MAX_ACTIVE_SESSIONS = 6
 ACTION_TTL_SECONDS = 60.0
 _SOURCES = frozenset({"codex", "claude"})
+_VALID_ACTIVITY_STATES = frozenset({"result", "working", "waiting", "unknown"})
 _SENSITIVE_KEYS = frozenset({
     "prompt", "response", "lastPrompt", "customTitle", "token", "cookie",
     "cwd", "session_id", "sessionId", "session_uuid", "title",
@@ -55,6 +57,8 @@ class WorkSessionItem:
     label: str
     last_active_at: datetime
     open_id: str
+    activity_state: ActivityState = "unknown"
+    project_label: str = "未命名專案"
 
     def is_active(self, now: datetime, cutoff_seconds: float = MAX_ACTIVE_AGE_SECONDS) -> bool:
         instant = self.last_active_at.astimezone(timezone.utc)
@@ -91,6 +95,12 @@ class WorkSessionSnapshot:
 
     def unread_count(self, now: datetime) -> int:
         return len(self.unread_items(now))
+
+    def unread_result_items(self, now: datetime) -> tuple[WorkSessionItem, ...]:
+        return tuple(item for item in self.unread_items(now) if item.activity_state == "result")
+
+    def unread_result_count(self, now: datetime) -> int:
+        return len(self.unread_result_items(now))
 
     def is_item_unread(self, item: WorkSessionItem, now: datetime) -> bool:
         return item.is_active(now) and (item.source, item.open_id) in self.unseen_keys
@@ -160,6 +170,11 @@ def snapshot_from_payload(payload: object, *, now: datetime | None = None) -> Wo
         source = raw.get("source")
         open_id = raw.get("open_id")
         stamp = parse_timestamp(raw.get("last_active_at"))
+        activity_state = raw.get("activity_state", "unknown")
+        if activity_state is None:
+            activity_state = "unknown"
+        if not isinstance(activity_state, str) or activity_state not in _VALID_ACTIVITY_STATES:
+            raise ValueError("invalid activity_state")
         if source not in _SOURCES:
             raise ValueError("invalid source")
         if not isinstance(open_id, str) or not (12 <= len(open_id) <= 160) or not open_id.isascii() or not open_id.isprintable():
@@ -168,9 +183,21 @@ def snapshot_from_payload(payload: object, *, now: datetime | None = None) -> Wo
             raise ValueError("duplicate open_id")
         if stamp is None:
             raise ValueError("invalid last_active_at")
-        label = safe_project_label(raw.get("label"))
+        raw_label = raw.get("label")
+        if not isinstance(raw_label, str) or not raw_label.strip():
+            raise ValueError("invalid label")
+        cleaned_label = " ".join(raw_label.split()).strip()
+        if "/" in cleaned_label or "\\" in cleaned_label:
+            cleaned_label = cleaned_label.replace("\\", "/").split("/")[-1].strip()
+        label = cleaned_label[:80] or "未命名 Session"
+
+        if "project_label" in raw:
+            project_label = safe_project_label(raw.get("project_label"))
+        else:
+            project_label = safe_project_label(raw.get("label"))
+
         seen_open_ids.add(open_id)
-        parsed_items.append(WorkSessionItem(source, label, stamp, open_id))
+        parsed_items.append(WorkSessionItem(source, label, stamp, open_id, activity_state=activity_state, project_label=project_label))
 
     parsed_errors: list[WorkSessionError] = []
     for raw in raw_errors:

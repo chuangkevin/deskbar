@@ -55,8 +55,13 @@ def test_payload_rejects_sensitive_fields_and_normalizes_path_to_basename():
     with pytest.raises(ValueError, match="sensitive"):
         snapshot_from_payload(unsafe, now=NOW)
 
-    snapshot = snapshot_from_payload(_payload(label="/private/project"), now=NOW)
+    unsafe_title = _payload(title="raw sensitive key in payload")
+    with pytest.raises(ValueError, match="sensitive"):
+        snapshot_from_payload(unsafe_title, now=NOW)
+
+    snapshot = snapshot_from_payload(_payload(label="/private/project", project_label="/private/project"), now=NOW)
     assert snapshot.items[0].label == "project"
+    assert snapshot.items[0].project_label == "project"
 
 
 def test_stale_payload_is_removed_before_store_and_valid_open_id_can_resolve():
@@ -130,3 +135,40 @@ def test_mark_work_sessions_seen_clears_unread_status():
 
     state.mark_work_sessions_seen(now=NOW)
     assert state.snapshot().work_sessions.unread_count(NOW) == 0
+
+
+def test_activity_state_validation_and_backward_compatibility():
+    # Missing activity_state -> defaults to "unknown"
+    snap = snapshot_from_payload(_payload(), now=NOW)
+    assert snap.items[0].activity_state == "unknown"
+
+    # Valid activity_state -> accepted
+    snap_result = snapshot_from_payload(_payload(activity_state="result"), now=NOW)
+    assert snap_result.items[0].activity_state == "result"
+
+    # Invalid activity_state -> raises ValueError
+    with pytest.raises(ValueError, match="invalid activity_state"):
+        snapshot_from_payload(_payload(activity_state="illegal_state"), now=NOW)
+    with pytest.raises(ValueError, match="invalid activity_state"):
+        snapshot_from_payload(_payload(activity_state=[]), now=NOW)
+
+
+def test_unread_result_count_and_items():
+    from deskbar.store import AppState
+    state = AppState()
+    item_res = WorkSessionItem("codex", "proj-a", NOW - timedelta(minutes=10), "open-111111111111", activity_state="result")
+    item_work = WorkSessionItem("claude", "proj-b", NOW - timedelta(minutes=10), "open-222222222222", activity_state="working")
+
+    # Baseline
+    state.set_work_sessions(WorkSessionSnapshot((item_res, item_work)), now=NOW)
+    assert state.snapshot().work_sessions.unread_result_count(NOW) == 0
+
+    # Updates -> trigger unseen
+    item_res_upd = WorkSessionItem("codex", "proj-a", NOW - timedelta(minutes=1), "open-111111111111", activity_state="result")
+    item_work_upd = WorkSessionItem("claude", "proj-b", NOW - timedelta(minutes=1), "open-222222222222", activity_state="working")
+    state.set_work_sessions(WorkSessionSnapshot((item_res_upd, item_work_upd)), now=NOW)
+
+    snap = state.snapshot()
+    assert snap.work_sessions.unread_count(NOW) == 2
+    assert snap.work_sessions.unread_result_count(NOW) == 1
+    assert [item.label for item in snap.work_sessions.unread_result_items(NOW)] == ["proj-a"]

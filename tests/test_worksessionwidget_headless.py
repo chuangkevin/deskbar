@@ -4,7 +4,7 @@ import pygame
 
 from deskbar.config import Settings
 from deskbar.store import Snapshot
-from deskbar.ui import dashboard, worksessionwidget
+from deskbar.ui import dashboard, theme, worksessionwidget
 from deskbar.work_sessions import WorkSessionItem, WorkSessionSnapshot
 
 NOW = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
@@ -115,13 +115,27 @@ def test_render_center_view_shows_unread_badge_and_honest_labels(monkeypatch):
 
     monkeypatch.setattr(worksessionwidget, "_text", spy)
 
-    item1 = WorkSessionItem("codex", "project-0", NOW - timedelta(minutes=1), "opaque-open-id-000000000000")
-    snapshot = WorkSessionSnapshot((item1,), unseen_keys=frozenset({("codex", "opaque-open-id-000000000000")}))
+    item1 = WorkSessionItem("codex", "project-0", NOW - timedelta(minutes=1), "opaque-open-id-000000000000", activity_state="result")
+    item2 = WorkSessionItem("claude", "project-1", NOW - timedelta(minutes=2), "opaque-open-id-000000000001", activity_state="working")
+    snapshot = WorkSessionSnapshot((item1, item2), unseen_keys=frozenset({
+        ("codex", "opaque-open-id-000000000000"),
+        ("claude", "opaque-open-id-000000000001"),
+    }))
     snap = Snapshot([], None, {}, 0, work_sessions=snapshot)
 
     hits = worksessionwidget.render_center_view(surface, snap, settings, tl_area, NOW)
-    assert len(hits) == 1
+    assert len(hits) == 2
+    assert "結果待看" in texts
     assert "有新進度" in texts
-    assert "活動中 · 1分前" in texts
+    assert "✓ 結果已就緒 · 1分前" in texts
+    assert "▶ 執行中 · 2分前" in texts
     assert not any("此對話" in t for t in texts)
     assert not any("%" in t for t in texts)
+
+
+def test_workbench_source_identity_colors_are_codex_sky_blue_and_claude_orange():
+    codex_bg, _ = worksessionwidget._source_chip_colors("codex")
+    claude_bg, _ = worksessionwidget._source_chip_colors("claude")
+    assert codex_bg == theme.C["work_codex"]
+    assert claude_bg == theme.C["work_claude"]
+    assert codex_bg != claude_bg
