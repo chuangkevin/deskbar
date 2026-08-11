@@ -82,8 +82,12 @@ deskbar/
 3. **部署程式碼**：
    ```bash
    cp local.mk.example local.mk   # 改成你的實際 PI/KEY/DEST（不進版控）
-   make deploy                    # rsync 到 Pi ＋ 重啟 systemd 服務
+   make bootstrap                 # 首次 Pi / OS provisioning 用（完整系統 bootstrap ＋ 重啟 Deskbar）
+   make deploy                    # 後續日常更新用（快速 runtime deploy ＋ 重啟 Deskbar）
    ```
+   * **首次 Pi／OS provisioning**：執行 `make bootstrap`（會進行 `apt-get` 系統套件安裝、 capability 設定、`.venv` 建立、pip 相依安裝、Wi-Fi 省電/polkit/journald 設定與看門狗服務啟用，最後重啟 Deskbar）。
+   * **後續日常更新**：執行 `make deploy`（僅進行程式碼同步、更新 Python 相依與 service/watchdog 檔、daemon-reload，不跑 `apt-get` 或系統設定，最後重啟 Deskbar）。
+   * 兩者都會自動重啟 Deskbar。
 4. **GCP 設定**（一次性，約 15 分鐘）：建立專案、啟用 Calendar API、OAuth 同意畫面發布為正式版、建立「電腦版應用程式」OAuth 用戶端，下載 `client_secret.json` 放到 Mac 的 `~/.config/deskbar/`。完整步驟見 [`docs/gcp-setup.md`](docs/gcp-setup.md)。
 5. **加入帳號**（每個要顯示的 Google 帳號跑一次）：
    ```bash
