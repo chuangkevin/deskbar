@@ -141,6 +141,55 @@ def test_train_and_runner_palette_motion_determinism_and_memory() -> None:
         assert 0.05 <= ratio <= 0.45, (kind, ratio)
 
 
+def test_train_quality_contract_depth_texture_and_three_time_periods() -> None:
+    """Verify train scene quality contract: 3 time of day profiles, layer depth/texture, seam-conscious tiling, determinism, and memory <= 48MiB."""
+    surface_night = pygame.Surface((1920, 480))
+    state_night = scenes.new_state()
+    now_night = datetime(2026, 8, 4, 2, tzinfo=ZoneInfo("Asia/Taipei"))
+    scenes.render(surface_night, state_night, now_night, 0.0, enabled=("train",), weather_code=1)
+    night_bytes = pygame.image.tobytes(surface_night.subsurface((402, 8, 1118, 472)), "RGB")
+
+    surface_dawn = pygame.Surface((1920, 480))
+    state_dawn = scenes.new_state()
+    now_dawn = datetime(2026, 8, 4, 5, 0, 30, tzinfo=ZoneInfo("Asia/Taipei"))
+    scenes.render(surface_dawn, state_dawn, now_dawn, 0.0, enabled=("train",), weather_code=1)
+    dawn_bytes = pygame.image.tobytes(surface_dawn.subsurface((402, 8, 1118, 472)), "RGB")
+
+    surface_day = pygame.Surface((1920, 480))
+    state_day = scenes.new_state()
+    now_day = datetime(2026, 8, 4, 12, tzinfo=ZoneInfo("Asia/Taipei"))
+    scenes.render(surface_day, state_day, now_day, 0.0, enabled=("train",), weather_code=1)
+    day_bytes = pygame.image.tobytes(surface_day.subsurface((402, 8, 1118, 472)), "RGB")
+
+    assert _motion_ratio(night_bytes, day_bytes) > 0.10
+    assert _motion_ratio(dawn_bytes, day_bytes) > 0.05
+    assert _motion_ratio(night_bytes, dawn_bytes) > 0.05
+
+    near_img = pygame.image.load(str(ASSET_DIR / "train_near.png"))
+    mid_img = pygame.image.load(str(ASSET_DIR / "train_mid.png"))
+    far_img = pygame.image.load(str(ASSET_DIR / "train_far.png"))
+
+    near_rgb = pygame.surfarray.array3d(near_img)
+    mid_rgb = pygame.surfarray.array3d(mid_img)
+    far_rgb = pygame.surfarray.array3d(far_img)
+
+    assert near_rgb.std() > 25.0
+    assert mid_rgb.std() > 20.0
+    assert far_rgb.std() > 15.0
+
+    for layer in (near_img, mid_img, far_img):
+        surf_start = pygame.Surface((1118, 472), pygame.SRCALPHA)
+        surf_tile = pygame.Surface((1118, 472), pygame.SRCALPHA)
+        scene_train._blit_wrapped(surf_start, layer, 0.0)
+        scene_train._blit_wrapped(surf_tile, layer, float(scene_train.TILE_PERIOD))
+        assert pygame.image.tobytes(surf_start, "RGBA") == pygame.image.tobytes(surf_tile, "RGBA")
+
+    render1, bytes1 = _render("train", 2.5)
+    render2, bytes2 = _render("train", 2.5)
+    assert render1 == render2
+    assert bytes1 == bytes2 <= 48 * 1024 * 1024
+
+
 def test_runner_lighting_and_day_night_render_difference() -> None:
     night = scene_runner._lighting(datetime(2026, 8, 4, 2, tzinfo=ZoneInfo("Asia/Taipei")))
     day = scene_runner._lighting(datetime(2026, 8, 4, 12, tzinfo=ZoneInfo("Asia/Taipei")))

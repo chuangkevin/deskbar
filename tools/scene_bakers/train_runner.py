@@ -52,35 +52,6 @@ def _save(
     pygame.image.save(output, path)
 
 
-def _sky(
-    colors: tuple[tuple[int, int, int], tuple[int, int, int]],
-    seed: int,
-) -> pygame.Surface:
-    """Build a quantized sky with cloud grain instead of a uniform gradient."""
-    width, height = LOW_SIZE
-    y, x = np.mgrid[0:height, 0:width].astype(np.float32)
-    amount = np.clip(y / (height * 0.86), 0.0, 1.0)[..., None]
-    top = np.asarray(colors[0], dtype=np.float32)
-    bottom = np.asarray(colors[1], dtype=np.float32)
-    rgb = top + (bottom - top) * amount
-    cloud = (
-        np.sin(x * 0.018 + np.sin(y * 0.045) * 1.7 + seed) * 0.55
-        + np.sin(x * 0.041 - y * 0.026 + seed * 0.37) * 0.30
-        + np.sin(x * 0.009 + y * 0.019) * 0.15
-    )
-    cloud *= np.exp(-((y - height * 0.47) / (height * 0.26)) ** 2)
-    rgb += cloud[..., None] * np.asarray((5.0, 6.0, 8.0), dtype=np.float32)
-    generator = np.random.default_rng(seed)
-    dither = generator.integers(-2, 3, (height, width, 1))
-    rgb = np.floor((rgb + dither) / 3.0) * 3.0
-    surface = pygame.Surface(LOW_SIZE, pygame.SRCALPHA)
-    pygame.surfarray.blit_array(surface, np.swapaxes(np.clip(rgb, 0, 255).astype(np.uint8), 0, 1))
-    alpha = pygame.surfarray.pixels_alpha(surface)
-    alpha[:, :] = 255
-    del alpha
-    return surface
-
-
 def _textured_disc(
     surface: pygame.Surface,
     center: tuple[int, int],
@@ -110,6 +81,144 @@ def _textured_disc(
     del pixels
 
 
+def _sky_train(
+    name: str,
+    colors: tuple[tuple[int, int, int], tuple[int, int, int]],
+    seed: int,
+) -> pygame.Surface:
+    """Build a rich, atmospheric, non-uniform sky with organic cloud grain and celestial detail."""
+    width, height = LOW_SIZE
+    y, x = np.mgrid[0:height, 0:width].astype(np.float32)
+
+    # Curved non-uniform vertical gradient
+    amount = np.clip((y / (height * 0.88)) ** 1.25, 0.0, 1.0)[..., None]
+    top = np.asarray(colors[0], dtype=np.float32)
+    bottom = np.asarray(colors[1], dtype=np.float32)
+    rgb = top + (bottom - top) * amount
+
+    # Multi-frequency organic cloud grain
+    cloud = (
+        np.sin(x * 0.016 + np.sin(y * 0.042) * 1.8 + seed) * 0.52
+        + np.sin(x * 0.039 - y * 0.024 + seed * 0.35) * 0.32
+        + np.sin(x * 0.008 + y * 0.018) * 0.16
+    )
+    cloud *= np.exp(-((y - height * 0.44) / (height * 0.25)) ** 2)
+
+    tint = {
+        "night": (12.0, 16.0, 30.0),
+        "dawn": (36.0, 18.0, 24.0),
+        "day": (16.0, 22.0, 26.0),
+    }[name]
+    rgb += cloud[..., None] * np.asarray(tint, dtype=np.float32)
+
+    generator = np.random.default_rng(seed)
+    dither = generator.integers(-2, 3, (height, width, 1))
+    rgb = np.floor((rgb + dither) / 3.0) * 3.0
+
+    surface = pygame.Surface(LOW_SIZE, pygame.SRCALPHA)
+    pygame.surfarray.blit_array(surface, np.swapaxes(np.clip(rgb, 0, 255).astype(np.uint8), 0, 1))
+
+    if name == "night":
+        # Stars with color temperature variation & soft diffraction
+        for star in range(65):
+            sx = (star * 103 + 29) % width
+            sy = (star * 47 + 13) % 110
+            shade = 130 + star % 5 * 22
+            star_color = (
+                shade,
+                min(255, shade + 8 + (star % 3) * 6),
+                min(255, shade + 22 + (star % 2) * 15),
+                255,
+            )
+            surface.set_at((sx, sy), star_color)
+            if star % 8 == 0:
+                surface.set_at((sx + 1, sy), (shade // 2, shade // 2 + 10, shade // 2 + 25, 255))
+        # Detailed textured moon with crescent shading and halo
+        _draw_train_moon(surface, (485, 46), 16, seed + 101)
+    elif name == "dawn":
+        # Morning dawn sun veiled behind golden horizon haze
+        _draw_train_sun(surface, (495, 78), 17, (248, 168, 105), seed + 201, is_dawn=True)
+    elif name == "day":
+        # Crisp daylight sun with multi-layered dithered corona halo
+        _draw_train_sun(surface, (478, 44), 16, (254, 245, 185), seed + 301, is_dawn=False)
+
+    alpha = pygame.surfarray.pixels_alpha(surface)
+    alpha[:, :] = 255
+    del alpha
+    return surface
+
+
+def _draw_train_moon(
+    surface: pygame.Surface,
+    center: tuple[int, int],
+    radius: int,
+    seed: int,
+) -> None:
+    """Paint a detailed lunar crescent/gibbous with crater relief and soft halo glow."""
+    cx, cy = center
+    width, height = LOW_SIZE
+    generator = np.random.default_rng(seed)
+
+    # Outer glow halo
+    for r in range(radius + 10, radius, -1):
+        alpha_val = int(25 * (1.0 - (r - radius) / 10.0))
+        glow_surf = pygame.Surface((r * 2 + 2, r * 2 + 2), pygame.SRCALPHA)
+        pygame.draw.circle(glow_surf, (170, 195, 225, alpha_val), (r + 1, r + 1), r)
+        surface.blit(glow_surf, (cx - r - 1, cy - r - 1))
+
+    # Moon surface raster
+    y_grid, x_grid = np.mgrid[0:height, 0:width]
+    dx = x_grid - cx
+    dy = y_grid - cy
+    dist = np.sqrt(dx * dx + dy * dy)
+
+    # Crater & maria relief
+    relief = (
+        np.sin(x_grid * 0.55 + seed) * 2.0
+        + np.sin(y_grid * 0.48 - seed) * 1.6
+        + generator.integers(-2, 3, (height, width))
+    )
+    # Moon disc mask with organic crater edge
+    disc_mask = dist <= radius + relief * 0.15
+
+    # Crescent shadow cutout (dark side of moon)
+    shadow_dx = dx - (radius * 0.45)
+    shadow_dist = np.sqrt(shadow_dx * shadow_dx + dy * dy)
+    lit_mask = disc_mask & (shadow_dist >= radius * 0.72)
+
+    base_color = np.array([215.0, 228.0, 238.0], dtype=np.float32)
+    shade = relief * 4.0 - (dist / radius) * 12.0
+    rgb = np.clip(base_color[None, None, :] + shade[..., None], 120, 255).astype(np.uint8)
+
+    pixels = pygame.surfarray.pixels3d(surface)
+    pixels[lit_mask.T] = rgb.swapaxes(0, 1)[lit_mask.T]
+    del pixels
+
+
+def _draw_train_sun(
+    surface: pygame.Surface,
+    center: tuple[int, int],
+    radius: int,
+    color: tuple[int, int, int],
+    seed: int,
+    is_dawn: bool,
+) -> None:
+    """Paint a warm sun with multi-layered dithered corona halo and textured limb."""
+    cx, cy = center
+    width, height = LOW_SIZE
+
+    # Soft ambient corona halo
+    halo_color = (255, 210, 140) if is_dawn else (252, 235, 175)
+    for r in range(radius + 18, radius, -2):
+        alpha_val = int(22 * (1.0 - (r - radius) / 18.0))
+        glow_surf = pygame.Surface((r * 2 + 2, r * 2 + 2), pygame.SRCALPHA)
+        pygame.draw.circle(glow_surf, (*halo_color, alpha_val), (r + 1, r + 1), r)
+        surface.blit(glow_surf, (cx - r - 1, cy - r - 1))
+
+    # Sun disc with dithered edge relief
+    _textured_disc(surface, center, radius, color, seed)
+
+
 def _periodic_y(x: int, base: float, first: float, second: float) -> int:
     angle = math.tau * (x - 1) / (LOW_SIZE[0] - 2)
     return round(base + math.sin(angle) * first + math.sin(angle * 3.0 + 0.8) * second)
@@ -125,147 +234,309 @@ def _wrapped_x(x: int, margin: int = 0) -> tuple[int, ...]:
 
 
 def _draw_train_horizon(surface: pygame.Surface) -> None:
-    """Build a seam-conscious coast, settlement, and distant rail viaduct."""
+    """Build seam-conscious distant mountain ridges, valley town settlement, and viaduct."""
     width, height = LOW_SIZE
-    ridge = [(x, _periodic_y(x, 127.0, 7.0, 4.0)) for x in range(width)]
-    pygame.draw.polygon(
-        surface,
-        (51, 66, 79, 218),
-        [*ridge, (width - 1, 157), (0, 157)],
-    )
-    for index, x in enumerate((36, 73, 119, 168, 221, 279, 337, 395, 452, 511, 568)):
-        ground = _periodic_y(x, 127.0, 7.0, 4.0)
-        building_height = 8 + index * 7 % 18
-        building_width = 13 + index % 3 * 4
-        pygame.draw.rect(
-            surface,
-            (44 + index % 3 * 4, 55 + index % 2 * 5, 69, 238),
-            (x, ground - building_height, building_width, building_height),
-        )
-        pygame.draw.polygon(
-            surface,
-            (35, 43, 55, 245),
-            ((x - 2, ground - building_height),
-             (x + building_width // 2, ground - building_height - 5),
-             (x + building_width + 2, ground - building_height)),
-        )
-        if index % 2:
-            pygame.draw.rect(
-                surface,
-                (190, 157, 89, 175),
-                (x + 4, ground - building_height + 4, 2, 2),
-            )
+    w_period = width - 2
 
-    pygame.draw.rect(surface, (35, 47, 58, 235), (0, 151, width, height - 151))
-    pygame.draw.line(surface, (92, 111, 116, 165), (0, 153), (width, 153), 1)
-    pygame.draw.line(surface, (29, 39, 48, 245), (0, 160), (width, 160), 3)
-    for index in range(21):
-        x = round(index * (width - 2) / 20)
-        pygame.draw.rect(surface, (43, 53, 60, 235), (x, 157, 3, 12))
-    for x in range(3, width, 47):
-        pygame.draw.line(surface, (106, 128, 128, 90), (x, 176), (x + 21, 176), 1)
+    # 1. Distant Mountain Ridge 1 (Farther, atmospheric deep silhouette)
+    poly_far = [(0, 160)]
+    for x in range(width):
+        ang = math.tau * (x - 1) / w_period
+        y = 112 + round(
+            math.sin(ang) * 15.0
+            + math.sin(ang * 2.0 - 0.4) * 8.0
+            + math.sin(ang * 3.0 + 1.1) * 4.0
+        )
+        poly_far.append((x, y))
+    poly_far.extend([(width - 1, 160), (0, 160)])
+    pygame.draw.polygon(surface, (45, 58, 76, 235), poly_far)
+
+    # Subtle slope shading highlights on ridge 1
+    for x in range(2, width - 2, 8):
+        ang = math.tau * (x - 1) / w_period
+        y1 = 112 + round(
+            math.sin(ang) * 15.0
+            + math.sin(ang * 2.0 - 0.4) * 8.0
+            + math.sin(ang * 3.0 + 1.1) * 4.0
+        )
+        dy = round(math.cos(ang) * 15.0 + 2.0 * math.cos(ang * 2.0 - 0.4) * 8.0)
+        if dy > 0:
+            pygame.draw.line(surface, (58, 72, 92, 140), (x, y1), (x + 4, y1 + 10), 2)
+
+    # 2. Distant Mountain Ridge 2 (Closer, richer silhouette)
+    poly_mid_far = [(0, 160)]
+    for x in range(width):
+        ang = math.tau * (x - 1) / w_period
+        y = 126 + round(
+            math.cos(ang + 0.8) * 11.0
+            + math.sin(ang * 2.0 + 1.5) * 6.0
+            + math.sin(ang * 4.0) * 3.0
+        )
+        poly_mid_far.append((x, y))
+    poly_mid_far.extend([(width - 1, 160), (0, 160)])
+    pygame.draw.polygon(surface, (36, 48, 64, 245), poly_mid_far)
+
+    # 3. Valley Town Settlement (Nestled in low mountain valleys)
+    building_specs = (
+        (42, 11, 14, "house"), (78, 14, 18, "spire"), (122, 10, 12, "house"),
+        (165, 16, 20, "tower"), (215, 9, 11, "house"), (335, 12, 15, "house"),
+        (382, 15, 22, "spire"), (438, 10, 13, "house"), (485, 14, 16, "tower"),
+        (542, 11, 14, "house"), (588, 9, 11, "house")
+    )
+    for base_x, b_width, b_height, b_type in building_specs:
+        for x in _wrapped_x(base_x, b_width):
+            ang = math.tau * (x - 1) / w_period
+            ground_y = 126 + round(
+                math.cos(ang + 0.8) * 11.0
+                + math.sin(ang * 2.0 + 1.5) * 6.0
+                + math.sin(ang * 4.0) * 3.0
+            )
+            b_top = ground_y - b_height
+            pygame.draw.rect(surface, (30, 40, 52, 250), (x, b_top, b_width, b_height))
+            if b_type == "spire":
+                pygame.draw.polygon(
+                    surface,
+                    (24, 32, 42, 255),
+                    ((x - 2, b_top), (x + b_width // 2, b_top - 9), (x + b_width + 2, b_top)),
+                )
+            elif b_type == "tower":
+                pygame.draw.rect(surface, (24, 32, 42, 255), (x - 1, b_top - 3, b_width + 2, 3))
+            else:
+                pygame.draw.polygon(
+                    surface,
+                    (24, 32, 42, 255),
+                    ((x - 2, b_top), (x + b_width // 2, b_top - 5), (x + b_width + 2, b_top)),
+                )
+            pygame.draw.rect(surface, (255, 198, 92, 220), (x + 3, b_top + 4, 2, 3))
+            if b_width > 12:
+                pygame.draw.rect(surface, (255, 198, 92, 220), (x + 8, b_top + 4, 2, 3))
+
+    # 4. Rail Viaduct Bridge in far valley
+    for base_x in (265,):
+        for vx in _wrapped_x(base_x, 50):
+            pygame.draw.rect(surface, (32, 42, 54, 240), (vx, 142, 48, 12))
+            for arch_x in range(vx + 4, vx + 44, 14):
+                pygame.draw.ellipse(surface, (0, 0, 0, 0), (arch_x, 146, 10, 10))
+
+    # 5. Low mist haze along horizon
+    pygame.draw.rect(surface, (140, 165, 185, 45), (0, 150, width, 10))
 
 
 def _draw_train_midground(surface: pygame.Surface) -> None:
-    """Paint periodic waterside fields and trackside vegetation."""
+    """Paint periodic rolling countryside hills, irregular trees, small station, and field mist."""
     width, height = LOW_SIZE
-    bank = [(x, _periodic_y(x, 151.0, 4.0, 2.0)) for x in range(width)]
-    pygame.draw.polygon(surface, (64, 86, 65, 242), [*bank, (width - 1, height), (0, height)])
-    pygame.draw.polygon(
-        surface,
-        (54, 79, 73, 230),
-        ((0, 169), (width, 165), (width, 193), (0, 198)),
-    )
-    pygame.draw.line(surface, (116, 135, 116, 135), (0, 174), (width, 170), 2)
-    pygame.draw.line(surface, (38, 60, 57, 210), (0, 192), (width, 187), 2)
-    pygame.draw.polygon(
-        surface,
-        (58, 77, 50, 245),
-        ((0, 193), (width, 187), (width, height), (0, height)),
-    )
+    w_period = width - 2
 
-    for index, x in enumerate((25, 68, 104, 151, 198, 243, 292, 341, 386, 433, 481, 526, 575)):
-        crown_y = 145 + index * 5 % 10
-        pygame.draw.rect(surface, (39, 58, 45, 225), (x, crown_y + 5, 3, 19))
-        pygame.draw.polygon(
-            surface,
-            (55 + index % 3 * 5, 82 + index % 2 * 7, 54, 225),
-            ((x + 1, crown_y - 7), (x - 8, crown_y + 8),
-             (x - 3, crown_y + 7), (x - 11, crown_y + 16),
-             (x + 12, crown_y + 16), (x + 5, crown_y + 7),
-             (x + 10, crown_y + 8)),
+    # 1. Rolling Countryside Ground Profile
+    poly_ground = [(0, height)]
+    for x in range(width):
+        ang = math.tau * (x - 1) / w_period
+        y = 148 + round(
+            math.sin(ang) * 7.0
+            + math.sin(ang * 2.0 + 0.7) * 4.0
+            + math.cos(ang * 3.0) * 2.0
         )
-    for row, y in enumerate((199, 207, 218, 229)):
-        pygame.draw.line(surface, (89 + row * 5, 98 + row * 4, 58, 210), (0, y), (width, y - 4), 2)
-        for index in range(28):
-            x = round(index * (width - 2) / 27) + row * 5
-            pygame.draw.line(surface, (132, 128, 72, 135), (x, y - 5), (x + 11, y + 8), 1)
+        poly_ground.append((x, y))
+    poly_ground.extend([(width - 1, height), (0, height)])
+    pygame.draw.polygon(surface, (48, 74, 55, 245), poly_ground)
+
+    # Terraced field rows / crop lines along slopes
+    for row in range(5):
+        y_base = 156 + row * 6
+        for x in range(0, width, 18):
+            ang = math.tau * (x - 1) / w_period
+            y_offset = round(math.sin(ang) * 4.0)
+            pygame.draw.line(
+                surface,
+                (68, 98, 75, 160),
+                (x, y_base + y_offset),
+                (x + 12, y_base + y_offset + 3),
+                1,
+            )
+
+    # 2. Irregular Vegetation & Trees (Varied species, canopy shapes, heights)
+    tree_positions = [
+        (18, "oak", 22), (45, "pine", 26), (82, "bush", 12), (115, "oak", 24),
+        (148, "pine", 28), (192, "pine", 22), (240, "oak", 26), (285, "oak", 20),
+        (325, "pine", 27), (368, "bush", 14), (405, "oak", 25), (452, "pine", 29),
+        (495, "oak", 21), (538, "pine", 24), (575, "oak", 23), (602, "bush", 13)
+    ]
+    for base_x, species, t_height in tree_positions:
+        for x in _wrapped_x(base_x, 20):
+            ang = math.tau * (x - 1) / w_period
+            ground_y = 148 + round(
+                math.sin(ang) * 7.0
+                + math.sin(ang * 2.0 + 0.7) * 4.0
+                + math.cos(ang * 3.0) * 2.0
+            )
+            crown_y = ground_y - t_height
+
+            # Trunk
+            pygame.draw.rect(surface, (42, 32, 26, 240), (x - 1, crown_y + 8, 3, t_height - 6))
+
+            if species == "pine":
+                for tier, (t_w, t_h, y_off) in enumerate(((14, 8, 0), (18, 10, 6), (22, 12, 13))):
+                    top_y = crown_y + y_off
+                    pygame.draw.polygon(
+                        surface,
+                        (34 + tier * 4, 62 + tier * 6, 44 + tier * 3, 235),
+                        ((x, top_y), (x - t_w // 2, top_y + t_h), (x + t_w // 2, top_y + t_h)),
+                    )
+                    pygame.draw.line(surface, (65, 105, 75, 200), (x, top_y), (x - 2, top_y + t_h - 2), 1)
+            elif species == "oak":
+                rad = t_height // 2
+                pygame.draw.circle(surface, (36, 56, 42, 235), (x - 3, crown_y + rad), rad - 1)
+                pygame.draw.circle(surface, (36, 56, 42, 235), (x + 4, crown_y + rad + 2), rad - 2)
+                pygame.draw.circle(surface, (48, 78, 54, 240), (x, crown_y + rad - 2), rad)
+                pygame.draw.circle(surface, (68, 104, 72, 220), (x - 2, crown_y + rad - 4), rad - 3)
+            else:
+                pygame.draw.ellipse(surface, (44, 68, 48, 230), (x - 7, ground_y - t_height, 14, t_height))
+
+    # 3. Small Rural Train Station & Farmhouse
+    for base_x in (210,):
+        for sx in _wrapped_x(base_x, 35):
+            ang = math.tau * (sx - 1) / w_period
+            ground_y = 148 + round(
+                math.sin(ang) * 7.0
+                + math.sin(ang * 2.0 + 0.7) * 4.0
+                + math.cos(ang * 3.0) * 2.0
+            )
+            pygame.draw.rect(surface, (54, 44, 36, 245), (sx - 5, ground_y - 4, 38, 5))
+            h_top = ground_y - 20
+            pygame.draw.rect(surface, (46, 38, 32, 250), (sx, h_top, 22, 16))
+            pygame.draw.polygon(
+                surface,
+                (35, 28, 24, 255),
+                ((sx - 3, h_top), (sx + 11, h_top - 7), (sx + 25, h_top)),
+            )
+            pygame.draw.rect(surface, (255, 208, 105, 240), (sx + 4, h_top + 4, 5, 5))
+            pygame.draw.rect(surface, (28, 28, 28, 255), (sx + 30, ground_y - 18, 2, 14))
+            pygame.draw.circle(surface, (255, 225, 140, 230), (sx + 31, ground_y - 18), 3)
+
+    for base_x in (440,):
+        for fx in _wrapped_x(base_x, 25):
+            ang = math.tau * (fx - 1) / w_period
+            ground_y = 148 + round(
+                math.sin(ang) * 7.0
+                + math.sin(ang * 2.0 + 0.7) * 4.0
+                + math.cos(ang * 3.0) * 2.0
+            )
+            f_top = ground_y - 16
+            pygame.draw.rect(surface, (42, 34, 28, 250), (fx, f_top, 18, 13))
+            pygame.draw.polygon(
+                surface,
+                (32, 24, 20, 255),
+                ((fx - 2, f_top), (fx + 9, f_top - 6), (fx + 20, f_top)),
+            )
+            pygame.draw.rect(surface, (255, 195, 85, 220), (fx + 3, f_top + 3, 4, 4))
+            for post_x in range(fx + 22, fx + 42, 5):
+                pygame.draw.rect(surface, (50, 40, 32, 220), (post_x, ground_y - 7, 1, 7))
+            pygame.draw.line(surface, (50, 40, 32, 180), (fx + 20, ground_y - 5), (fx + 42, ground_y - 5), 1)
+
+    # 4. Translucent Low Valley Mist / Haze Strip
+    pygame.draw.rect(surface, (165, 190, 200, 50), (0, 168, width, 12))
 
 
 def _draw_rail_signal(surface: pygame.Surface, x: int) -> None:
+    """Draw detailed railway signal gantry post with active signal lamps."""
     mast = (24, 28, 33, 255)
     pygame.draw.rect(surface, mast, (x, 76, 4, 118))
     pygame.draw.rect(surface, (91, 91, 80, 255), (x + 1, 81, 1, 105))
     pygame.draw.rect(surface, mast, (x - 8, 69, 19, 33))
     pygame.draw.rect(surface, (10, 14, 18, 255), (x - 5, 72, 13, 27))
-    pygame.draw.rect(surface, (87, 49, 38, 255), (x - 2, 75, 6, 6))
-    pygame.draw.rect(surface, (185, 139, 62, 255), (x - 2, 84, 6, 6))
-    pygame.draw.rect(surface, (50, 91, 62, 255), (x - 2, 93, 6, 4))
+    pygame.draw.rect(surface, (235, 65, 45, 255), (x - 2, 74, 6, 6))
+    pygame.draw.rect(surface, (245, 180, 50, 255), (x - 2, 83, 6, 6))
+    pygame.draw.rect(surface, (55, 210, 110, 255), (x - 2, 92, 6, 4))
     pygame.draw.rect(surface, (213, 203, 156, 255), (x - 6, 111, 15, 8))
     pygame.draw.rect(surface, (48, 53, 53, 255), (x - 3, 113, 9, 2))
     pygame.draw.polygon(surface, mast, ((x - 7, 194), (x + 11, 194), (x + 7, 187), (x - 3, 187)))
 
 
 def _draw_train_foreground(surface: pygame.Surface) -> None:
-    """Create a fast adjacent track with railway-specific signals and markers."""
+    """Create a fast adjacent track bed with sleepers, dual steel rails, signals, and catenary poles."""
     width, height = LOW_SIZE
-    pygame.draw.rect(surface, (31, 37, 39, 238), (0, 181, width, height - 181))
-    for y, color in ((187, (78, 78, 68, 215)), (195, (47, 54, 54, 245)),
-                     (211, (64, 60, 52, 255)), (229, (38, 42, 43, 255))):
+
+    # 1. Ballast Gravel Bed Base
+    pygame.draw.rect(surface, (36, 40, 44, 245), (0, 174, width, height - 174))
+    for y, color in (
+        (180, (52, 56, 60, 235)),
+        (192, (44, 48, 52, 245)),
+        (208, (34, 38, 42, 255)),
+        (224, (26, 30, 34, 255)),
+    ):
         pygame.draw.rect(surface, color, (0, y, width, height - y))
-    for index in range(35):
-        x = round(index * (width - 2) / 34)
-        phase = index % 34
+
+    # Dithered gravel stone texture
+    for index in range(140):
+        gx = (index * 73 + 19) % width
+        gy = 178 + (index * 37 + 11) % 55
+        stone_color = (68 + index % 4 * 12, 74 + index % 3 * 10, 80, 220) if index % 2 else (24, 28, 32, 220)
+        surface.set_at((gx, gy), stone_color)
+
+    # 2. Wooden Sleepers / Ties (Regular spacing every 16px)
+    for index in range(40):
+        sx = round(index * (width - 2) / 39)
         pygame.draw.polygon(
             surface,
-            (91 + phase % 3 * 5, 78 + phase % 2 * 6, 61, 255),
-            ((x - 7, 202), (x - 1, 199), (x + 12, 232), (x + 4, 234)),
+            (62 + index % 3 * 4, 48 + index % 2 * 5, 38, 255),
+            ((sx - 7, 202), (sx - 1, 198), (sx + 13, 232), (sx + 5, 234)),
         )
-    pygame.draw.rect(surface, (26, 31, 35, 255), (0, 202, width, 5))
-    pygame.draw.rect(surface, (141, 135, 111, 255), (0, 202, width, 2))
-    pygame.draw.rect(surface, (18, 23, 27, 255), (0, 222, width, 6))
-    pygame.draw.rect(surface, (119, 113, 94, 255), (0, 222, width, 2))
-    pygame.draw.rect(surface, (44, 50, 50, 245), (0, 172, width, 4))
-    pygame.draw.line(surface, (112, 114, 99, 230), (0, 167), (width, 165), 2)
-    for x in range(0, width + 1, 103):
-        pygame.draw.rect(surface, (46, 52, 51, 245), (x, 164, 4, 22))
-        pygame.draw.line(surface, (65, 70, 66, 220), (x + 2, 168), (x + 18, 180), 1)
-    for x in (205,):
-        for candidate in _wrapped_x(x, 14):
+        pygame.draw.rect(surface, (82, 88, 94, 255), (sx - 3, 203, 3, 2))
+        pygame.draw.rect(surface, (82, 88, 94, 255), (sx + 7, 226, 3, 2))
+
+    # 3. Dual Continuous Parallel Steel Rails
+    pygame.draw.rect(surface, (22, 26, 30, 255), (0, 223, width, 6))
+    pygame.draw.rect(surface, (188, 198, 208, 255), (0, 222, width, 2))
+    pygame.draw.rect(surface, (115, 122, 128, 255), (0, 224, width, 1))
+
+    pygame.draw.rect(surface, (26, 30, 34, 255), (0, 203, width, 5))
+    pygame.draw.rect(surface, (175, 185, 195, 255), (0, 202, width, 2))
+    pygame.draw.rect(surface, (102, 108, 114, 255), (0, 204, width, 1))
+
+    pygame.draw.line(surface, (78, 84, 88, 230), (0, 174), (width, 174), 2)
+
+    # 4. Trackside Signal Mast
+    for base_x in (145,):
+        for candidate in _wrapped_x(base_x, 14):
             _draw_rail_signal(surface, candidate)
-    for candidate in _wrapped_x(506, 18):
-        pygame.draw.rect(surface, (37, 43, 44, 255), (candidate, 145, 4, 50))
+
+    # 5. Catenary / Telegraph Poles & Overhead Wires
+    for base_x in (60, 290, 520):
+        for px in _wrapped_x(base_x, 10):
+            pygame.draw.rect(surface, (38, 44, 48, 255), (px, 138, 4, 38))
+            pygame.draw.rect(surface, (48, 54, 58, 255), (px - 8, 142, 20, 3))
+            pygame.draw.rect(surface, (230, 235, 240, 255), (px - 7, 139, 2, 3))
+            pygame.draw.rect(surface, (230, 235, 240, 255), (px + 9, 139, 2, 3))
+
+    pygame.draw.line(surface, (88, 96, 102, 180), (0, 139), (width, 139), 1)
+    pygame.draw.line(surface, (88, 96, 102, 180), (0, 140), (width, 140), 1)
+
+    # 6. Milestone Speed / Kilometer Post
+    for candidate in _wrapped_x(380, 15):
+        pygame.draw.rect(surface, (36, 42, 44, 255), (candidate, 152, 4, 42))
         pygame.draw.polygon(
             surface,
-            (212, 194, 134, 255),
-            ((candidate - 10, 145), (candidate + 14, 145), (candidate + 2, 128)),
+            (225, 218, 185, 255),
+            ((candidate - 8, 152), (candidate + 12, 152), (candidate + 2, 136)),
         )
         pygame.draw.polygon(
             surface,
-            (57, 62, 59, 255),
-            ((candidate - 5, 142), (candidate + 9, 142), (candidate + 2, 132)),
+            (50, 56, 54, 255),
+            ((candidate - 4, 150), (candidate + 8, 150), (candidate + 2, 139)),
         )
 
 
 def _draw_window_reflection(surface: pygame.Surface) -> None:
-    """Frame the landscape from inside a carriage with restrained glass glare."""
+    """Frame the landscape from inside a carriage with dark frame, glass glare, and fine water droplets."""
     width, height = LOW_SIZE
-    frame = (8, 12, 18, 238)
+    frame = (8, 12, 18, 240)
     gasket = (21, 28, 34, 245)
+
     pygame.draw.rect(surface, frame, (0, 0, width, 12))
     pygame.draw.rect(surface, (32, 38, 43, 245), (0, 8, width, 5))
     pygame.draw.rect(surface, frame, (0, height - 19, width, 19))
     pygame.draw.rect(surface, (43, 45, 43, 250), (0, height - 20, width, 5))
+
     pygame.draw.rect(surface, gasket, (31, 0, 11, height))
     pygame.draw.rect(surface, (8, 11, 16, 255), (34, 0, 6, height))
     pygame.draw.rect(surface, (55, 57, 55, 180), (41, 12, 2, height - 31))
@@ -273,58 +544,41 @@ def _draw_window_reflection(surface: pygame.Surface) -> None:
     pygame.draw.rect(surface, (8, 11, 16, 255), (579, 0, 6, height))
     pygame.draw.rect(surface, (55, 57, 55, 180), (575, 12, 2, height - 31))
 
-    pygame.draw.rect(surface, (225, 199, 145, 48), (83, 21, 126, 4))
-    pygame.draw.rect(surface, (243, 222, 176, 24), (88, 26, 116, 2))
-    pygame.draw.rect(surface, (192, 150, 91, 32), (437, 31, 78, 3))
-    pygame.draw.rect(surface, (230, 199, 139, 35), (447, 37, 58, 2))
     pygame.draw.polygon(
         surface,
-        (204, 224, 226, 20),
+        (17, 20, 25, 60),
+        ((84, height - 20), (91, 190), (110, 180), (128, 191), (136, height - 20)),
+    )
+    pygame.draw.rect(surface, (119, 74, 48, 40), (77, 208, 68, 9))
+
+    pygame.draw.rect(surface, (225, 199, 145, 42), (83, 21, 126, 4))
+    pygame.draw.rect(surface, (243, 222, 176, 22), (88, 26, 116, 2))
+    pygame.draw.rect(surface, (192, 150, 91, 30), (437, 31, 78, 3))
+    pygame.draw.rect(surface, (230, 199, 139, 32), (447, 37, 58, 2))
+    pygame.draw.polygon(
+        surface,
+        (204, 224, 226, 18),
         ((118, 12), (132, 12), (238, height - 20), (212, height - 20)),
     )
     pygame.draw.polygon(
         surface,
-        (234, 211, 164, 16),
+        (234, 211, 164, 15),
         ((356, 12), (363, 12), (438, height - 20), (425, height - 20)),
     )
-    pygame.draw.polygon(
-        surface,
-        (17, 20, 25, 66),
-        ((84, height - 20), (91, 190), (110, 180), (128, 191),
-         (136, height - 20)),
-    )
-    pygame.draw.rect(surface, (119, 74, 48, 42), (77, 208, 68, 9))
+
+    for drop in range(28):
+        dx = 45 + (drop * 19 + 11) % (width - 90)
+        dy = 16 + (drop * 13 + 7) % (height - 45)
+        d_len = 2 + drop % 4
+        for step in range(d_len):
+            surface.set_at((dx, dy + step), (220, 240, 255, 95))
+        surface.set_at((dx + 1, dy + d_len - 1), (15, 25, 35, 75))
 
 
 def generate_train_assets(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    discs = {
-        "night": ((484, 48), (189, 205, 213), 701),
-        "dawn": ((500, 91), (232, 159, 92), 702),
-        "day": ((496, 46), (244, 222, 154), 703),
-    }
     for index, (name, colors) in enumerate(TRAIN_SKIES.items()):
-        base = _sky(colors, 100 + index)
-        if name == "night":
-            for star in range(52):
-                x = (star * 103 + 29) % LOW_SIZE[0]
-                y = (star * 47 + 17) % 104
-                shade = 119 + star % 4 * 22
-                base.set_at((x, y), (shade, shade + 7, min(255, shade + 18), 255))
-        cloud_color = {
-            "night": (55, 66, 85, 255),
-            "dawn": (173, 98, 91, 255),
-            "day": (157, 187, 198, 255),
-        }[name]
-        for cloud in range(5):
-            x = 40 + cloud * 127
-            y = 67 + cloud * 19 % 43
-            pygame.draw.rect(base, cloud_color, (x, y, 54 + cloud % 3 * 13, 2))
-            pygame.draw.rect(base, cloud_color, (x + 14, y - 2, 24 + cloud % 2 * 11, 2))
-        center, color, seed = discs[name]
-        _textured_disc(base, center, 17, color, seed)
-        pygame.draw.line(base, (*tuple(max(0, value - 12) for value in color), 90),
-                         (center[0] - 22, center[1] + 21), (center[0] + 19, center[1] + 23), 1)
+        base = _sky_train(name, colors, 100 + index)
         _save(out / f"train_base_{name}.png", base, False, smooth=True)
 
     far = pygame.Surface(LOW_SIZE, pygame.SRCALPHA)
