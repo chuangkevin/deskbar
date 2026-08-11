@@ -33,8 +33,8 @@ polkit.addRule(function(action, subject) {
 });
 PKEOF
 fi
-# 連線看門狗：掉線後 WiFi 常卡殭屍態不重連，每分鐘 gateway 探活、不通就
-# 踢 radio 重連（見 deploy/net-watchdog.sh 檔頭）。
+# 連線看門狗：用 NetworkManager 裝置狀態分 CONNECTED / PROGRESSING / DEAD。
+# 連續 DEAD 才先請 NM 喚醒已知 profile，失敗才踢 radio（見 deploy/net-watchdog.sh 檔頭）。
 sudo install -m 755 deploy/net-watchdog.sh /usr/local/bin/deskbar-net-watchdog.sh
 sudo cp deploy/deskbar-net-watchdog.service deploy/deskbar-net-watchdog.timer /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -52,4 +52,3 @@ sudo systemd-tmpfiles --create --prefix /var/log/journal || true
 sudo systemctl restart systemd-journald || true
 
 echo "install.sh 完成"
-

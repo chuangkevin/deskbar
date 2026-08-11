@@ -1,5 +1,5 @@
 [Unit]
-Description=deskbar 連線看門狗（gateway 不通就踢 WiFi 重連）
+Description=deskbar 連線看門狗（NetworkManager 三態判斷＋分段救援）
 After=network.target
 
 [Service]
