@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > **目前狀態／以此為準 (Ground Truth)**（最後更新：2026-08-11）
-> - **專案基線**：Repo `/Users/kevin/Documents/Projects/deskbar` | 分支 `build/v1` | HEAD `0cbd44b` | 測試 `785 passed` | Pi 可連線且已部署。
+> - **專案基線**：Repo `/Users/kevin/Documents/Projects/deskbar` | 分支 `build/v1` | HEAD `a7a5b94` | 測試 `786 passed` | Pi 可連線且已部署。
 > - **說明**：本頁最上方為最新現況。下方舊章節（如 2026-08-04 的美術重烘交接記錄、舊分支 `cinematic-scene-redesign`、舊工作目錄 `/Users/kevin/Documents/Projects/deskbar-cinematic-worktree` 以及 Pi 離線等描述）**均已過期**，僅保留作為歷史脈絡，不可視為現況。
 
 ## 0. 現狀任務分類與狀態摘要
@@ -18,8 +18,10 @@
 - **全場景審查工具修復與單元測試**：
   - 2026-08-11 修正審查工具 `dawn=05:30` (`0cbd44b`)，全數 785 項測試通過 (`785 passed`)。
   - `flow` 與 `aurora` 現況審查無發現需要重製的明確退化（此為現況評估，非「經 Kevin 核可加入預設」）。
+- **螢火蟲圓形光暈回歸修正**：
+  - `a7a5b94` 已修正 Pi 實機方形光斑：圓形徑向透明裁切＋逐像素亮度快取，並以裁切邊緣／角落透明度測試與 Pi 實機截圖驗證。
 - **Pi 部署**：
-  - 代碼已更新至 HEAD `0cbd44b` 並成功部署至 Pi 實機運行。
+  - 代碼已更新至 HEAD `a7a5b94` 並成功部署至 Pi 實機運行。
 
 ### 待 Kevin 確認 (Pending Kevin Confirmation)
 - **重製場景進預設輪播**：
