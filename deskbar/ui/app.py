@@ -371,15 +371,16 @@ class App:
                     self._last_seq = -1
                     return
                 with self.lock:
-                    if a == "open_settings":
-                        self.view = "settings"
-                    elif a == "open_alarms":
-                        self.view = "alarms"
-                    elif a == "open_wifi":
-                        self.view = "wifi"
-                        self._wifi_rescan()
-                    elif a == "open_screen":
-                        self.view = "screen"
+                    from deskbar.ui.settings_flow import decide_settings_flow
+                    flow = decide_settings_flow(a)
+                    if flow is not None:
+                        self.view = flow.view
+                        if flow.clear_wifi_message:
+                            self.wifi_ui["msg"] = ""
+                        if flow.rescan_wifi:
+                            self._wifi_rescan()
+                        if flow.rescan_bt:
+                            self._bt_rescan()
                     elif a == "toggle_sleep":
                         self.settings.sleep_enabled = not self.settings.sleep_enabled
                         self.on_save(self.settings)
@@ -393,18 +394,12 @@ class App:
                         setattr(self.settings, field,
                                 max(lo, min(hi, cur + delta)))
                         self.on_save(self.settings)
-                    elif a == "open_bt":
-                        self.view = "bt"
-                        self._bt_rescan()
                     elif a == "bt_rescan":
                         self._bt_rescan()
                     elif a == "bt_pick":
                         self._bt_pick(h.data)
                     elif a == "bt_unpair":
                         self._bt_unpair(h.data)
-                    elif a == "wifi_back":
-                        self.view = "settings"
-                        self.wifi_ui["msg"] = ""
                     elif a == "wifi_rescan":
                         self._wifi_rescan()
                     elif a == "wifi_pick":
@@ -442,8 +437,6 @@ class App:
                                                self.wifi_ui.get("selected_security", ""))
                     elif a == "open_detail":
                         self.view, self.detail_event = "detail", h.data
-                    elif a in ("close", "settings_done"):
-                        self.view = "dashboard"
                     elif a == "toggle_alarm":
                         if self.alarm_store is not None:
                             try:
