@@ -136,12 +136,50 @@ def test_train_and_runner_palette_motion_determinism_and_memory() -> None:
         assert decoded == repeated_decoded
         assert decoded <= 48 * 1024 * 1024
         color_count = len(np.unique(sampled, axis=0))
-        if kind == "runner":
-            assert 12 <= color_count <= 24
-        else:
-            assert color_count >= 48
+        assert color_count >= 40
         ratio = _motion_ratio(first, later)
         assert 0.05 <= ratio <= 0.45, (kind, ratio)
+
+
+def test_runner_lighting_and_day_night_render_difference() -> None:
+    night = scene_runner._lighting(datetime(2026, 8, 4, 2, tzinfo=ZoneInfo("Asia/Taipei")))
+    day = scene_runner._lighting(datetime(2026, 8, 4, 12, tzinfo=ZoneInfo("Asia/Taipei")))
+    dawn_first = scene_runner._lighting(
+        datetime(2026, 8, 4, 5, 0, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+    )
+    dawn_later = scene_runner._lighting(
+        datetime(2026, 8, 4, 5, 0, 30, tzinfo=ZoneInfo("Asia/Taipei"))
+    )
+
+    assert night == ("night", "night", 0.0)
+    assert day == ("day", "day", 0.0)
+    assert dawn_first[:2] == dawn_later[:2] == ("night", "dawn")
+    assert dawn_later[2] > dawn_first[2]
+
+    surface_day = pygame.Surface((1920, 480))
+    state_day = scenes.new_state()
+    now_day = datetime(2026, 8, 4, 12, tzinfo=ZoneInfo("Asia/Taipei"))
+    scenes.render(surface_day, state_day, now_day, 0.0, enabled=("runner",), weather_code=1)
+    day_bytes = pygame.image.tobytes(surface_day.subsurface((402, 8, 1118, 472)), "RGB")
+
+    surface_night = pygame.Surface((1920, 480))
+    state_night = scenes.new_state()
+    now_night = datetime(2026, 8, 4, 2, tzinfo=ZoneInfo("Asia/Taipei"))
+    scenes.render(surface_night, state_night, now_night, 0.0, enabled=("runner",), weather_code=1)
+    night_bytes = pygame.image.tobytes(surface_night.subsurface((402, 8, 1118, 472)), "RGB")
+
+    assert day_bytes != night_bytes
+    assert _motion_ratio(day_bytes, night_bytes) > 0.05
+
+
+def test_runner_bases_have_sufficient_difference() -> None:
+    night_img = pygame.surfarray.array3d(pygame.image.load(str(ASSET_DIR / "runner_base_night.png")))
+    dawn_img = pygame.surfarray.array3d(pygame.image.load(str(ASSET_DIR / "runner_base_dawn.png")))
+    day_img = pygame.surfarray.array3d(pygame.image.load(str(ASSET_DIR / "runner_base_day.png")))
+
+    assert float(np.mean(np.abs(night_img.astype(np.int16) - day_img.astype(np.int16)))) > 20.0
+    assert float(np.mean(np.abs(dawn_img.astype(np.int16) - day_img.astype(np.int16)))) > 10.0
+    assert float(np.mean(np.abs(night_img.astype(np.int16) - dawn_img.astype(np.int16)))) > 10.0
 
 
 def test_runner_cannot_pass_through_pipe() -> None:

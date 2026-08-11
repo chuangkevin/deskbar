@@ -344,163 +344,326 @@ def generate_train_assets(out: Path) -> None:
     _save(out / "train_window_reflection.png", reflection, True, smooth=True)
 
 
-def _draw_runner(surface: pygame.Surface, origin: tuple[int, int], step: int) -> None:
-    """Draw a compact, hard-edged 8-bit red-capped platform hero."""
-    x, y = origin
-    standing = (
-        "....RRRRR.......", "...RRRRRRRR.....", "...BBBSSB.......",
-        "..BSSSSSBBB.....", "..BSSSSSSBBB....", "..BBSSSSBBBB....",
-        "....SSSSSS......", "...RRBRRR.......", "..RRRBRRBRRR....",
-        ".RRRRBBBBRRRR...", ".SSRBBOBBBRSS...", ".SSSBBBBBBSSS...",
-        "...BBBBBBBB.....", "...BBB..BBB.....", "..BBB....BBB....",
-        ".DDDD....DDDD...", "DDDDD....DDDDD..",
+RUNNER_SKIES: Final = {
+    "night": ((10, 14, 38), (34, 48, 86)),
+    "dawn": ((52, 28, 64), (220, 110, 68)),
+    "day": ((44, 116, 182), (168, 210, 214)),
+}
+
+
+def _draw_runner_sky(
+    name: str,
+    colors: tuple[tuple[int, int, int], tuple[int, int, int]],
+    seed: int,
+) -> pygame.Surface:
+    """Build a rich, textured, non-uniform quantized sky for valley runner."""
+    width, height = LOW_SIZE
+    y, x = np.mgrid[0:height, 0:width].astype(np.float32)
+
+    # Curved vertical gradient for non-uniform aerial perspective
+    amount = np.clip((y / (height * 0.82)) ** 1.35, 0.0, 1.0)[..., None]
+    top = np.asarray(colors[0], dtype=np.float32)
+    bottom = np.asarray(colors[1], dtype=np.float32)
+    rgb = top + (bottom - top) * amount
+
+    # Quantized cloud formations
+    cloud = (
+        np.sin(x * 0.015 + np.sin(y * 0.04) * 1.8 + seed) * 0.50
+        + np.sin(x * 0.038 - y * 0.022 + seed * 0.4) * 0.32
+        + np.sin(x * 0.008 + y * 0.016) * 0.18
     )
-    running = standing[:-4] + (
-        "....BBBBBBB.....", "..BBBBBB........", ".DDDBBB...DDDD...",
-        "DDDD.....DDDDD..",
+    cloud *= np.exp(-((y - height * 0.42) / (height * 0.24)) ** 2)
+
+    cloud_tint = {
+        "night": (14.0, 18.0, 32.0),
+        "dawn": (35.0, 18.0, 22.0),
+        "day": (18.0, 24.0, 28.0),
+    }[name]
+    rgb += cloud[..., None] * np.asarray(cloud_tint, dtype=np.float32)
+
+    generator = np.random.default_rng(seed)
+    dither = generator.integers(-3, 4, (height, width, 1))
+    rgb = np.floor((rgb + dither) / 4.0) * 4.0
+
+    surface = pygame.Surface(LOW_SIZE, pygame.SRCALPHA)
+    pygame.surfarray.blit_array(surface, np.swapaxes(np.clip(rgb, 0, 255).astype(np.uint8), 0, 1))
+
+    # Add celestial details
+    if name == "night":
+        # Stars
+        for star in range(64):
+            sx = (star * 97 + 19) % width
+            sy = (star * 37 + 11) % 115
+            shade = 140 + star % 5 * 22
+            surface.set_at((sx, sy), (shade, shade + 10, min(255, shade + 35), 255))
+            if star % 7 == 0:
+                surface.set_at((sx + 1, sy), (shade - 30, shade - 20, shade, 255))
+        # Moon
+        _textured_disc(surface, (480, 50), 16, (215, 225, 240), seed + 10)
+    elif name == "dawn":
+        # Morning star / dawn sun halo
+        _textured_disc(surface, (490, 85), 18, (245, 175, 110), seed + 20)
+    elif name == "day":
+        # Daytime sun disc
+        _textured_disc(surface, (470, 44), 16, (252, 238, 170), seed + 30)
+
+    # Base chasm background below y=190
+    chasm_color = {
+        "night": (14, 18, 30, 255),
+        "dawn": (38, 22, 34, 255),
+        "day": (28, 44, 40, 255),
+    }[name]
+    pygame.draw.rect(surface, chasm_color, (0, 186, width, height - 186))
+
+    alpha = pygame.surfarray.pixels_alpha(surface)
+    alpha[:, :] = 255
+    del alpha
+    return surface
+
+
+def _draw_runner_far(surface: pygame.Surface) -> None:
+    """Draw low-contrast distant mountains, cloud bands, and flying birds."""
+    width, _height = LOW_SIZE
+    # Distant mountain ridge 1
+    poly1 = [(0, 190)]
+    for x in range(0, width + 10, 20):
+        y = 115 + round(math.sin(x * 0.012 + 0.5) * 18 + math.sin(x * 0.035) * 8)
+        poly1.append((x, y))
+    poly1.extend([(width, 190), (0, 190)])
+    pygame.draw.polygon(surface, (42, 54, 76, 180), poly1)
+
+    # Distant mountain ridge 2 (closer, slightly darker)
+    poly2 = [(0, 190)]
+    for x in range(0, width + 10, 15):
+        y = 135 + round(math.cos(x * 0.018 + 1.2) * 14 + math.sin(x * 0.04) * 6)
+        poly2.append((x, y))
+    poly2.extend([(width, 190), (0, 190)])
+    pygame.draw.polygon(surface, (34, 44, 64, 210), poly2)
+
+    # Cloud bands / birds
+    for bx, by in ((60, 50), (220, 75), (420, 40), (530, 65)):
+        pygame.draw.ellipse(surface, (180, 195, 215, 70), (bx, by, 70, 8))
+        pygame.draw.ellipse(surface, (200, 215, 230, 50), (bx + 15, by - 3, 40, 6))
+
+    # Flying birds (v-shapes)
+    bird_color = (25, 35, 50, 160)
+    for bx, by in ((140, 65), (152, 60), (166, 68), (380, 55), (392, 51)):
+        pygame.draw.lines(surface, bird_color, False, [(bx, by), (bx + 3, by - 2), (bx + 6, by)], 1)
+
+
+def _draw_runner_mid(surface: pygame.Surface) -> None:
+    """Draw irregular coniferous pine forest, rocky ridges, and light mist."""
+    width, _height = LOW_SIZE
+    # Rocky ridge base
+    ridge = [(0, 190)]
+    for x in range(0, width + 10, 10):
+        y = 152 + round(math.sin(x * 0.025) * 10 + math.sin(x * 0.08) * 4)
+        ridge.append((x, y))
+    ridge.extend([(width, 190), (0, 190)])
+    pygame.draw.polygon(surface, (46, 58, 62, 220), ridge)
+
+    # Coniferous pine trees
+    tree_xs = (12, 38, 65, 95, 130, 175, 210, 245, 285, 320, 360, 400, 445, 485, 525, 570, 605)
+    for index, x in enumerate(tree_xs):
+        tree_h = 24 + (index * 7) % 18
+        tree_y = 190 - tree_h
+        trunk_color = (36, 28, 24, 230)
+        leaf_color1 = (28, 68, 52, 235)
+        leaf_color2 = (44, 92, 68, 235)
+
+        # Trunk
+        pygame.draw.rect(surface, trunk_color, (x - 1, tree_y + tree_h - 8, 3, 8))
+        # Pine tiers
+        tiers = 3
+        for t in range(tiers):
+            ty = tree_y + t * (tree_h // 3)
+            tw = 6 + t * 5
+            c = leaf_color2 if t % 2 == 0 else leaf_color1
+            pygame.draw.polygon(
+                surface, c,
+                [(x, ty), (x - tw, ty + (tree_h // 3) + 2), (x + tw, ty + (tree_h // 3) + 2)]
+            )
+
+    # Mist band
+    pygame.draw.rect(surface, (160, 180, 195, 45), (0, 178, width, 12))
+
+
+def _draw_runner_near(surface: pygame.Surface) -> None:
+    """Draw mossy stone and grass covered repeatable ground (y=190..236)."""
+    width, height = LOW_SIZE
+    ground_y = 190
+
+    # Base ground rock fill
+    pygame.draw.rect(surface, (44, 38, 34, 255), (0, ground_y, width, height - ground_y))
+
+    # Layered stone strata
+    for y in range(ground_y + 4, height, 6):
+        row = (y - ground_y) // 6
+        color = (52 + (row * 3) % 12, 46 + (row * 4) % 10, 40 + (row * 2) % 8, 255)
+        pygame.draw.rect(surface, color, (0, y, width, 5))
+        # Stone block dividers
+        for x in range((row * 17) % 32, width, 32):
+            pygame.draw.line(surface, (28, 24, 22, 255), (x, y), (x, y + 5), 1)
+
+    # Mossy grass top layer (y=190..194)
+    pygame.draw.rect(surface, (48, 118, 54, 255), (0, ground_y, width, 4))
+    pygame.draw.rect(surface, (76, 168, 72, 255), (0, ground_y, width, 2))
+
+    # Grass blades and moss tufts
+    for x in range(0, width):
+        if (x * 13 + 5) % 7 < 3:
+            h = 2 + (x * 11) % 4
+            pygame.draw.line(surface, (88, 186, 78, 255), (x, ground_y), (x, ground_y - h), 1)
+        if (x * 17) % 19 == 0:
+            pygame.draw.rect(surface, (36, 92, 44, 255), (x, ground_y + 3, 3, 3))
+
+
+def _draw_messenger_pose(surface: pygame.Surface, origin: tuple[int, int], step: int) -> None:
+    """Draw original hooded messenger character at origin (2x2 pixel blocks)."""
+    ox, oy = origin
+    pose_0 = (
+        ".....HHHHHH.....",
+        "....HHHHHHHH....",
+        "...HHHGGGGHHH...",
+        "...HHHGGGGHHH...",
+        "....HHHHHHHH....",
+        ".....CCCCCC.....",
+        "CCCCCCCYYCCCCCC.",
+        ".CCCCCCCYYC.TTT.",
+        "..TTTTTTTTTTTTT.",
+        "..TTTTBBTTTT....",
+        "..TTTBBBBTTT....",
+        "...LLLL..LL.....",
+        "..LLLL....LL....",
+        ".LLLL......LL...",
+        ".DDDD......DDD..",
+        "DDDDD.......DDDD",
+        "................",
+        "................",
+    )
+    pose_1 = (
+        ".....HHHHHH.....",
+        "....HHHHHHHH....",
+        "...HHHGGGGHHH...",
+        "...HHHGGGGHHH...",
+        "....HHHHHHHH....",
+        "....CCCCCC......",
+        "CCCCCCCYYCCCC...",
+        "..CCCCCCCYYCTT..",
+        "..TTTTTTTTTTTT..",
+        "..TTTTBBTTTT....",
+        "..TTTBBBBTTT....",
+        "....LL...LLLL...",
+        "...LL.....LLLL..",
+        "..LL.......LLLL.",
+        "..DDD......DDDD.",
+        "DDDD.......DDDDD",
+        "................",
+        "................",
     )
     palette = {
-        "R": (216, 40, 24, 255),
-        "S": (252, 168, 88, 255),
-        "B": (112, 48, 24, 255),
-        "O": (252, 216, 88, 255),
-        "D": (48, 32, 24, 255),
+        "H": (24, 28, 52, 255),    # Hood/Cape (midnight indigo)
+        "G": (96, 232, 220, 255),   # Glowing visor (cyan)
+        "C": (228, 76, 88, 255),   # Scarf (crimson)
+        "Y": (244, 196, 72, 255),   # Scarf trim (gold)
+        "T": (56, 76, 104, 255),   # Tunic (steel blue)
+        "B": (148, 92, 52, 255),   # Leather belt/bag
+        "L": (36, 40, 56, 255),    # Pants/legs
+        "D": (24, 26, 38, 255),    # Boots
     }
-    for row, pixels in enumerate(running if step else standing):
-        for column, pixel in enumerate(pixels):
-            if pixel != ".":
+    grid = pose_1 if step else pose_0
+    for row, line in enumerate(grid):
+        for col, char in enumerate(line):
+            if char in palette:
                 pygame.draw.rect(
                     surface,
-                    palette[pixel],
-                    (x + column * 2, y + row * 2, 2, 2),
+                    palette[char],
+                    (ox + col * 2, oy + row * 2, 2, 2),
                 )
 
 
-def _runner_ground(base: pygame.Surface, name: str, seed: int) -> None:
-    width, height = LOW_SIZE
-    pygame.draw.rect(base, (216, 72, 24, 255), (0, 190, width, height - 190))
+def _draw_runner_obstacles_atlas(surface: pygame.Surface) -> None:
+    """Draw original obstacles: mossy pillars, night beetle, stone & rune blocks."""
+    # 1. Short Pillar at LOW_SIZE (105, 158, 28, 32)
+    px, py, pw, ph = 105, 158, 28, 32
+    pygame.draw.rect(surface, (54, 66, 78, 255), (px, py, pw, ph))
+    pygame.draw.rect(surface, (72, 86, 100, 255), (px + 2, py + 2, pw - 4, ph - 4))
+    pygame.draw.rect(surface, (38, 48, 58, 255), (px, py, pw, 4))  # Cap
+    pygame.draw.rect(surface, (38, 48, 58, 255), (px, py + ph - 4, pw, 4))  # Base
+    # Moss & carved glyph
+    pygame.draw.rect(surface, (52, 124, 66, 255), (px + 2, py + 4, 6, 12))
+    pygame.draw.rect(surface, (96, 212, 192, 255), (px + 12, py + 10, 4, 8))
+    pygame.draw.rect(surface, (96, 212, 192, 255), (px + 10, py + 12, 8, 4))
 
+    # 2. Tall Pillar at LOW_SIZE (324, 150, 28, 40)
+    tpx, tpy, tpw, tph = 324, 150, 28, 40
+    pygame.draw.rect(surface, (54, 66, 78, 255), (tpx, tpy, tpw, tph))
+    pygame.draw.rect(surface, (72, 86, 100, 255), (tpx + 2, tpy + 2, tpw - 4, tph - 4))
+    pygame.draw.rect(surface, (38, 48, 58, 255), (tpx, tpy, tpw, 4))  # Cap
+    pygame.draw.rect(surface, (38, 48, 58, 255), (tpx, tpy + tph - 4, tpw, 4))  # Base
+    # Vines & carved glyph
+    pygame.draw.rect(surface, (44, 110, 58, 255), (tpx + 18, tpy + 6, 8, 20))
+    pygame.draw.rect(surface, (96, 212, 192, 255), (tpx + 8, tpy + 14, 4, 12))
 
-def _draw_block(surface: pygame.Surface, x: int, y: int, question: bool = False) -> None:
-    dark = (48, 24, 16, 255)
-    orange = (232, 80, 24, 255)
-    light = (252, 168, 56, 255)
-    pygame.draw.rect(surface, dark, (x, y, 16, 16))
-    pygame.draw.rect(surface, orange, (x + 2, y + 2, 12, 12))
-    pygame.draw.line(surface, light, (x + 2, y + 2), (x + 13, y + 2), 2)
-    pygame.draw.line(surface, light, (x + 2, y + 2), (x + 2, y + 12), 2)
-    if question:
-        pygame.draw.rect(surface, dark, (x + 6, y + 4, 5, 2))
-        pygame.draw.rect(surface, dark, (x + 10, y + 6, 2, 3))
-        pygame.draw.rect(surface, dark, (x + 7, y + 8, 4, 2))
-        pygame.draw.rect(surface, dark, (x + 7, y + 12, 2, 2))
-    else:
-        pygame.draw.line(surface, dark, (x + 1, y + 8), (x + 14, y + 8), 2)
-        pygame.draw.line(surface, dark, (x + 7, y + 1), (x + 7, y + 8), 2)
+    # 3. Night Beetle at LOW_SIZE (184, 174, 16, 16)
+    bx, by = 184, 174
+    # Beetle body (16x16)
+    pygame.draw.ellipse(surface, (32, 28, 48, 255), (bx + 1, by + 3, 14, 10))
+    pygame.draw.ellipse(surface, (56, 48, 80, 255), (bx + 3, by + 4, 10, 8))
+    # Glowing rune spot on carapace
+    pygame.draw.circle(surface, (160, 88, 220, 255), (bx + 8, by + 7), 3)
+    pygame.draw.circle(surface, (96, 232, 220, 255), (bx + 8, by + 7), 1)
+    # Legs & eyes
+    pygame.draw.line(surface, (20, 18, 30, 255), (bx + 3, by + 12), (bx + 1, by + 15), 1)
+    pygame.draw.line(surface, (20, 18, 30, 255), (bx + 8, by + 12), (bx + 8, by + 15), 1)
+    pygame.draw.line(surface, (20, 18, 30, 255), (bx + 13, by + 12), (bx + 15, by + 15), 1)
+    pygame.draw.rect(surface, (96, 232, 220, 255), (bx + 2, by + 5, 2, 2))
 
+    # 4. Inactive Stone Block ('brick') at LOW_SIZE (235, 142, 16, 16)
+    k1x, k1y = 235, 142
+    pygame.draw.rect(surface, (42, 50, 60, 255), (k1x, k1y, 16, 16))
+    pygame.draw.rect(surface, (68, 80, 94, 255), (k1x + 1, k1y + 1, 14, 14))
+    pygame.draw.rect(surface, (52, 62, 74, 255), (k1x + 3, k1y + 3, 10, 10))
+    pygame.draw.rect(surface, (44, 100, 56, 255), (k1x + 1, k1y + 1, 4, 3))
 
-def _draw_pipe(surface: pygame.Surface, x: int, height: int) -> None:
-    y = 190 - height
-    dark = (24, 72, 16, 255)
-    green = (0, 168, 40, 255)
-    light = (128, 232, 56, 255)
-    pygame.draw.rect(surface, dark, (x + 3, y + 7, 22, height - 7))
-    pygame.draw.rect(surface, green, (x + 6, y + 7, 16, height - 7))
-    pygame.draw.rect(surface, light, (x + 8, y + 7, 4, height - 7))
-    pygame.draw.rect(surface, dark, (x, y, 28, 9))
-    pygame.draw.rect(surface, green, (x + 2, y + 2, 24, 5))
-    pygame.draw.rect(surface, light, (x + 6, y + 2, 5, 5))
-
-
-def _draw_goomba(surface: pygame.Surface, x: int, y: int) -> None:
-    dark = (48, 24, 16, 255)
-    brown = (184, 72, 32, 255)
-    light = (252, 168, 88, 255)
-    pygame.draw.rect(surface, dark, (x + 4, y, 8, 2))
-    pygame.draw.rect(surface, brown, (x + 2, y + 2, 12, 7))
-    pygame.draw.rect(surface, brown, (x, y + 5, 16, 5))
-    pygame.draw.rect(surface, light, (x + 3, y + 6, 3, 4))
-    pygame.draw.rect(surface, light, (x + 10, y + 6, 3, 4))
-    pygame.draw.rect(surface, dark, (x + 4, y + 6, 2, 3))
-    pygame.draw.rect(surface, dark, (x + 10, y + 6, 2, 3))
-    pygame.draw.rect(surface, light, (x + 5, y + 10, 6, 3))
-    pygame.draw.rect(surface, dark, (x + 1, y + 13, 6, 3))
-    pygame.draw.rect(surface, dark, (x + 9, y + 13, 6, 3))
+    # 5. Glowing Rune Block ('question') at LOW_SIZE (251, 142, 16, 16)
+    k2x, k2y = 251, 142
+    pygame.draw.rect(surface, (42, 50, 60, 255), (k2x, k2y, 16, 16))
+    pygame.draw.rect(surface, (68, 80, 94, 255), (k2x + 1, k2y + 1, 14, 14))
+    # Glowing rune symbol
+    pygame.draw.rect(surface, (244, 196, 72, 255), (k2x + 5, k2y + 4, 6, 2))
+    pygame.draw.rect(surface, (244, 196, 72, 255), (k2x + 9, k2y + 6, 2, 4))
+    pygame.draw.rect(surface, (96, 232, 220, 255), (k2x + 5, k2y + 9, 6, 2))
+    pygame.draw.rect(surface, (96, 232, 220, 255), (k2x + 7, k2y + 12, 2, 2))
 
 
 def generate_runner_assets(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     width, height = LOW_SIZE
-    for index, name in enumerate(RUNNER_SKIES):
-        base = pygame.Surface(LOW_SIZE, pygame.SRCALPHA)
-        base.fill((92, 148, 252, 255))
-        _runner_ground(base, name, 910 + index)
+
+    for index, (name, colors) in enumerate(RUNNER_SKIES.items()):
+        base = _draw_runner_sky(name, colors, 910 + index)
         _save(out / f"runner_base_{name}.png", base, False)
 
     far = pygame.Surface(LOW_SIZE, pygame.SRCALPHA)
-    for cloud_x, cloud_y in ((48, 35), (255, 59), (474, 27)):
-        pygame.draw.polygon(far, (48, 32, 24, 255),
-                            ((cloud_x, cloud_y + 13), (cloud_x + 7, cloud_y + 7),
-                             (cloud_x + 14, cloud_y + 7), (cloud_x + 19, cloud_y),
-                             (cloud_x + 27, cloud_y), (cloud_x + 33, cloud_y + 7),
-                             (cloud_x + 42, cloud_y + 7), (cloud_x + 50, cloud_y + 15),
-                             (cloud_x + 46, cloud_y + 19), (cloud_x + 5, cloud_y + 19)))
-        pygame.draw.polygon(far, (252, 252, 252, 255),
-                            ((cloud_x + 3, cloud_y + 13), (cloud_x + 10, cloud_y + 9),
-                             (cloud_x + 17, cloud_y + 10), (cloud_x + 21, cloud_y + 3),
-                             (cloud_x + 27, cloud_y + 3), (cloud_x + 32, cloud_y + 10),
-                             (cloud_x + 40, cloud_y + 10), (cloud_x + 46, cloud_y + 15),
-                             (cloud_x + 43, cloud_y + 17), (cloud_x + 7, cloud_y + 17)))
-        pygame.draw.line(far, (88, 216, 248, 255),
-                         (cloud_x + 10, cloud_y + 15), (cloud_x + 20, cloud_y + 17), 2)
+    _draw_runner_far(far)
     _save(out / "runner_far.png", far, True)
 
     mid = pygame.Surface(LOW_SIZE, pygame.SRCALPHA)
-    for hill_x in (-35, 225, 490):
-        pygame.draw.polygon(mid, (24, 72, 16, 255),
-                            ((hill_x, 190), (hill_x + 22, 169), (hill_x + 37, 151),
-                             (hill_x + 52, 141), (hill_x + 68, 154),
-                             (hill_x + 91, 177), (hill_x + 106, 190)))
-        pygame.draw.polygon(mid, (0, 184, 48, 255),
-                            ((hill_x + 5, 190), (hill_x + 27, 170), (hill_x + 42, 154),
-                             (hill_x + 52, 146), (hill_x + 63, 158),
-                             (hill_x + 85, 180), (hill_x + 96, 190)))
-        pygame.draw.rect(mid, (48, 112, 24, 255), (hill_x + 47, 161, 4, 7))
-        pygame.draw.rect(mid, (48, 112, 24, 255), (hill_x + 68, 174, 4, 7))
-    for bush_x in (94, 374):
-        pygame.draw.rect(mid, (24, 72, 16, 255), (bush_x, 178, 76, 12))
-        pygame.draw.circle(mid, (0, 184, 48, 255), (bush_x + 16, 178), 15)
-        pygame.draw.circle(mid, (0, 184, 48, 255), (bush_x + 38, 171), 20)
-        pygame.draw.circle(mid, (0, 184, 48, 255), (bush_x + 61, 179), 14)
+    _draw_runner_mid(mid)
     _save(out / "runner_mid.png", mid, True)
 
     near = pygame.Surface(LOW_SIZE, pygame.SRCALPHA)
-    for tile_y in range(190, height, 16):
-        offset = -8 if (tile_y // 16) % 2 else 0
-        for tile_x in range(offset, width, 16):
-            pygame.draw.rect(near, (48, 24, 16, 255), (tile_x, tile_y, 16, 16))
-            pygame.draw.rect(near, (232, 80, 24, 255), (tile_x + 2, tile_y + 2, 13, 13))
-            pygame.draw.line(near, (252, 168, 56, 255),
-                             (tile_x + 2, tile_y + 2), (tile_x + 14, tile_y + 2), 2)
-            pygame.draw.line(near, (252, 168, 56, 255),
-                             (tile_x + 2, tile_y + 2), (tile_x + 2, tile_y + 13), 2)
+    _draw_runner_near(near)
     _save(out / "runner_near.png", near, True)
 
     sheet = pygame.Surface(LOW_SIZE, pygame.SRCALPHA)
-    _draw_runner(sheet, (width // 2 - 28, height // 2 - 12), 0)
-    _draw_runner(sheet, (width // 2 + 12, height // 2 - 12), 1)
+    _draw_messenger_pose(sheet, (282, 106), 0)
+    _draw_messenger_pose(sheet, (322, 106), 1)
     _save(out / "runner_sprite_sheet.png", sheet, True)
 
     obstacles = pygame.Surface(LOW_SIZE, pygame.SRCALPHA)
-    for index, x in enumerate(range(105, width, 73)):
-        if index % 3 == 0:
-            _draw_pipe(obstacles, x, 32 + index % 2 * 8)
-        elif index % 3 == 1:
-            _draw_goomba(obstacles, x + 6, 174)
-        else:
-            _draw_block(obstacles, x, 142, question=True)
-            _draw_block(obstacles, x - 16, 142)
-            _draw_block(obstacles, x + 16, 142)
+    _draw_runner_obstacles_atlas(obstacles)
     _save(out / "runner_obstacles.png", obstacles, True)
 
 

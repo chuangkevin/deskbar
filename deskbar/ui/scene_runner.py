@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
+from datetime import datetime
 from pathlib import Path
 from typing import Final
 
 import pygame
 
-from deskbar.ui.scene_assets import SceneAssets
+from deskbar.ui.scene_assets import MasterBlend, SceneAssets
 from deskbar.ui.scene_runtime import SceneFrame
 
 
@@ -249,6 +251,53 @@ def _blit_repeated(panel: pygame.Surface, layer: pygame.Surface, offset: float) 
         left += width
 
 
+def _lighting(now: datetime) -> tuple[str, str, float]:
+    """Follow local time with seasonal twilight curves for valley runner."""
+    day = now.timetuple().tm_yday
+    summer = math.cos(math.tau * (day - 172) / 365.2425)
+    daylight_hours = 12.15 + 1.55 * summer
+    sunrise = 12.0 - daylight_hours / 2.0
+    sunset = 12.0 + daylight_hours / 2.0
+    hour = (
+        now.hour
+        + now.minute / 60.0
+        + now.second / 3600.0
+        + now.microsecond / 3_600_000_000.0
+    )
+
+    def blend(start: float, end: float) -> float:
+        amount = max(0.0, min(1.0, (hour - start) / (end - start)))
+        return amount * amount * (3.0 - 2.0 * amount)
+
+    if sunrise - 1.0 <= hour < sunrise:
+        return "night", "dawn", blend(sunrise - 1.0, sunrise)
+    if sunrise <= hour < sunrise + 1.25:
+        return "dawn", "day", blend(sunrise, sunrise + 1.25)
+    if sunrise + 1.25 <= hour < sunset - 1.25:
+        return "day", "day", 0.0
+    if sunset - 1.25 <= hour < sunset:
+        return "day", "dawn", blend(sunset - 1.25, sunset)
+    if sunset <= hour < sunset + 1.0:
+        return "dawn", "night", blend(sunset, sunset + 1.0)
+    return "night", "night", 0.0
+
+
+NIGHT_GAP: Final = (14, 18, 30)
+DAWN_GAP: Final = (38, 22, 34)
+DAY_GAP: Final = (28, 44, 40)
+
+
+def _gap_color(first: str, second: str, amount: float) -> tuple[int, int, int]:
+    palette = {"night": NIGHT_GAP, "dawn": DAWN_GAP, "day": DAY_GAP}
+    c1 = palette[first]
+    c2 = palette[second]
+    return (
+        round(c1[0] + (c2[0] - c1[0]) * amount),
+        round(c1[1] + (c2[1] - c1[1]) * amount),
+        round(c1[2] + (c2[2] - c1[2]) * amount),
+    )
+
+
 class RunnerRenderer:
     __slots__ = ("_assets", "_frames", "_sprites", "_state")
 
@@ -292,32 +341,49 @@ class RunnerRenderer:
 
     @staticmethod
     def _draw_finish(panel: pygame.Surface, camera: float) -> None:
-        pole_x = round(FINISH_X - camera)
-        pygame.draw.rect(panel, (248, 248, 248), (pole_x, 126, 4, GROUND_Y - 126))
-        pygame.draw.rect(panel, (48, 32, 24), (pole_x - 2, 122, 8, 8))
-        pygame.draw.polygon(panel, (0, 184, 48),
-                            ((pole_x - 34, 138), (pole_x, 138), (pole_x, 166)))
-        castle_x = round(FINISH_X + 170 - camera)
-        pygame.draw.rect(panel, (48, 24, 16), (castle_x, 284, 176, 96))
-        pygame.draw.rect(panel, (232, 80, 24), (castle_x + 8, 292, 160, 88))
-        for tower_x in (castle_x, castle_x + 64, castle_x + 128):
-            pygame.draw.rect(panel, (48, 24, 16), (tower_x, 252, 48, 40))
-            pygame.draw.rect(panel, (232, 80, 24), (tower_x + 8, 260, 32, 32))
-        pygame.draw.rect(panel, (48, 24, 16), (castle_x + 72, 332, 32, 48))
+        """Draw original valley beacon and observatory sanctuary."""
+        beacon_x = round(FINISH_X - camera)
+        # Beacon Pillar (at FINISH_X)
+        pygame.draw.rect(panel, (54, 66, 78), (beacon_x, 140, 10, GROUND_Y - 140))
+        pygame.draw.rect(panel, (72, 86, 100), (beacon_x + 2, 142, 6, GROUND_Y - 142))
+        pygame.draw.rect(panel, (38, 48, 58), (beacon_x - 3, 134, 16, 8))
+        # Glowing beacon orb & light flame
+        pygame.draw.circle(panel, (96, 232, 220), (beacon_x + 5, 126), 7)
+        pygame.draw.circle(panel, (244, 196, 72), (beacon_x + 5, 126), 4)
+        pygame.draw.polygon(panel, (224, 76, 88),
+                            ((beacon_x + 12, 120), (beacon_x + 44, 128), (beacon_x + 12, 136)))
+
+        # Valley Observatory Sanctuary (at FINISH_X + 170)
+        obs_x = round(FINISH_X + 170 - camera)
+        # Main building
+        pygame.draw.rect(panel, (42, 50, 62), (obs_x, 260, 160, 120))
+        pygame.draw.rect(panel, (60, 72, 88), (obs_x + 6, 266, 148, 114))
+        # Observatory Dome
+        pygame.draw.ellipse(panel, (72, 86, 100), (obs_x + 40, 220, 80, 50))
+        pygame.draw.rect(panel, (36, 44, 54), (obs_x + 72, 222, 16, 45))
+        # Lit windows
+        pygame.draw.rect(panel, (244, 196, 72), (obs_x + 24, 290, 24, 36))
+        pygame.draw.rect(panel, (244, 196, 72), (obs_x + 112, 290, 24, 36))
+        pygame.draw.rect(panel, (96, 232, 220), (obs_x + 68, 320, 24, 60))
 
     def render(self, panel: pygame.Surface, frame: SceneFrame) -> None:
         advance_runner(self._state, frame.dt)
         camera = self._camera_x()
-        panel.blit(self._assets.load("runner_base_day"), (BASE_X, 0))
+        first, second, amount = _lighting(frame.now)
+        base = self._assets.blended(
+            MasterBlend(f"runner_base_{first}", f"runner_base_{second}", amount)
+        )
+        panel.blit(base, (BASE_X, 0))
         _blit_repeated(panel, self._assets.load("runner_far"), camera * 0.10)
         _blit_repeated(panel, self._assets.load("runner_mid"), camera * 0.28)
         _blit_repeated(panel, self._assets.load("runner_near"), camera)
 
+        gap_color = _gap_color(first, second, amount)
         for start, end in GAPS:
             left = round(start - camera)
             right = round(end - camera)
             if right > 0 and left < PANEL_WIDTH:
-                panel.fill(SKY, pygame.Rect(left, GROUND_Y, right - left, PANEL_HEIGHT - GROUND_Y))
+                panel.fill(gap_color, pygame.Rect(left, GROUND_Y, right - left, PANEL_HEIGHT - GROUND_Y))
 
         sprites = self._world_sprites()
         for x, height in PIPES:
