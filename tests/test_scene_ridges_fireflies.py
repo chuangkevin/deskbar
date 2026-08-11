@@ -109,3 +109,40 @@ def test_ridges_runtime_has_no_per_frame_smoothscale() -> None:
     source = Path("deskbar/ui/scene_ridges.py").read_text(encoding="utf-8")
     assert "smoothscale" not in source
     assert "BASE_X + offset" not in source
+
+
+def test_fireflies_quality_contract() -> None:
+    # 1. Day vs Night base contrast
+    night_render, decoded = _render("fireflies", NOW.replace(hour=3), 0.0)
+    day_render, _ = _render("fireflies", NOW.replace(hour=12), 0.0)
+    assert _mean_delta(night_render, day_render) >= 15.0
+
+    # 2. Transparent borders on overlays
+    for name in (
+        "fireflies_grass_far",
+        "fireflies_grass_near",
+        "fireflies_haze",
+        "fireflies_glow_0",
+        "fireflies_glow_1",
+    ):
+        surface = pygame.image.load(str(ASSET_DIR / f"{name}.png"))
+        alpha = pygame.surfarray.array_alpha(surface)
+        edges = np.concatenate((alpha[0, :], alpha[-1, :], alpha[:, 0], alpha[:, -1]))
+        assert edges.max() == 0, f"Leaking border alpha in {name}"
+
+    # 3. Glow assets have non-transparent glowing content
+    for name in ("fireflies_glow_0", "fireflies_glow_1"):
+        surface = pygame.image.load(str(ASSET_DIR / f"{name}.png"))
+        alpha = pygame.surfarray.array_alpha(surface)
+        assert alpha.max() >= 200, f"Weak glow core in {name}"
+
+    # 4. 0/5/15 render determinism, visible motion, decoded bytes
+    t0, d0 = _render("fireflies", NOW, 0.0)
+    t0_rep, d0_rep = _render("fireflies", NOW, 0.0)
+    t5, _ = _render("fireflies", NOW, 5.0)
+    t15, _ = _render("fireflies", NOW, 15.0)
+
+    assert t0 == t0_rep
+    assert d0 == d0_rep <= 48 * 1024 * 1024
+    assert _motion_ratio(t0, t5) >= 0.005
+    assert _motion_ratio(t0, t15) >= 0.01
