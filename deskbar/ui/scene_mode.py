@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-CENTER_VIEWS = ("calendar", "linear", "notes", "scene")
+CENTER_VIEWS = ("calendar", "linear", "notes", "sessions", "scene")
 DASHBOARD_VIEW = "dashboard"
 CALENDAR_VIEW = "calendar"
 SCENE_VIEW = "scene"

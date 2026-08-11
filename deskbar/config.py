@@ -91,7 +91,7 @@ class Settings:
     sleep_start_min: int = 60           # 睡眠開始 01:00（分鐘制）
     sleep_end_min: int = 390            # 睡眠結束 06:30
     linear_api_key: str = ""            # Linear 個人 API Key（只存裝置，不進 repo/log）
-    center_view: str = "calendar"       # 中欄顯示：calendar｜linear（待辦）｜notes（便條）
+    center_view: str = "calendar"       # 中欄顯示：calendar｜linear（待辦）｜notes（便條）｜sessions（工作）｜scene（場景）
     scene_mode: str = "auto"            # 場景進入方式：auto（忙閒排程）｜manual｜force
     scenes_enabled: tuple = DEFAULT_SCENES  # 要輪播的場景（網頁勾選）
     usage_sources: tuple[str, ...] = VALID_USAGE_SOURCES  # 右欄要顯示的 AI 用量來源
@@ -202,7 +202,7 @@ def load_settings() -> Settings:
         if not isinstance(linear_api_key, str):
             linear_api_key = ""
         center_view = raw.get("center_view", "calendar")
-        if center_view not in ("calendar", "linear", "notes", "scene"):
+        if center_view not in ("calendar", "linear", "notes", "sessions", "scene"):
             center_view = "calendar"
         scene_mode = raw.get("scene_mode", "auto")
         if scene_mode not in ("auto", "manual", "force"):

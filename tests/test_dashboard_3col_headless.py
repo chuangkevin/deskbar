@@ -192,3 +192,69 @@ def test_gap_between_mid_column_and_usage_column_stays_clean():
     assert not bad, f"中欄／右欄留白區被畫到了：{bad[:10]}"
 
 
+def test_no_sessions_rendered_in_bottom_right_column():
+    from deskbar.work_sessions import WorkSessionItem, WorkSessionSnapshot
+    settings = _settings_with_account()
+    st = _busy_state()
+    item = WorkSessionItem("codex", "project", NOW - timedelta(minutes=1), "opaque-open-id-000000000000")
+    st.set_work_sessions(WorkSessionSnapshot((item,)), now=NOW)
+
+    surf = _surf()
+    hits = dashboard.render(surf, st.snapshot(), settings, NOW)
+
+    right_session_hits = [h for h in hits if h.rect.x >= dashboard.USAGE_X0]
+    assert right_session_hits == []
+
+
+def test_topbar_work_button_rendered_with_active_and_unread_count(monkeypatch):
+    from deskbar.work_sessions import WorkSessionItem, WorkSessionSnapshot
+    settings = _settings_with_account()
+    st = _busy_state()
+
+    item1 = WorkSessionItem("codex", "project-1", NOW - timedelta(minutes=1), "opaque-open-id-000000000001")
+    item2 = WorkSessionItem("claude", "project-2", NOW - timedelta(minutes=2), "opaque-open-id-000000000002")
+
+    # Initial baseline
+    st.set_work_sessions(WorkSessionSnapshot((item1, item2)), now=NOW)
+
+    # 1 item updated -> 1 unread
+    item1_upd = WorkSessionItem("codex", "project-1", NOW - timedelta(seconds=10), "opaque-open-id-000000000001")
+    st.set_work_sessions(WorkSessionSnapshot((item1_upd, item2)), now=NOW)
+
+    texts = []
+    original_chip = dashboard._chip_btn
+    def spy_chip(surface, label, rect, action, hits, size=22):
+        texts.append((label, action, rect))
+        return original_chip(surface, label, rect, action, hits, size=size)
+
+    monkeypatch.setattr(dashboard, "_chip_btn", spy_chip)
+
+    surf = _surf()
+    hits = dashboard.render(surf, st.snapshot(), settings, NOW)
+
+    work_hits = [h for h in hits if h.action == "open_work_sessions"]
+    assert len(work_hits) == 1
+    assert work_hits[0].rect == dashboard.WORK_BTN
+
+    work_text = next(t[0] for t in texts if t[1] == "open_work_sessions")
+    assert work_text == "工作 2 · 1新"
+
+
+def test_center_view_sessions_renders_in_tl_area_preserving_side_columns():
+    from deskbar.work_sessions import WorkSessionItem, WorkSessionSnapshot
+    settings = _settings_with_account()
+    settings.center_view = "sessions"
+    st = _busy_state()
+    item = WorkSessionItem("codex", "project", NOW - timedelta(minutes=1), "opaque-open-id-000000000000")
+    st.set_work_sessions(WorkSessionSnapshot((item,)), now=NOW)
+
+    surf = _surf()
+    hits = dashboard.render(surf, st.snapshot(), settings, NOW)
+
+    session_hits = [h for h in hits if h.action == "enqueue_work_session_action"]
+    assert len(session_hits) == 1
+    for h in session_hits:
+        assert dashboard.TL_X0 <= h.rect.x <= dashboard.TL_X1
+        assert 52 <= h.rect.y <= 420
+
+

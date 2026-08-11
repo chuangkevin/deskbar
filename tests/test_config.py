@@ -195,3 +195,17 @@ def test_presence_source_ble_retained(tmp_path, monkeypatch):
         json.dumps({"presence_source": "ble"}), encoding="utf-8")
     s = config.load_settings()
     assert s.presence_source == "ble"
+
+
+def test_center_view_allows_sessions_and_invalid_falls_back(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"center_view": "sessions"}), encoding="utf-8")
+    s = config.load_settings()
+    assert s.center_view == "sessions"
+    config.save_settings(s)
+    assert config.load_settings().center_view == "sessions"
+
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"center_view": "invalid_view"}), encoding="utf-8")
+    assert config.load_settings().center_view == "calendar"

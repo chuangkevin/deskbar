@@ -138,7 +138,7 @@ make test    # .venv/bin/python -m pytest -q
 
 ## 工作中 sessions（Codex／Claude）
 
-Deskbar 的「工作中 sessions」只顯示最近活動**少於 30 分鐘**的 session，最多保留最新 **6 筆**。1920×480 主畫面會顯示前三筆與總數，點入可看完整六筆。Mac collector 只會送來源、專案資料夾名稱、最後活動時間與一次性開啟碼；不會送 prompt、回覆、對話標題、完整路徑、session ID 或任何憑證。
+Deskbar 的「工作中 sessions」只顯示最近活動**少於 30 分鐘**的 session，最多保留最新 **6 筆**。與行事曆、待辦、便條、場景同為 Dashboard 中欄 Center View，頂列提供永遠可見直達鈕顯示 active 筆數與未查看新進度（如「工作 6 · 2新」）。點擊卡片可排入 opaque action queue 讓 Mac 對應 App 到前景。Mac collector 只會送來源、專案資料夾名稱、最後活動時間與一次性開啟碼；不會送 prompt、回覆、對話標題、完整路徑、session ID 或任何憑證。
 
 先在 Mac 驗證一次推送：
 

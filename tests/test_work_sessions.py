@@ -77,3 +77,56 @@ def test_action_queue_ack_and_ttl_are_one_time():
 
     queue.enqueue(open_id="another-opaque-123", source="claude", now_mono=10.0)
     assert queue.poll(now_mono=10.0 + ACTION_TTL_SECONDS) == []
+
+
+def test_initial_baseline_does_not_mark_old_sessions_as_unread():
+    from deskbar.store import AppState
+    state = AppState()
+    item1 = _item("codex", 5, "open-111111111111")
+    item2 = _item("claude", 10, "open-222222222222")
+
+    state.set_work_sessions(WorkSessionSnapshot((item1, item2)), now=NOW)
+    snap = state.snapshot()
+
+    assert snap.work_sessions.unread_count(NOW) == 0
+    assert snap.work_sessions.unread_items(NOW) == ()
+    assert not snap.work_sessions.is_item_unread(item1, NOW)
+
+
+def test_same_session_update_and_new_session_trigger_unread_attention():
+    from deskbar.store import AppState
+    state = AppState()
+    item1 = _item("codex", 5, "open-111111111111")
+
+    # Initial baseline
+    state.set_work_sessions(WorkSessionSnapshot((item1,)), now=NOW)
+    assert state.snapshot().work_sessions.unread_count(NOW) == 0
+
+    # Same session updated with newer timestamp
+    item1_updated = WorkSessionItem("codex", "deskbar", NOW - timedelta(minutes=1), "open-111111111111")
+    state.set_work_sessions(WorkSessionSnapshot((item1_updated,)), now=NOW)
+    snap = state.snapshot()
+
+    assert snap.work_sessions.unread_count(NOW) == 1
+    assert snap.work_sessions.is_item_unread(item1_updated, NOW)
+
+    # New session arrives
+    item2 = _item("claude", 2, "open-222222222222")
+    state.set_work_sessions(WorkSessionSnapshot((item1_updated, item2)), now=NOW)
+    snap2 = state.snapshot()
+
+    assert snap2.work_sessions.unread_count(NOW) == 2
+
+
+def test_mark_work_sessions_seen_clears_unread_status():
+    from deskbar.store import AppState
+    state = AppState()
+    item1 = _item("codex", 5, "open-111111111111")
+    state.set_work_sessions(WorkSessionSnapshot((item1,)), now=NOW)
+
+    item1_updated = WorkSessionItem("codex", "deskbar", NOW - timedelta(minutes=1), "open-111111111111")
+    state.set_work_sessions(WorkSessionSnapshot((item1_updated,)), now=NOW)
+    assert state.snapshot().work_sessions.unread_count(NOW) == 1
+
+    state.mark_work_sessions_seen(now=NOW)
+    assert state.snapshot().work_sessions.unread_count(NOW) == 0

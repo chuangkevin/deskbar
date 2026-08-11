@@ -69,3 +69,59 @@ def test_dashboard_sessions_are_available_from_notes_center_view():
     hits = dashboard.render(surface, _snap(count=6), settings, NOW,
                             notes_store=EmptyNotes())
     assert any(hit.action == "open_work_sessions" for hit in hits)
+
+
+def test_render_center_view_displays_up_to_six_cards_within_tl_area_and_bounds():
+    from deskbar.layout import Rect
+    surface = pygame.Surface((1920, 480))
+    tl_area = Rect(420, 52, 1100, 368)
+    settings = Settings()
+
+    snap = _snap(count=10)
+    hits = worksessionwidget.render_center_view(surface, snap, settings, tl_area, NOW)
+
+    assert len(hits) == 6
+    for hit in hits:
+        assert hit.action == "enqueue_work_session_action"
+        assert tl_area.x <= hit.rect.x <= tl_area.x + tl_area.w
+        assert tl_area.y <= hit.rect.y <= tl_area.y + tl_area.h
+        assert hit.rect.x + hit.rect.w <= tl_area.x + tl_area.w
+        assert hit.rect.y + hit.rect.h <= tl_area.y + tl_area.h
+
+
+def test_render_center_view_empty_state_for_zero_items():
+    from deskbar.layout import Rect
+    surface = pygame.Surface((1920, 480))
+    tl_area = Rect(420, 52, 1100, 368)
+    settings = Settings()
+
+    snap = _snap(count=0)
+    hits = worksessionwidget.render_center_view(surface, snap, settings, tl_area, NOW)
+
+    assert hits == []
+
+
+def test_render_center_view_shows_unread_badge_and_honest_labels(monkeypatch):
+    from deskbar.layout import Rect
+    surface = pygame.Surface((1920, 480))
+    tl_area = Rect(420, 52, 1100, 368)
+    settings = Settings()
+    texts = []
+    original = worksessionwidget._text
+
+    def spy(*args, **kwargs):
+        texts.append(args[1])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(worksessionwidget, "_text", spy)
+
+    item1 = WorkSessionItem("codex", "project-0", NOW - timedelta(minutes=1), "opaque-open-id-000000000000")
+    snapshot = WorkSessionSnapshot((item1,), unseen_keys=frozenset({("codex", "opaque-open-id-000000000000")}))
+    snap = Snapshot([], None, {}, 0, work_sessions=snapshot)
+
+    hits = worksessionwidget.render_center_view(surface, snap, settings, tl_area, NOW)
+    assert len(hits) == 1
+    assert "有新進度" in texts
+    assert "活動中 · 1分前" in texts
+    assert not any("此對話" in t for t in texts)
+    assert not any("%" in t for t in texts)

@@ -14,6 +14,16 @@ def test_manual_cycle_claims_imminent_wave() -> None:
     assert controller.auto_center_hold is True
 
 
+def test_manual_cycle_order_includes_sessions() -> None:
+    controller = SceneModeController()
+    views = ["calendar"]
+    curr = "calendar"
+    for _ in range(5):
+        curr = controller.manual_cycle(curr).center_view
+        views.append(curr)
+    assert views == ["calendar", "linear", "notes", "sessions", "scene", "calendar"]
+
+
 def test_imminent_focus_switches_and_restores_previous_center() -> None:
     controller = SceneModeController()
 

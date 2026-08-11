@@ -73,6 +73,7 @@ class WorkSessionSnapshot:
     items: tuple[WorkSessionItem, ...] = ()
     errors: tuple[WorkSessionError, ...] = ()
     fetched_at: datetime = field(default_factory=utc_now)
+    unseen_keys: frozenset[tuple[str, str]] = field(default_factory=frozenset)
 
     def active_items(self, now: datetime) -> tuple[WorkSessionItem, ...]:
         active = (item for item in self.items if item.is_active(now))
@@ -83,6 +84,16 @@ class WorkSessionSnapshot:
 
     def item_for_open_id(self, open_id: str, now: datetime) -> WorkSessionItem | None:
         return next((item for item in self.active_items(now) if item.open_id == open_id), None)
+
+    def unread_items(self, now: datetime) -> tuple[WorkSessionItem, ...]:
+        active = self.active_items(now)
+        return tuple(item for item in active if (item.source, item.open_id) in self.unseen_keys)
+
+    def unread_count(self, now: datetime) -> int:
+        return len(self.unread_items(now))
+
+    def is_item_unread(self, item: WorkSessionItem, now: datetime) -> bool:
+        return item.is_active(now) and (item.source, item.open_id) in self.unseen_keys
 
 
 @dataclass(frozen=True)

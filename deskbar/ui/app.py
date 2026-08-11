@@ -474,8 +474,12 @@ class App:
                     elif a == "open_detail":
                         self.view, self.detail_event = "detail", h.data
                     elif a == "open_work_sessions":
-                        self.view = "work_sessions"
-                        self.work_sessions_page = 0
+                        self._start_transition()
+                        if self.view != "dashboard":
+                            self.view = "dashboard"
+                        self.settings.center_view = "sessions"
+                        self.state.mark_work_sessions_seen()
+                        self.on_save(self.settings)
                     elif a == "go_dashboard":
                         self.view = "dashboard"
                     elif a == "work_sessions_page":
@@ -574,6 +578,8 @@ class App:
                         cur = getattr(self.settings, "center_view", "calendar")
                         switch = self.scene_controller.manual_cycle(cur)
                         self.settings.center_view = switch.center_view
+                        if switch.center_view == "sessions":
+                            self.state.mark_work_sessions_seen()
                         if switch.reset_center_pages:
                             self.nav.reset_center_pages()
                         # 使用者手動切換＝接管：取消還原、且這一波迫近期間不再搶焦點

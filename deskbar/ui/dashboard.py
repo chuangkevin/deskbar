@@ -24,7 +24,8 @@ SPAN_LABELS = {"half": "半天", "day": "日", "week": "週", "month": "月"}
 SPAN_BTN = Rect(1290, 2, 110, 48)
 MODE_BTN = Rect(1408, 2, 110, 48)
 CENTER_BTN = Rect(1172, 2, 110, 48)      # 行事曆↔待辦（Linear）切換
-GOTO_NOW_W, GOTO_NOW_H = 110, 40        # 「回到今天」鈕：緊貼寬度鈕左側
+WORK_BTN = Rect(1034, 2, 130, 48)        # 頂列工作 Session 直達鈕
+GOTO_NOW_W, GOTO_NOW_H = 110, 40        # 「回到今天」鈕：緊貼工作直達鈕左側
 TOPBAR_GAP = 16                          # 頂帶固定區塊之間的最小留白
 # 中欄內容的滑動過場區域：x 避開左欄分隔線(400)與右界線(1520)，y 從頂帶以下開始
 # ——過場只滑「內容」，左右欄與頂列按鈕是 chrome，釘死不動（2026-07-30 實機回報）。
@@ -78,9 +79,9 @@ def _layout_topbar(span, anchor_or_now, win_start, win_end,
     """
     # 2026-07-30：CENTER_BTN（中欄切換）固定佔 1172..1282，「回到今天」再往左
     # 一格——首日把它留在 SPAN_BTN 左側，跟切換鈕整顆重疊（實機滑動時回報）。
-    goto_now_rect = (Rect(CENTER_BTN.x - GOTO_NOW_W, 4, GOTO_NOW_W, GOTO_NOW_H)
+    goto_now_rect = (Rect(WORK_BTN.x - GOTO_NOW_W, 4, GOTO_NOW_W, GOTO_NOW_H)
                      if show_goto_now else None)
-    leftmost = goto_now_rect.x if goto_now_rect is not None else CENTER_BTN.x
+    leftmost = goto_now_rect.x if goto_now_rect is not None else WORK_BTN.x
 
     label_text = ""
     label_right_x = leftmost - TOPBAR_GAP
@@ -121,14 +122,19 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     pygame.draw.line(surface, theme.C["panel_line"], (PANEL_W, 0), (PANEL_W, 480))
     pygame.draw.line(surface, theme.C["panel_line"], (TL_X1, 0), (TL_X1, 480))
 
-    # 中欄三態循環：行事曆 → 待辦（Linear）→ 便條。鈕標籤＝「下一個」視圖名；
-    # 非行事曆模式下，行事曆專屬頂帶元素（寬度/模式鈕、窗口標籤、回到今天）
-    # 全部不畫。
+    # 中欄五態循環：行事曆 → 待辦（Linear）→ 便條 → 工作 Sessions → 場景。
+    # 頂列工作 Session 直達鈕永遠顯示於頂帶。
     center = getattr(settings, "center_view", "calendar")
-    next_label = {"calendar": "待辦", "linear": "便條", "notes": "場景",
-                  "scene": "行事曆"}
-    _chip_btn(surface, next_label.get(center, "待辦"), CENTER_BTN,
-              "toggle_center", hits)
+    next_label = {"calendar": "待辦", "linear": "便條", "notes": "工作",
+                  "sessions": "場景", "scene": "行事曆"}
+    active_cnt = len(snap.work_sessions.active_items(now)) if (snap and hasattr(snap, "work_sessions") and snap.work_sessions) else 0
+    unread_cnt = snap.work_sessions.unread_count(now) if (snap and hasattr(snap, "work_sessions") and snap.work_sessions) else 0
+    work_label = f"工作 {active_cnt} · {unread_cnt}新" if unread_cnt > 0 else f"工作 {active_cnt}"
+    if center != "scene":
+        _chip_btn(surface, next_label.get(center, "待辦"), CENTER_BTN,
+                  "toggle_center", hits)
+        _chip_btn(surface, work_label, WORK_BTN, "open_work_sessions", hits, size=20)
+
     if center == "linear":
         from deskbar.ui import linearview
         _text(surface, "待辦事項", 22, theme.C["text2"], TL_X0, 22)
@@ -149,6 +155,14 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                            settings.usage_sources)
         _render_right_lower(surface, snap, now, hits)
         return _finish(surface, snap, settings, now, hits)
+    if center == "sessions":
+        from deskbar.ui import worksessionwidget
+        _text(surface, "工作 Sessions", 22, theme.C["text2"], TL_X0, 22)
+        hits += worksessionwidget.render_center_view(surface, snap, settings, TL_AREA, now)
+        usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
+                           settings.usage_sources)
+        _render_right_lower(surface, snap, now, hits)
+        return _finish(surface, snap, settings, now, hits)
     if center == "scene":
         from deskbar.ui import scenes
         hits += scenes.render(surface, scene_ui if scene_ui is not None
@@ -156,6 +170,10 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                               enabled=getattr(settings, "scenes_enabled", None),
                               weather_code=snap.weather.code
                               if snap.weather else None)
+        # 場景會鋪滿中欄；控制鈕要在場景之後重畫，否則視覺上無法進入工作頁。
+        _chip_btn(surface, next_label.get(center, "待辦"), CENTER_BTN,
+                  "toggle_center", hits)
+        _chip_btn(surface, work_label, WORK_BTN, "open_work_sessions", hits, size=20)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources)
         _render_right_lower(surface, snap, now, hits)
@@ -263,12 +281,8 @@ def _render_right_todo_mini(surface, snap, now) -> None:
 
 
 def _render_right_lower(surface, snap, now, hits, *, todo_fallback: bool = True) -> None:
-    """右欄下半在所有中欄模式都一致：活躍 sessions 優先，其次才是待辦。"""
-    # 1920×480 實體面板容不下待辦 mini 與多列 session；摘要顯示前三筆與總數，
-    # 進入專頁可檢視／操作最多六筆。linear 中欄本身已是待辦牆，無 session 時不重複。
-    if snap.work_sessions.active_items(now):
-        _render_right_work_sessions(surface, snap, now, hits)
-    elif todo_fallback:
+    """右欄下半：顯示待辦摘要。"""
+    if todo_fallback:
         _render_right_todo_mini(surface, snap, now)
 
 

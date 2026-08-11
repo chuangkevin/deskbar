@@ -57,6 +57,8 @@ class AppState:
         self._linear_at: datetime | None = None
         self._work_sessions: WorkSessionSnapshot = WorkSessionSnapshot()
         self._work_sessions_queue: WorkSessionActionQueue = WorkSessionActionQueue()
+        self._work_sessions_baseline: bool = False
+        self._work_sessions_seen: dict[tuple[str, str], datetime] = {}
         self._cached_snapshot: Snapshot | None = None
         self._cached_seq: int | None = None
 
@@ -126,9 +128,44 @@ class AppState:
             self._presence = ps
             self._seq += 1
 
-    def set_work_sessions(self, ws: WorkSessionSnapshot) -> None:
+    def set_work_sessions(self, ws: WorkSessionSnapshot, now: datetime | None = None) -> None:
+        instant = now or utc_now()
         with self._lock:
-            self._work_sessions = ws
+            active = ws.active_items(instant)
+            if not self._work_sessions_baseline:
+                self._work_sessions_baseline = True
+                for item in active:
+                    self._work_sessions_seen[(item.source, item.open_id)] = item.last_active_at
+                unseen = frozenset()
+            else:
+                unseen_set = set()
+                for item in active:
+                    key = (item.source, item.open_id)
+                    seen_at = self._work_sessions_seen.get(key)
+                    if seen_at is None or item.last_active_at > seen_at:
+                        unseen_set.add(key)
+                unseen = frozenset(unseen_set)
+
+            self._work_sessions = WorkSessionSnapshot(
+                items=ws.items,
+                errors=ws.errors,
+                fetched_at=ws.fetched_at,
+                unseen_keys=unseen,
+            )
+            self._seq += 1
+
+    def mark_work_sessions_seen(self, now: datetime | None = None) -> None:
+        instant = now or utc_now()
+        with self._lock:
+            active = self._work_sessions.active_items(instant)
+            for item in active:
+                self._work_sessions_seen[(item.source, item.open_id)] = item.last_active_at
+            self._work_sessions = WorkSessionSnapshot(
+                items=self._work_sessions.items,
+                errors=self._work_sessions.errors,
+                fetched_at=self._work_sessions.fetched_at,
+                unseen_keys=frozenset(),
+            )
             self._seq += 1
 
     def enqueue_work_session_action(self, open_id: str) -> str | None:

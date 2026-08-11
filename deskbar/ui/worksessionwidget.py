@@ -28,6 +28,81 @@ def _text(surface: pygame.Surface, s: str, size: int, color, x: float, y: float,
     return r
 
 
+def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now: datetime) -> list[Hit]:
+    """渲染中欄 Center View 工作 Sessions (最多 6 張 2x3 卡片)。"""
+    hits: list[Hit] = []
+    if snap is None or not hasattr(snap, "work_sessions") or snap.work_sessions is None:
+        active_items = ()
+    else:
+        active_items = snap.work_sessions.active_items(now)
+
+    if not active_items:
+        empty_str = "目前無 30 分鐘內的活動 Session"
+        _text(surface, empty_str, 20, theme.C["muted"],
+              rect.x + rect.w / 2, rect.y + rect.h / 2, anchor="center")
+        return hits
+
+    cols = 3
+    rows = 2
+    gap_x = 16
+    gap_y = 16
+    card_w = (rect.w - (cols - 1) * gap_x) / cols
+    card_h = (rect.h - (rows - 1) * gap_y) / rows
+
+    for idx, item in enumerate(active_items[:6]):
+        c = idx % cols
+        r = idx // cols
+        cx = rect.x + c * (card_w + gap_x)
+        cy = rect.y + r * (card_h + gap_y)
+        card_rect = Rect(cx, cy, card_w, card_h)
+
+        pr = pygame.Rect(round(cx), round(cy), round(card_w), round(card_h))
+        pygame.draw.rect(surface, theme.C["card"], pr, border_radius=10)
+        pygame.draw.rect(surface, theme.C["panel_line"], pr, width=1, border_radius=10)
+
+        source_name = _source_display_name(item.source)
+        src_color = theme.C["now"] if source_name == "Codex" else theme.C["ok"]
+
+        _text(surface, source_name, 16, src_color, cx + 16, cy + 14, bold=True)
+
+        is_unread = snap.work_sessions.is_item_unread(item, now)
+        if is_unread:
+            badge_w, badge_h = 78, 22
+            badge_r = pygame.Rect(round(cx + card_w - 16 - badge_w), round(cy + 12), badge_w, badge_h)
+            pygame.draw.rect(surface, theme.C["now"], badge_r, border_radius=6)
+            _text(surface, "有新進度", 13, theme.C["now_text"], badge_r.centerx, badge_r.centery, anchor="center", bold=True)
+
+        max_label_w = card_w - 32
+        lbl = item.label
+        lbl_img = theme.text_surface(lbl, 20, theme.C["text"], bold=True)
+        if lbl_img.get_width() > max_label_w:
+            while len(lbl) > 2 and theme.text_surface(lbl + "…", 20, theme.C["text"], bold=True).get_width() > max_label_w:
+                lbl = lbl[:-1]
+            lbl += "…"
+        _text(surface, lbl, 20, theme.C["text"], cx + 16, cy + 52, bold=True)
+
+        rel_time = fmt_relative_time(item.last_active_at, now)
+        if rel_time in ("剛才", "1分前", "2分前"):
+            status_text = f"活動中 · {rel_time}"
+        elif rel_time:
+            status_text = f"等待更新 · {rel_time}"
+        else:
+            status_text = "等待更新"
+
+        _text(surface, status_text, 15, theme.C["muted"], cx + 16, cy + card_h - 28)
+
+        btn_w, btn_h = 96, 28
+        btn_r = pygame.Rect(round(cx + card_w - 16 - btn_w), round(cy + card_h - 36), btn_w, btn_h)
+        pygame.draw.rect(surface, theme.C["bg"], btn_r, border_radius=6)
+        pygame.draw.rect(surface, theme.C["panel_line"], btn_r, width=1, border_radius=6)
+        btn_img = theme.text_surface(f"開啟 {source_name}", 13, theme.C["text"])
+        surface.blit(btn_img, btn_img.get_rect(center=btn_r.center))
+
+        hits.append(Hit(card_rect, "enqueue_work_session_action", item.open_id))
+
+    return hits
+
+
 def fmt_relative_time(dt: datetime | None, now: datetime) -> str:
     """計算相對時間字串，如 '剛才', '2分前'。"""
     if dt is None:

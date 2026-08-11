@@ -30,11 +30,11 @@ def test_layout_topbar_maintains_min_gap_for_every_combo():
             for show_label in (False, True):
                 topbar = dashboard._layout_topbar(span, NOW, win_start, win_end,
                                                   show_goto_now, show_label)
-                right_boundary = dashboard.CENTER_BTN.x
+                right_boundary = dashboard.WORK_BTN.x
                 if topbar.goto_now_rect is not None:
                     gn = topbar.goto_now_rect
-                    # 緊貼中欄切換鈕左側：右緣剛好等於其左緣，不留縫也不重疊。
-                    assert gn.x + gn.w == dashboard.CENTER_BTN.x
+                    # 緊貼工作 Sessions 切換鈕左側：右緣剛好等於其左緣，不留縫也不重疊。
+                    assert gn.x + gn.w == dashboard.WORK_BTN.x
                     assert gn.w == dashboard.GOTO_NOW_W
                     right_boundary = gn.x
                 if topbar.label_text:
@@ -42,7 +42,7 @@ def test_layout_topbar_maintains_min_gap_for_every_combo():
                     assert topbar.label_right_x <= right_boundary - dashboard.TOPBAR_GAP
                     right_boundary = topbar.label_right_x - label_w
                 assert topbar.chip_right_x <= right_boundary - dashboard.TOPBAR_GAP
-                assert topbar.chip_right_x < dashboard.CENTER_BTN.x
+                assert topbar.chip_right_x < dashboard.WORK_BTN.x
 
 
 def _allday_settings_and_events(n: int, long_title: bool,
@@ -83,6 +83,6 @@ def test_allday_events_never_produce_topbar_chip_hits():
     # 寬度/模式/回到今天三顆控制鈕。
     topbar_zone_hits = [h for h in hits if h.rect.x >= dashboard.TL_X0 and h.rect.y < 52]
     assert topbar_zone_hits and all(
-        h.action in ("cycle_span", "cycle_view_mode", "goto_now", "toggle_center")
+        h.action in ("cycle_span", "cycle_view_mode", "goto_now", "toggle_center", "open_work_sessions")
         for h in topbar_zone_hits), \
         f"頂欄（x>=TL_X0, y<52）不該再有整日 chip 產生的 hit：{topbar_zone_hits}"
