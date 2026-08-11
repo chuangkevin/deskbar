@@ -9,7 +9,7 @@ from deskbar import transform
 from deskbar.layout import Rect
 from deskbar.ui import Hit
 from deskbar.ui import theme
-from deskbar.ui.transitions import SlideTransition
+from deskbar.ui.navigation import NavigationState
 
 LOGICAL_W, LOGICAL_H = 1920, 480
 DRAG_THRESHOLD = 24                     # px，觸控拖曳判定門檻
@@ -102,7 +102,7 @@ class App:
         self.settings = settings
         self.lock = settings_lock
         self.on_save = on_save          # callable：settings 變更後持久化
-        self.view = "dashboard"         # dashboard | settings | detail | alarms | wifi
+        self.nav = NavigationState(view="dashboard")
         self.detail_event = None
         self.hits: list[Hit] = []
         self._last_seq = -1
@@ -120,8 +120,6 @@ class App:
         self.view_anchor = None         # datetime|None，None=跟隨現在
         self._drag_start = None         # 觸控/滑鼠按下時的邏輯座標 (x, y)
         self._drag_last = None          # 拖曳中累計的最新座標（供未來即時重繪擴充）
-        self._transition = SlideTransition()   # 切換過場：舊/新畫面滑動合成
-        self._transition_start = None   # time.monotonic()，None＝沒在跑過場
         self._last_imminent_check = None  # 迫近行程：上次檢查時間（每秒檢查一次即可）
         self._imminent_active = False     # 迫近行程：本秒是否有迫近中的行程
         self._weather_epoch = time.monotonic()   # 天氣場景時間基準：t＝距開機浮點秒數
@@ -129,7 +127,7 @@ class App:
         self.wifi_ui = wifi_view.new_state()     # Wi-Fi 設定頁狀態（背景執行緒共寫）
         self.bt_ui = bt_view.new_state()         # 藍牙配對頁狀態（背景執行緒共寫）
         self._veil = None                        # 亮度疊黑快取：(size, alpha, surface)
-        self.center_pages = {"linear": 0, "notes": 0}   # 待辦/便條牆目前頁碼（滑動翻頁）
+        # 待辦/便條牆目前頁碼由 NavigationState 管；App.center_pages 保留相容 property。
         self.shot_bridge = shot_bridge  # /api/screenshot 的跨執行緒橋（want/done/data）
         self._pressed_dirty = False     # 按壓高亮畫上去了，放手後要洗掉
         self._wake_until = 0.0          # 熄屏觸摸喚醒的截止時刻（monotonic）
@@ -142,7 +140,6 @@ class App:
         self._band_cache = {}           # (中欄視圖, 頁碼) → 閒置時預畫的帶狀 Surface
         self._band_cache_key = None     # (中欄視圖, snap.seq, 該視圖資料筆數)
         self._idle_since = 0.0          # 相鄰頁預取的連續閒置起點（monotonic）
-        self._transition_cache = None   # 過場期間的「新畫面」快照：只算一次，逐幀純合成
         self._dev = False
         self._dev_rotate = 0
         self._rot_cache = None          # 實機旋轉輸出快取：髒區域局部旋轉的基底
@@ -171,6 +168,55 @@ class App:
         now = datetime.now(ZoneInfo("Asia/Taipei"))
         self.alarm_draft = {"hour": (now.hour + 1) % 24, "minute": 0, "days": set(),
                              "label_idx": 0}
+
+    @property
+    def view(self) -> str:
+        return self.nav.view
+
+    @view.setter
+    def view(self, value: str) -> None:
+        try:
+            self.nav.set_view(value)
+        except ValueError:
+            # Backward compatibility: old tests and diagnostics could assign a
+            # sentinel string directly to app.view. NavigationState.set_view()
+            # remains strict for production route changes.
+            self.nav.view = value
+
+    @property
+    def center_pages(self) -> dict[str, int]:
+        return self.nav.center_pages
+
+    @center_pages.setter
+    def center_pages(self, value: dict[str, int]) -> None:
+        self.nav.center_pages = {
+            "linear": max(0, int(value.get("linear", 0))),
+            "notes": max(0, int(value.get("notes", 0))),
+        }
+
+    @property
+    def _transition(self):
+        return self.nav.transition
+
+    @_transition.setter
+    def _transition(self, value) -> None:
+        self.nav.transition = value
+
+    @property
+    def _transition_start(self):
+        return self.nav.transition_start
+
+    @_transition_start.setter
+    def _transition_start(self, value) -> None:
+        self.nav.transition_start = value
+
+    @property
+    def _transition_cache(self):
+        return self.nav.transition_cache
+
+    @_transition_cache.setter
+    def _transition_cache(self, value) -> None:
+        self.nav.transition_cache = value
 
     def _init_display(self) -> None:
         self._dev = os.environ.get("DESKBAR_DEV") == "1"
@@ -489,7 +535,7 @@ class App:
                         cur = getattr(self.settings, "center_view", "calendar")
                         idx = order.index(cur) if cur in order else 0
                         self.settings.center_view = order[(idx + 1) % len(order)]
-                        self.center_pages = {"linear": 0, "notes": 0}
+                        self.nav.reset_center_pages()
                         # 使用者手動切換＝接管：取消還原、且這一波迫近期間不再搶焦點
                         # （沒 hold 的話 5 秒後又被抓回行事曆——本機測試實測踩到）
                         self._auto_center_prev = None
@@ -658,8 +704,8 @@ class App:
                                              weather_t=self._weather_t(),
                                              notes_store=self.notes_store,
                                              notes_ui=self.notes_ui,
-                                             linear_page=self.center_pages["linear"],
-                                             notes_page=self.center_pages["notes"],
+                                             linear_page=self.nav.center_page("linear"),
+                                             notes_page=self.nav.center_page("notes"),
                                              sedentary=self.sedentary.hint_active(
                                                  time.monotonic()))
                 if self.view == "detail" and self.detail_event is not None:
@@ -681,8 +727,7 @@ class App:
             from deskbar.ui import notesview
             total = notesview.page_count(
                 len(self.notes_store.list()) if self.notes_store else 0)
-        cur = self.center_pages.get(center, 0)
-        self.center_pages[center] = max(0, min(total - 1, cur + delta))
+        self.nav.flip_center_page(center, delta, total)
 
     def _wifi_rescan(self) -> None:
         """背景掃描：nmcli 最長可跑 20 秒，不能擋 render loop。單寫者模式：
@@ -816,7 +861,7 @@ class App:
     def _scene_active(self) -> bool:
         """中欄正在跑氛圍場景（需要中欄也吃氛圍幀）。過場中不算——過場自己
         全量重繪。"""
-        return (self.view == "dashboard" and self._transition_start is None
+        return (self.view == "dashboard" and not self.nav.transition_active()
                 and getattr(self.settings, "center_view", "") == "scene")
 
     def _check_flow_center(self, mono: float) -> None:
@@ -839,7 +884,7 @@ class App:
             if getattr(self.settings, "center_view", "calendar") == target:
                 return
             self.settings.center_view = target
-            self.center_pages = {"linear": 0, "notes": 0}
+            self.nav.reset_center_pages()
         self._start_transition()
         self._last_seq = -1
 
@@ -918,12 +963,10 @@ class App:
         """
         logical = getattr(self, "logical", None)
         if logical is not None:
-            import time
             from deskbar.ui.dashboard import CENTER_SLIDE_AREA
             self._restore_pet_background()
-            self._transition.start(logical, direction, area=CENTER_SLIDE_AREA)
-            self._transition_start = time.monotonic()
-            self._transition_cache = None   # 新過場：上一場的「新畫面」快照作廢
+            self.nav.start_transition(
+                logical, direction, CENTER_SLIDE_AREA, time.monotonic())
 
     def _render_transition_frame(self, now) -> None:
         """切換過場的其中一幀。「新畫面」只在過場第一幀真正渲染一次、存成快照，
@@ -931,17 +974,17 @@ class App:
         0.2s 的動畫實跑 0.6s 還在抖（「卡頓感」元凶之二）。過場僅 0.2s，期間
         時鐘/天氣凍結無感。超過 DURATION 後過場結束、丟快照。"""
         import time
-        first = self._transition_cache is None
+        first = self.nav.transition_cache is None
         if first:
             snap = self.state.snapshot()
             self._draw_frame(snap, now, include_pet=False)
-            self._transition_cache = (self.logical.copy(), snap.seq, now.minute,
-                                      now.strftime("%H:%M"))
+            self.nav.transition_cache = (
+                self.logical.copy(), snap.seq, now.minute, now.strftime("%H:%M"))
         else:
             self._pet_bg = None
-            self.logical.blit(self._transition_cache[0], (0, 0))
-        elapsed = time.monotonic() - self._transition_start
-        composed = self._transition.frame(self.logical, elapsed)
+            self.logical.blit(self.nav.transition_cache[0], (0, 0))
+        elapsed = self.nav.transition_elapsed(time.monotonic())
+        composed = self.nav.transition.frame(self.logical, elapsed)
         if composed is not self.logical:
             self.logical.blit(composed, (0, 0))
         pet_rect = self._draw_pet_overlay(now)
@@ -951,10 +994,9 @@ class App:
             (int(A.x), int(A.y), int(A.w), int(A.h)), pet_rect)
         self._flip(dirty)
         _frame, self._last_seq, self._last_minute, self._last_clock_text = \
-            self._transition_cache
-        if not self._transition.active():
-            self._transition_start = None
-            self._transition_cache = None
+            self.nav.transition_cache
+        if not self.nav.transition.active():
+            self.nav.clear_transition()
 
     def _handle_touch_up(self, x: int, y: int) -> None:
         """FINGERUP／MOUSEBUTTONUP 共用：判斷是點擊還是時間軸平移拖曳。"""
@@ -1091,7 +1133,7 @@ class App:
         滑出範圍的邊緣先留底色，放手時 _pan_view 提交錨點、全量重繪補上。
         只在 dashboard 行事曆中欄生效。"""
         if (self.view != "dashboard" or self._drag_start is None
-                or self._drag_last is None or self._transition_start is not None
+                or self._drag_last is None or self.nav.transition_active()
                 or self.firing or self.card_overlay is not None):
             return
         if getattr(self.settings, "center_view", "calendar") != "calendar":
@@ -1212,7 +1254,7 @@ class App:
                 or self._drag_start is not None
                 or self._page_drag is not None
                 or self._page_settle is not None
-                or self._transition_start is not None
+                or self.nav.transition_active()
                 or self.firing
                 or self.card_overlay is not None):
             return False
@@ -1284,7 +1326,7 @@ class App:
         待辦／便條牆視圖生效。
         """
         if (self.view != "dashboard" or self._drag_start is None
-                or self._drag_last is None or self._transition_start is not None
+                or self._drag_last is None or self.nav.transition_active()
                 or self.firing or self.card_overlay is not None
                 or getattr(self, "logical", None) is None):
             return
@@ -1440,7 +1482,7 @@ class App:
         切回行事曆（會看到迫近脈動卡）；行程開始 5 分鐘後或沒有迫近行程了，切回
         使用者原本的視圖。使用者中途手動切換（toggle_center）即接管、本輪取消。
         這是「智慧儀表板」跟「三個切著看的 app」的分水嶺。"""
-        if self.view != "dashboard" or self._transition_start is not None:
+        if self.view != "dashboard" or self.nav.transition_active():
             return
         soon = False
         for e in snap.events:
@@ -1650,7 +1692,7 @@ class App:
                 self._render()          # 閃爍需每圈重繪
                 clock.tick(10)
                 return running
-        if self._transition_start is not None:    # 切換過場優先於翻牌動畫（兩者不會同時發生）
+        if self.nav.transition_active():    # 切換過場優先於翻牌動畫（兩者不會同時發生）
             self._render_transition_frame(now)
             clock.tick(30)
             return running
