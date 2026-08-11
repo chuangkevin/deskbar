@@ -4,6 +4,7 @@ import threading
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from flask import Flask, Response, jsonify, request
@@ -18,6 +19,17 @@ _USAGE_TZ = ZoneInfo("Asia/Taipei")
 _PCT_FIELDS = ("session_pct", "weekly_pct", "fable_pct", "ag_5h_pct", "ag_weekly_pct", "oa_weekly_pct")
 _RESETS_FIELDS = ("session_resets_at", "weekly_resets_at", "fable_resets_at", "ag_5h_resets_at", "ag_weekly_resets_at", "oa_weekly_resets_at")
 _USAGE_FETCHED_FIELDS = ("fetched_at", "claude_fetched_at", "ag_fetched_at", "oa_fetched_at")
+_UNSAFE_METHODS = {"POST", "PATCH", "DELETE", "PUT"}
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "connect-src 'self' https://geocoding-api.open-meteo.com; "
+    "img-src 'self' data:; "
+    "base-uri 'none'; "
+    "frame-ancestors 'none'; "
+    "form-action 'self'"
+)
 
 
 def _valid_pct(v) -> bool:
@@ -50,6 +62,23 @@ def _to_float(v):
     return None if v is None else float(v)
 
 
+def _origin_host(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return ""
+    return parsed.netloc.lower()
+
+
+def _same_origin(value: str | None, host: str) -> bool:
+    origin_host = _origin_host(value)
+    if origin_host is None:
+        return True
+    return origin_host == host.lower()
+
+
 # 手機網頁可調的裝置偏好（2026-07-27 需求：「那些設定也應該要可以在手機
 # 設定頁調整」）。theme 刻意不開放——theme.set_theme 會清渲染快取，只能由
 # UI 執行緒自己做，webserver 執行緒碰了會跟 render 撞快取。
@@ -78,6 +107,34 @@ def create_app(store, settings_provider=None, settings_lock=None, on_save=None,
     app = Flask("deskbar")
     web_dir = Path(__file__).parent / "web"
     shot_lock = threading.Lock()      # /api/screenshot 一次一位（橋只有一組欄位）
+
+    @app.before_request
+    def _reject_cross_site_unsafe_requests():
+        """Keep the no-login tailnet workflow, but block browser CSRF.
+
+        Same-origin mobile settings requests pass. Script/Shortcut/curl pushes
+        usually have no Origin/Referer and continue to work. A random external
+        web page loaded in the user's browser cannot POST/PATCH/DELETE deskbar
+        state through the browser anymore.
+        """
+        if request.method not in _UNSAFE_METHODS:
+            return None
+        origin = request.headers.get("Origin")
+        referer = request.headers.get("Referer")
+        host = request.host
+        if not _same_origin(origin, host):
+            return jsonify({"error": "cross-site request blocked"}), 403
+        if origin is None and not _same_origin(referer, host):
+            return jsonify({"error": "cross-site request blocked"}), 403
+        return None
+
+    @app.after_request
+    def _security_headers(resp):
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("Referrer-Policy", "same-origin")
+        resp.headers.setdefault("Content-Security-Policy", _CSP)
+        return resp
 
     def _calendars_available() -> bool:
         return settings_provider is not None and settings_lock is not None \
