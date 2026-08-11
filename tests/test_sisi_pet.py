@@ -36,12 +36,28 @@ def test_sisi_pet_prepares_only_valid_nontransparent_frames() -> None:
     sprites = pet._sprite_frames()
     assert {name: len(frames) for name, frames in sprites.items()} == FRAME_COUNTS
     assert "failed" not in sprites
+    assert len(sprites["sleeping"]) == 8
     assert all(
         pygame.surfarray.array_alpha(sprite).max() > 0
         for frames in sprites.values()
         for sprite in frames
     )
     assert pet.decoded_bytes <= 24 * 1024 * 1024
+    pet.close()
+
+
+def test_sisi_pet_sleeping_sprite_uses_dedicated_rest_row() -> None:
+    pet = SisiPet(Settings())
+    normal = pet.current_sprite()
+    sleeping = pet.current_sprite(sleeping=True)
+    assert sleeping.get_size() == PET_SIZE
+    assert pygame.surfarray.array_alpha(sleeping).max() > 0
+    assert pygame.image.tobytes(sleeping, "RGBA") != pygame.image.tobytes(normal, "RGBA")
+
+    x0 = pet.state.x
+    pet.advance(0.0, sleeping=True)
+    pet.advance(10.0, sleeping=True)
+    assert pet.state.x == x0, "睡覺時只能呼吸/眨眼，不應該在黑屏裡亂跑"
     pet.close()
 
 

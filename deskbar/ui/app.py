@@ -302,7 +302,7 @@ class App:
             "rot_base": self._map_rot(r, angle),
         }
 
-    def _flip(self, dirty=None) -> None:
+    def _flip(self, dirty=None, apply_veil: bool = True) -> None:
         """dirty（logical 座標的 Rect|tuple|None）：這一幀只有該區域變了。
         實機路徑據此只旋轉髒區域、貼回持久的旋轉快取——整張 1920×480 旋轉
         （92 萬像素）是每幀固定稅，氛圍幀只動左欄(400 寬)、拖曳只動中欄，
@@ -317,7 +317,7 @@ class App:
             out = self.logical if self._dev_rotate == 0 \
                 else pygame.transform.rotate(self.logical, -self._dev_rotate)
             out = pygame.transform.smoothscale(out, self.win)
-            veil = self._dim_veil(out.get_size())
+            veil = self._dim_veil(out.get_size()) if apply_veil else None
             if veil is not None:
                 out.blit(veil, (0, 0))
             if getattr(self, "screen", None) is not None:
@@ -340,7 +340,7 @@ class App:
                 else:
                     dst_rect = pygame.Rect(0, 0, 0, 0)
             if getattr(self, "screen", None) is not None:
-                veil = self._dim_veil(self._rot_cache.get_size())
+                veil = self._dim_veil(self._rot_cache.get_size()) if apply_veil else None
                 if dst_rect is None:
                     # 全量更新：整片 blit rot_cache 與 veil
                     self.screen.blit(self._rot_cache, (0, 0))
@@ -635,6 +635,10 @@ class App:
         return bool(getattr(self.settings, "pet_enabled", True)) \
             and not self.firing and not self._screen_asleep()
 
+    def _sleep_pet_visible(self) -> bool:
+        return bool(getattr(self.settings, "pet_enabled", True)) \
+            and not self.firing and self._screen_asleep()
+
     def _restore_pet_background(self):
         bg = self._pet_bg
         self._pet_bg = None
@@ -671,6 +675,23 @@ class App:
             self._flip(dirty)
             return True
         return False
+
+    def _render_sleep_frame(self, now) -> None:
+        """深夜全黑時只畫一張黑底＋睡著的小喜喜。
+
+        不能走一般亮度 veil：veil alpha=255 會把寵物一起蓋掉。這裡直接把
+        logical 變成黑畫布，再把睡姿 sprite 疊上去，最後用 apply_veil=False
+        輸出；因此實機畫面與 /api/screenshot 都看得到睡著的小喜喜。
+        """
+        self.logical.fill((0, 0, 0))
+        self.hits = []
+        self._pet_bg = None
+        if self._sleep_pet_visible():
+            mono = time.monotonic()
+            self.pet_ui.advance(mono, sleeping=True)
+            self._pet_frame_at = mono
+            self.pet_ui.draw(self.logical, sleeping=True)
+        self._flip(apply_veil=False)
 
     def _draw_frame(self, snap, now, clock_anim=None, include_pet: bool = True) -> None:
         """把目前 view 畫進 self.logical（不 flip、不動 _last_* 記帳）。
@@ -947,6 +968,12 @@ class App:
             self._flip()
             return
         snap = self.state.snapshot()
+        if self._screen_asleep():
+            self._render_sleep_frame(now)
+            self._last_seq = snap.seq
+            self._last_minute = now.minute
+            self._last_clock_text = now.strftime("%H:%M")
+            return
         self._draw_frame(snap, now, clock_anim)
         self._flip()
         self._last_seq = snap.seq
@@ -1739,8 +1766,7 @@ class App:
             if self._screen_asleep():
                 # 深夜熄屏：不燒氛圍幀、輪詢降到 2fps（整夜 15fps 畫給黑幕看
                 # 純屬浪費）；觸摸喚醒那一圈 had_input=True 立即提速。
-                if snap.seq != self._last_seq or now.minute != self._last_minute:
-                    self._render()
+                self._render()
                 clock.tick(30 if had_input else 2)
             elif (self.view == "dashboard"
                     and getattr(self.settings, "center_view", "") == "notes"

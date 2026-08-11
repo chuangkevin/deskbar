@@ -30,6 +30,7 @@ ANIMATION_ROWS: Final = {
     "run_left": 2,
     "greeting": 3,
     "hop": 4,
+    "sleeping": 5,
     "waiting": 6,
     "grooming": 7,
     "looking": 8,
@@ -40,6 +41,7 @@ FRAME_COUNTS: Final = {
     "run_left": 8,
     "greeting": 4,
     "hop": 5,
+    "sleeping": 8,
     "waiting": 6,
     "grooming": 6,
     "looking": 6,
@@ -50,6 +52,7 @@ FRAME_RATES: Final = {
     "run_left": 9.0,
     "greeting": 4.0,
     "hop": 7.0,
+    "sleeping": 1.6,
     "waiting": 3.0,
     "grooming": 5.5,
     "looking": 3.5,
@@ -170,13 +173,13 @@ class SisiPet:
             "waiting": "waiting",
         }.get(state.activity, "idle")
 
-    def current_sprite(self) -> pygame.Surface:
-        animation = self._animation_name()
+    def current_sprite(self, sleeping: bool = False) -> pygame.Surface:
+        animation = "sleeping" if sleeping else self._animation_name()
         frames = self._sprite_frames()[animation]
         index = int(self._state.animation_elapsed * FRAME_RATES[animation]) % len(frames)
         return frames[index]
 
-    def advance(self, mono: float) -> None:
+    def advance(self, mono: float, sleeping: bool = False) -> None:
         state = self._state
         if state.last_t is None:
             state.last_t = mono
@@ -184,6 +187,8 @@ class SisiPet:
         dt = max(0.0, min(0.25, mono - state.last_t))
         state.last_t = mono
         state.animation_elapsed += dt
+        if sleeping:
+            return
         if state.dragging:
             return
 
@@ -242,9 +247,9 @@ class SisiPet:
         body = rect.inflate(-round(PET_SIZE[0] * 0.25), -round(PET_SIZE[1] * 0.25))
         return body.collidepoint(x, y)
 
-    def draw(self, surface: pygame.Surface) -> pygame.Rect:
+    def draw(self, surface: pygame.Surface, sleeping: bool = False) -> pygame.Rect:
         rect = self.rect()
-        surface.blit(self.current_sprite(), rect.topleft)
+        surface.blit(self.current_sprite(sleeping=sleeping), rect.topleft)
         return rect
 
     def close(self) -> None:

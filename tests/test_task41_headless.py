@@ -75,6 +75,31 @@ def test_touch_down_during_sleep_wakes_and_swallows(tmp_path, monkeypatch):
     assert app._drag_start is not None, "喚醒後的觸摸是正常操作"
 
 
+def test_sleep_screen_keeps_sisi_visible_on_black_canvas(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch)
+    app.settings.sleep_enabled = True
+    app.settings.sleep_start_min = 0
+    app.settings.sleep_end_min = 0       # start == end → 全天熄屏
+    app.settings.pet_enabled = True
+    app.settings.pet_x = 120
+    app.settings.pet_y = 180
+    app.pet_ui.load_position(app.settings)
+    flips = []
+    app._flip = lambda *a, **k: flips.append(k)
+
+    app._render()
+
+    assert flips[-1] == {"apply_veil": False}
+    assert app.hits == []
+    assert app._pet_visible() is False, "一般 overlay 在熄屏時仍應停用"
+    assert app._sleep_pet_visible() is True
+    assert app.logical.get_at((10, 10))[:3] == (0, 0, 0)
+    pet_rect = app.pet_ui.rect()
+    pet_pixels = app.logical.subsurface(pet_rect).copy()
+    assert pygame.surfarray.array_alpha(pet_pixels).max() == 255
+    assert pygame.surfarray.array3d(pet_pixels).max() > 0, "黑屏裡仍要看得到睡著的小喜喜"
+
+
 # ---------------------------------------------------------------- 按壓回饋
 
 def test_press_feedback_highlights_hit_and_cleans_up(tmp_path, monkeypatch):
