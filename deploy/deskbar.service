@@ -8,6 +8,7 @@ User=kevin
 SupplementaryGroups=render video input
 WorkingDirectory=/home/kevin/deskbar
 Environment=SDL_VIDEODRIVER=kmsdrm
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/kevin/deskbar/.venv/bin/python -m deskbar
 Restart=always
 RestartSec=3
