@@ -501,7 +501,12 @@ def generate_firefly_assets(out: Path) -> None:
     core_0 = np.exp(-(distance / 5.5) ** 2)
     inner_0 = np.exp(-(distance / 15.0) ** 2) * 0.65
     outer_0 = np.exp(-(distance / 30.0) ** 2) * 0.28
-    alpha_0 = feather_alpha(np.asarray(np.clip(core_0 + inner_0 + outer_0, 0.0, 1.0), np.float32), 16, 16)
+    # The runtime crops a small sprite out of this wide asset.  Fade by radial
+    # distance—not square distance—so the crop stays fully transparent at its
+    # corners and the halo remains circular on every compositor.
+    fade_0 = np.clip((26.0 - distance) / (26.0 - 16.0), 0.0, 1.0)
+    fade_0 = fade_0 * fade_0 * (3.0 - 2.0 * fade_0)
+    alpha_0 = feather_alpha(np.asarray(np.clip((core_0 + inner_0 + outer_0) * fade_0, 0.0, 1.0), np.float32), 16, 16)
     c_core_0 = _color((245, 255, 205))
     c_inner_0 = _color((200, 235, 90))
     c_outer_0 = _color((235, 200, 70))
@@ -513,7 +518,9 @@ def generate_firefly_assets(out: Path) -> None:
     core_1 = np.exp(-(distance / 9.0) ** 2)
     inner_1 = np.exp(-(distance / 24.0) ** 2) * 0.72
     outer_1 = np.exp(-(distance / 50.0) ** 2) * 0.35 * (1.0 + 0.08 * np.sin(angle * 6.0 + distance * 0.05))
-    alpha_1 = feather_alpha(np.asarray(np.clip(core_1 + inner_1 + outer_1, 0.0, 1.0), np.float32), 16, 16)
+    fade_1 = np.clip((48.0 - distance) / (48.0 - 30.0), 0.0, 1.0)
+    fade_1 = fade_1 * fade_1 * (3.0 - 2.0 * fade_1)
+    alpha_1 = feather_alpha(np.asarray(np.clip((core_1 + inner_1 + outer_1) * fade_1, 0.0, 1.0), np.float32), 16, 16)
     c_core_1 = _color((250, 255, 215))
     c_inner_1 = _color((210, 245, 95))
     c_outer_1 = _color((245, 195, 75))

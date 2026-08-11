@@ -35,15 +35,24 @@ def _lighting(now: datetime) -> tuple[str, str, float]:
 
 
 class FirefliesRenderer:
-    __slots__ = ("_assets", "_glows")
+    __slots__ = ("_assets", "_glows", "_glow_cache")
 
     def __init__(self) -> None:
         self._assets = SceneAssets(ASSET_DIR)
         self._glows: tuple[pygame.Surface, pygame.Surface] | None = None
+        self._glow_cache: dict[tuple[int, int], pygame.Surface] = {}
 
     @property
     def decoded_bytes(self) -> int:
-        return self._assets.decoded_bytes
+        glow_bytes = (
+            sum(s.get_width() * s.get_height() * 4 for s in self._glows)
+            if self._glows is not None
+            else 0
+        )
+        cache_bytes = sum(
+            s.get_width() * s.get_height() * 4 for s in self._glow_cache.values()
+        )
+        return self._assets.decoded_bytes + glow_bytes + cache_bytes
 
     def _glow_sprites(self) -> tuple[pygame.Surface, pygame.Surface]:
         if self._glows is None:
@@ -55,10 +64,25 @@ class FirefliesRenderer:
             self._glows = tuple(
                 surface.subsurface(
                     pygame.Rect(1240 // 2 - size // 2, 472 // 2 - size // 2, size, size)
-                )
+                ).copy()
                 for surface, size in zip(loaded, sizes)
             )
         return self._glows
+
+    def _get_glow(self, glow_idx: int, alpha: int) -> pygame.Surface:
+        bucket_alpha = max(0, min(255, ((alpha + 2) // 4) * 4))
+        key = (glow_idx, bucket_alpha)
+        cached = self._glow_cache.get(key)
+        if cached is not None:
+            return cached
+
+        base_glow = self._glow_sprites()[glow_idx]
+        mod_glow = base_glow.copy()
+        tint = pygame.Surface(base_glow.get_size(), pygame.SRCALPHA)
+        tint.fill((255, 255, 255, bucket_alpha))
+        mod_glow.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        self._glow_cache[key] = mod_glow
+        return mod_glow
 
     def _draw_fireflies(
         self,
@@ -66,7 +90,6 @@ class FirefliesRenderer:
         frame: SceneFrame,
         near: bool,
     ) -> None:
-        glows = self._glow_sprites()
         width, height = panel.get_size()
         for index in range(FIREFLY_COUNT):
             is_near = index % 3 == 0
@@ -76,11 +99,11 @@ class FirefliesRenderer:
             anchor_y = height * (0.52 + hash_unit(index, frame.day_seed, 2) * 0.40)
             x = anchor_x + math.sin(frame.t * (0.18 + hash_unit(index, 3) * 0.16) + index) * (54 if near else 34)
             y = anchor_y + math.sin(frame.t * (0.24 + hash_unit(index, 4) * 0.20) + index * 1.8) * (25 if near else 16)
-            glow = glows[1 if near else 0]
+            glow_idx = 1 if near else 0
             breathe = math.sin(frame.t * (0.7 + hash_unit(index, 5))
                                 + hash_unit(index, 6) * math.tau)
             alpha = max(0, 125 + round(breathe * 105))
-            glow.set_alpha(alpha)
+            glow = self._get_glow(glow_idx, alpha)
             panel.blit(glow, (round(x) - glow.get_width() // 2,
                               round(y) - glow.get_height() // 2))
 
@@ -101,5 +124,6 @@ class FirefliesRenderer:
         self._draw_fireflies(panel, frame, near=True)
 
     def close(self) -> None:
+        self._glow_cache.clear()
         self._glows = None
         self._assets.close()

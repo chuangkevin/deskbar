@@ -146,3 +146,66 @@ def test_fireflies_quality_contract() -> None:
     assert d0 == d0_rep <= 48 * 1024 * 1024
     assert _motion_ratio(t0, t5) >= 0.005
     assert _motion_ratio(t0, t15) >= 0.01
+
+
+def test_firefly_glow_crops_outer_border_transparent_and_no_set_alpha() -> None:
+    import ast
+
+    source = Path("deskbar/ui/scene_fireflies.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_draw_fireflies":
+            for child in ast.walk(node):
+                if isinstance(child, ast.Attribute) and child.attr == "set_alpha":
+                    raise AssertionError("set_alpha used in _draw_fireflies path")
+
+    renderer = scenes.FirefliesRenderer()
+    glows = renderer._glow_sprites()
+    assert len(glows) == 2
+    sizes = (36, 58)
+
+    bg = pygame.Surface((200, 200))
+    bg.fill((60, 80, 100))
+
+    for idx, (glow, size) in enumerate(zip(glows, sizes)):
+        assert glow.get_size() == (size, size)
+        alpha = pygame.surfarray.array_alpha(glow)
+
+        border_mask = np.zeros((size, size), dtype=bool)
+        border_mask[:3, :] = True
+        border_mask[-3:, :] = True
+        border_mask[:, :3] = True
+        border_mask[:, -3:] = True
+
+        assert alpha[border_mask].max() == 0, f"Glow {idx} ({size}x{size}) outer 3px border has alpha > 0: max={alpha[border_mask].max()}"
+
+        coordinates = np.indices((size, size))
+        center = (size - 1) / 2.0
+        corner_mask = (
+            (np.abs(coordinates[0] - center) >= size * 0.32)
+            & (np.abs(coordinates[1] - center) >= size * 0.32)
+        )
+        assert alpha[corner_mask].max() == 0, (
+            f"Glow {idx} retains square-corner alpha: "
+            f"max={alpha[corner_mask].max()}"
+        )
+
+        # Exercise the same cached per-pixel alpha path used by the breathing animation.
+        modulated = renderer._get_glow(idx, 128)
+        assert modulated.get_size() == (size, size)
+
+        bg_test = bg.copy()
+        bg_before = pygame.surfarray.array3d(bg_test).copy()
+        dest_x, dest_y = 50, 50
+        bg_test.blit(modulated, (dest_x, dest_y))
+        bg_after = pygame.surfarray.array3d(bg_test)
+
+        sub_after = bg_after[dest_x:dest_x + size, dest_y:dest_y + size]
+        sub_before = bg_before[dest_x:dest_x + size, dest_y:dest_y + size]
+
+        diff = np.abs(sub_after.astype(int) - sub_before.astype(int)).max(axis=2)
+        border_diff = diff[border_mask]
+        assert border_diff.max() == 0, (
+            f"Glow {idx} outer 3px background pixels changed after blit: "
+            f"max_diff={border_diff.max()}"
+        )
