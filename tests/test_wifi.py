@@ -28,6 +28,28 @@ def test_parse_known_actual_ssid_mapping():
     }
 
 
+def test_known_ssids_reads_actual_ssid_for_each_wifi_profile(monkeypatch):
+    calls = []
+
+    def fake_run(args, timeout):
+        calls.append(args)
+        if args == ["-t", "-f", "NAME,TYPE", "connection", "show"]:
+            return 0, "interagent:802-11-wireless\nWired:802-3-ethernet\nHome:802-11-wireless\n"
+        if args[-1] == "interagent":
+            return 0, "InterAgent - Enterprise\n"
+        if args[-1] == "Home":
+            return 0, "Home5G\n"
+        raise AssertionError(args)
+
+    monkeypatch.setattr(wifi, "_run", fake_run)
+    assert wifi.known_ssids() == {
+        "InterAgent - Enterprise": "interagent",
+        "Home5G": "Home",
+    }
+    assert calls[0] == ["-t", "-f", "NAME,TYPE", "connection", "show"]
+    assert all("802-11-wireless.ssid" not in call for call in calls[:1])
+
+
 def test_parse_wifi_list_known_and_profile_id():
     text = "no:InterAgent - Enterprise:80:WPA2\nno:OtherSSID:60:WPA2"
     mapping = {"InterAgent - Enterprise": "interagent"}

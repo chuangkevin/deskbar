@@ -110,8 +110,27 @@ def parse_wifi_list(text: str, known: dict | set) -> list:
 
 
 def known_ssids() -> dict[str, str]:
-    rc, out = _run(["-t", "-f", "NAME,TYPE,802-11-wireless.ssid", "connection", "show"], _TIMEOUT_SCAN)
-    return parse_known(out) if rc == 0 else {}
+    """回傳 {實際 SSID: NetworkManager profile ID}。
+
+    `nmcli connection show` 的清單模式只允許 NAME/TYPE 等欄位，不能直接取
+    ``802-11-wireless.ssid``。先取得 Wi-Fi profile ID，再個別讀取其實際 SSID，
+    才能處理 profile 名稱與 AP 廣播名稱不同的情境。
+    """
+    rc, out = _run(["-t", "-f", "NAME,TYPE", "connection", "show"], _TIMEOUT_SCAN)
+    if rc != 0:
+        return {}
+
+    profiles = parse_known(out)
+    known: dict[str, str] = {}
+    for profile_id in set(profiles.values()):
+        rc, ssid_out = _run(
+            ["-g", "802-11-wireless.ssid", "connection", "show", "id", profile_id],
+            _TIMEOUT_SCAN,
+        )
+        ssid = ssid_out.strip()
+        if rc == 0 and ssid and ssid != "--":
+            known[ssid] = profile_id
+    return known
 
 
 def scan() -> list:
