@@ -10,6 +10,7 @@ from deskbar.layout import Rect
 from deskbar.ui import Hit
 from deskbar.ui import theme
 from deskbar.ui.navigation import NavigationState
+from deskbar.ui.pet_overlay import PetOverlayController
 from deskbar.ui.scene_mode import SceneModeController
 
 LOGICAL_W, LOGICAL_H = 1920, 480
@@ -152,14 +153,11 @@ class App:
         self.sedentary = SedentaryTracker()   # 久坐提示（公司場景：連續在座 60 分）
         self._sed_hint_last = False           # 提示出現/消失的邊緣觸發重繪用
         from deskbar.claudeusage import UsageActivity
-        from deskbar.ui.sisi_pet import SisiPet
         from deskbar.ui import scenes
         self.usage_activity = UsageActivity()  # 忙/閒判定（usage 增量＝在寫 code）
         self.scene_ui = scenes.new_state()     # 氛圍場景跨幀狀態（軌跡面/粒子）
-        self.pet_ui = SisiPet(settings)        # 小喜喜：全域桌面寵物 overlay
-        self._pet_bg = None                    # (logical rect, background under pet)
-        self._pet_dragging = False
-        self._pet_frame_at = 0.0
+        self.pet_overlay = PetOverlayController(settings)  # 小喜喜：全域桌面寵物 overlay
+        self.pet_ui = self.pet_overlay.pet      # 相容既有診斷／測試的 sprite access
         self._flow_check_at = 0.0
         from datetime import datetime
         from zoneinfo import ZoneInfo
@@ -247,6 +245,11 @@ class App:
     @_force_scene_at.setter
     def _force_scene_at(self, value: float) -> None:
         self.scene_controller.force_scene_at = float(value)
+
+    @property
+    def _pet_dragging(self) -> bool:
+        """相容既有診斷；實際的 pointer capture 由 PetOverlayController 持有。"""
+        return self.pet_overlay.dragging
 
     def _init_display(self) -> None:
         self._dev = os.environ.get("DESKBAR_DEV") == "1"
@@ -664,38 +667,12 @@ class App:
         return bool(getattr(self.settings, "pet_enabled", True)) \
             and not self.firing and self._screen_asleep()
 
-    def _restore_pet_background(self):
-        bg = self._pet_bg
-        self._pet_bg = None
-        if bg is None or getattr(self, "logical", None) is None:
-            return None
-        rect, surface = bg
-        self.logical.blit(surface, rect.topleft)
-        return rect
-
-    def _draw_pet_overlay(self, now=None):
-        if not self._pet_visible() or getattr(self, "logical", None) is None:
-            return None
-        rect = self.pet_ui.dirty_rect()
-        if rect.w <= 0 or rect.h <= 0:
-            return None
-        background = self.logical.subsurface(rect).copy()
-        self.pet_ui.draw(self.logical)
-        self._pet_bg = (rect, background)
-        return rect
-
     def _render_pet_tick(self, now, force: bool = False) -> bool:
-        if not self._pet_visible() or getattr(self, "logical", None) is None:
-            return False
-        from deskbar.ui.sisi_pet import FPS as PET_FPS
         mono = time.monotonic()
-        if not force and mono - self._pet_frame_at < 1.0 / PET_FPS:
-            return False
-        old_rect = self._restore_pet_background()
-        self.pet_ui.advance(mono)
-        new_rect = self._draw_pet_overlay(now)
-        dirty = self._union_dirty(old_rect, new_rect)
-        self._pet_frame_at = mono
+        dirty = self.pet_overlay.advance_draw(
+            getattr(self, "logical", None), mono=mono,
+            visible=self._pet_visible(), force=force,
+        )
         if dirty is not None:
             self._flip(dirty)
             return True
@@ -710,12 +687,8 @@ class App:
         """
         self.logical.fill((0, 0, 0))
         self.hits = []
-        self._pet_bg = None
-        if self._sleep_pet_visible():
-            mono = time.monotonic()
-            self.pet_ui.advance(mono, sleeping=True)
-            self._pet_frame_at = mono
-            self.pet_ui.draw(self.logical, sleeping=True)
+        self.pet_overlay.draw_sleep(
+            self.logical, mono=time.monotonic(), visible=self._sleep_pet_visible())
         self._flip(apply_veil=False)
 
     def _draw_frame(self, snap, now, clock_anim=None, include_pet: bool = True) -> None:
@@ -724,7 +697,7 @@ class App:
         還要在這之上疊一層舊畫面滑出效果）共用。"""
         from deskbar.ui import alarm_view, dashboard, detail, settings_view
         self.logical.fill(theme.C["bg"])
-        self._pet_bg = None
+        self.pet_overlay.clear_background()
         # sync 現在只在 phase (a) 短暫持鎖（微秒級），這裡加鎖不會再造成長時間凍結；
         # 反過來若不加鎖，sync 的 phase (a) 可能正好在改 settings.accounts 途中被讀到。
         # _dispatch 的 with self.lock: 區塊不會呼叫 _render，故這裡再取鎖不會死結。
@@ -761,7 +734,7 @@ class App:
                     from deskbar.ui import cardoverlay
                     self.hits = cardoverlay.render(self.logical, self.card_overlay, now)
         if include_pet:
-            self._draw_pet_overlay(now)
+            self.pet_overlay.draw(self.logical, visible=self._pet_visible())
 
     def _flip_center_page(self, center: str, delta: int) -> None:
         """待辦/便條牆翻頁：夾在 [0, 總頁數-1]。總頁數依當下資料量現算，
@@ -956,7 +929,7 @@ class App:
         不重算中欄行事曆與右欄油表——Pi Zero 2W 燒不起整面 15fps 全量重繪。
         不動 hits、不動 _last_* 記帳：這一幀對「什麼時候需要全量重繪」的判斷
         完全透明。"""
-        old_pet = self._restore_pet_background()
+        old_pet = self.pet_overlay.restore(self.logical)
         with self.lock:
             from deskbar.ui import dashboard
             dashboard.render_panel_only(self.logical, snap, self.settings, now,
@@ -980,11 +953,8 @@ class App:
                               sset=getattr(w, "sunset", None) if w else None)
                 dirty = (0, 0, dashboard.TL_X1, LOGICAL_H)
         mono = time.monotonic()
-        from deskbar.ui.sisi_pet import FPS as PET_FPS
-        if mono - self._pet_frame_at >= 1.0 / PET_FPS:
-            self.pet_ui.advance(mono)
-            self._pet_frame_at = mono
-        new_pet = self._draw_pet_overlay(now)
+        self.pet_overlay.advance_if_due(mono)
+        new_pet = self.pet_overlay.draw(self.logical, visible=self._pet_visible())
         self._flip(self._union_dirty(dirty, old_pet, new_pet) or dirty)
 
     def _render(self, clock_anim=None) -> None:
@@ -1020,7 +990,7 @@ class App:
         logical = getattr(self, "logical", None)
         if logical is not None:
             from deskbar.ui.dashboard import CENTER_SLIDE_AREA
-            self._restore_pet_background()
+            self.pet_overlay.restore(logical)
             self.nav.start_transition(
                 logical, direction, CENTER_SLIDE_AREA, time.monotonic())
 
@@ -1037,13 +1007,13 @@ class App:
             self.nav.transition_cache = (
                 self.logical.copy(), snap.seq, now.minute, now.strftime("%H:%M"))
         else:
-            self._pet_bg = None
+            self.pet_overlay.clear_background()
             self.logical.blit(self.nav.transition_cache[0], (0, 0))
         elapsed = self.nav.transition_elapsed(time.monotonic())
         composed = self.nav.transition.frame(self.logical, elapsed)
         if composed is not self.logical:
             self.logical.blit(composed, (0, 0))
-        pet_rect = self._draw_pet_overlay(now)
+        pet_rect = self.pet_overlay.draw(self.logical, visible=self._pet_visible())
         # 首幀＝新畫面上場（chrome 可能整組換），全量；其後只有滑動帶在動
         from deskbar.ui.dashboard import CENTER_SLIDE_AREA as A
         dirty = None if first else self._union_dirty(
@@ -1350,20 +1320,19 @@ class App:
                             int(CENTER_SLIDE_AREA.w), int(CENTER_SLIDE_AREA.h))
             old_page = self.center_pages.get(center, 0)
             old_hits = self.hits
-            old_pet_bg = self._pet_bg
             original = self.logical.copy()
             band = None
-            try:
-                self.center_pages[center] = target_page
-                self._draw_frame(snap, now, include_pet=False)
-                band = self.logical.subsurface(r).copy()
-            finally:
-                # 離線畫鄰頁會改 logical 與 hits；兩者都要還原，使用者才不會看到
-                # 預取中的頁面，點擊區也仍對應目前頁。
-                self.center_pages[center] = old_page
-                self.hits = old_hits
-                self.logical.blit(original, (0, 0))
-                self._pet_bg = old_pet_bg
+            with self.pet_overlay.preserve_background():
+                try:
+                    self.center_pages[center] = target_page
+                    self._draw_frame(snap, now, include_pet=False)
+                    band = self.logical.subsurface(r).copy()
+                finally:
+                    # 離線畫鄰頁會改 logical 與 hits；兩者都要還原，使用者才不會看到
+                    # 預取中的頁面，點擊區也仍對應目前頁。
+                    self.center_pages[center] = old_page
+                    self.hits = old_hits
+                    self.logical.blit(original, (0, 0))
 
             self._band_cache[(center, target_page)] = band
             while len(self._band_cache) > 4:
@@ -1430,21 +1399,20 @@ class App:
                 neighbour = self._band_cache.get((center, target_page))
                 if neighbour is None:
                     old_page = self.center_pages.get(center, 0)
-                    old_pet_bg = self._pet_bg
-                    try:
-                        self.center_pages[center] = target_page
-                        from datetime import datetime
-                        from zoneinfo import ZoneInfo
-                        now = datetime.now(ZoneInfo("Asia/Taipei"))
-                        self._draw_frame(snap, now, include_pet=False)
-                        neighbour = self.logical.subsurface(r).copy()
-                    except Exception:
-                        # 同步保底也不能讓輸入圈拋例外；沒有鄰頁快照時仍可做邊界阻尼。
-                        neighbour = None
-                    finally:
-                        self.center_pages[center] = old_page
-                        self.logical.blit(cur, r.topleft)
-                        self._pet_bg = old_pet_bg
+                    with self.pet_overlay.preserve_background():
+                        try:
+                            self.center_pages[center] = target_page
+                            from datetime import datetime
+                            from zoneinfo import ZoneInfo
+                            now = datetime.now(ZoneInfo("Asia/Taipei"))
+                            self._draw_frame(snap, now, include_pet=False)
+                            neighbour = self.logical.subsurface(r).copy()
+                        except Exception:
+                            # 同步保底也不能讓輸入圈拋例外；沒有鄰頁快照時仍可做邊界阻尼。
+                            neighbour = None
+                        finally:
+                            self.center_pages[center] = old_page
+                            self.logical.blit(cur, r.topleft)
 
             drag = {
                 "center": center,
@@ -1590,9 +1558,10 @@ class App:
             pygame.time.delay(60)
 
     def _finish_pet_drag(self, x: int, y: int) -> None:
-        self.pet_ui.drag_to(x, y)
-        pet_x, pet_y = self.pet_ui.end_drag()
-        self._pet_dragging = False
+        position = self.pet_overlay.finish_drag(x, y)
+        if position is None:
+            return
+        pet_x, pet_y = position
         with self.lock:
             self.settings.pet_x = pet_x
             self.settings.pet_y = pet_y
@@ -1632,9 +1601,8 @@ class App:
             self._drag_start = None
             self._last_seq = -1     # 立刻重繪＝亮回來
             return
-        if not self.firing and self._pet_visible() and self.pet_ui.hit_test(x, y):
-            self._pet_dragging = True
-            self.pet_ui.begin_drag(x, y)
+        if not self.firing and self.pet_overlay.begin_drag(
+                x, y, visible=self._pet_visible()):
             self._drag_start = None
             self._drag_last = None
             self._pressed_dirty = False
@@ -1659,9 +1627,9 @@ class App:
                 self._touch_down(x, y)
             elif ev.type == pygame.FINGERMOTION:
                 had_input = True
-                if self._pet_dragging:
+                if self.pet_overlay.dragging:
                     x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
-                    self.pet_ui.drag_to(x, y)
+                    self.pet_overlay.drag_to(x, y)
                 elif self._drag_start is not None:
                     x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
                     self._drag_last = (x, y)
@@ -1671,7 +1639,7 @@ class App:
                     self._swallow_touch = False
                 else:
                     x, y = transform.touch_to_logical(ev.x, ev.y, self.settings.rotation)
-                    if self._pet_dragging:
+                    if self.pet_overlay.dragging:
                         self._finish_pet_drag(x, y)
                     else:
                         self._handle_touch_up(x, y)
@@ -1681,11 +1649,11 @@ class App:
                     ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
                 self._touch_down(x, y)
             elif ev.type == pygame.MOUSEMOTION:
-                if self._pet_dragging:
+                if self.pet_overlay.dragging:
                     had_input = True
                     x, y = transform.dev_window_to_logical(
                         ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
-                    self.pet_ui.drag_to(x, y)
+                    self.pet_overlay.drag_to(x, y)
                 elif self._drag_start is not None:
                     had_input = True
                     x, y = transform.dev_window_to_logical(
@@ -1698,7 +1666,7 @@ class App:
                 else:
                     x, y = transform.dev_window_to_logical(
                         ev.pos[0], ev.pos[1], self.win[0], self.win[1], self._dev_rotate or 0)
-                    if self._pet_dragging:
+                    if self.pet_overlay.dragging:
                         self._finish_pet_drag(x, y)
                     else:
                         self._handle_touch_up(x, y)
@@ -1707,7 +1675,7 @@ class App:
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
-        if self._pet_dragging:
+        if self.pet_overlay.dragging:
             self._render_pet_tick(now, force=True)
             clock.tick(loop_fps(True))
             return running
@@ -1825,8 +1793,7 @@ class App:
                     fps = max(fps, scenes.FPS)
                 clock.tick(fps)
             elif self._render_pet_tick(now):
-                from deskbar.ui.sisi_pet import FPS as PET_FPS
-                clock.tick(PET_FPS)
+                clock.tick(self.pet_overlay.fps)
             else:
                 # 純閒置輪詢從 10fps 提到 30fps：一次觸控最慢 100ms 後才被看見，
                 # 是延遲感的最大單一來源。空圈只做事件泵＋幾個判斷，30fps 的
