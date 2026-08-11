@@ -36,7 +36,7 @@ def test_sisi_pet_prepares_only_valid_nontransparent_frames() -> None:
     sprites = pet._sprite_frames()
     assert {name: len(frames) for name, frames in sprites.items()} == FRAME_COUNTS
     assert "failed" not in sprites
-    assert len(sprites["sleeping"]) == 8
+    assert len(sprites["sleeping"]) == FRAME_COUNTS["sleeping"]
     assert all(
         pygame.surfarray.array_alpha(sprite).max() > 0
         for frames in sprites.values()
@@ -48,16 +48,33 @@ def test_sisi_pet_prepares_only_valid_nontransparent_frames() -> None:
 
 def test_sisi_pet_sleeping_sprite_uses_dedicated_rest_row() -> None:
     pet = SisiPet(Settings())
+    atlas = pygame.image.load(str(ASSET))
+    expected_prone = pygame.transform.smoothscale(
+        atlas.subsurface(pygame.Rect(7 * CELL_WIDTH, 5 * CELL_HEIGHT,
+                                     CELL_WIDTH, CELL_HEIGHT)),
+        PET_SIZE,
+    )
+    expected_sitting_doze = pygame.transform.smoothscale(
+        atlas.subsurface(pygame.Rect(0, 5 * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT)),
+        PET_SIZE,
+    )
+    sleep_frames = pet._sprite_frames()["sleeping"]
     normal = pet.current_sprite()
     sleeping = pet.current_sprite(sleeping=True)
     assert sleeping.get_size() == PET_SIZE
     assert pygame.surfarray.array_alpha(sleeping).max() > 0
     assert pygame.image.tobytes(sleeping, "RGBA") != pygame.image.tobytes(normal, "RGBA")
+    assert pygame.image.tobytes(sleeping, "RGBA") == pygame.image.tobytes(
+        expected_prone, "RGBA"), "黑屏睡眠第一格必須先趴睡"
+    assert pygame.image.tobytes(sleep_frames[4], "RGBA") == pygame.image.tobytes(
+        expected_sitting_doze, "RGBA"), "坐著打瞌睡也要保留在睡眠序列裡"
 
     x0 = pet.state.x
     pet.advance(0.0, sleeping=True)
     pet.advance(10.0, sleeping=True)
     assert pet.state.x == x0, "睡覺時只能呼吸/眨眼，不應該在黑屏裡亂跑"
+    assert pet.state.animation_elapsed == 0.0
+    assert pet.state.sleep_animation_elapsed > 0.0
     pet.close()
 
 

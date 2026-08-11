@@ -46,13 +46,18 @@ FRAME_COUNTS: Final = {
     "grooming": 6,
     "looking": 6,
 }
+FRAME_COLUMNS: Final = {
+    # Kevin 指定小喜喜喜歡趴著睡，但坐著打瞌睡也可以留著。
+    # 因此夜間睡眠以趴臥/蜷睡為主，穿插坐著閉眼打瞌睡。
+    "sleeping": (7, 2, 7, 2, 0, 1, 7, 2),
+}
 FRAME_RATES: Final = {
     "idle": 3.5,
     "run_right": 9.0,
     "run_left": 9.0,
     "greeting": 4.0,
     "hop": 7.0,
-    "sleeping": 1.6,
+    "sleeping": 0.35,
     "waiting": 3.0,
     "grooming": 5.5,
     "looking": 3.5,
@@ -72,6 +77,7 @@ class SisiPetState:
     activity_elapsed: float = 0.0
     activity_duration: float = 7.0
     animation_elapsed: float = 0.0
+    sleep_animation_elapsed: float = 0.0
     activity_index: int = 0
     last_t: float | None = None
     drag_dx: float = 0.0
@@ -134,6 +140,7 @@ class SisiPet:
             )
         frames: dict[str, tuple[pygame.Surface, ...]] = {}
         for name, row in ANIMATION_ROWS.items():
+            columns = FRAME_COLUMNS.get(name, range(FRAME_COUNTS[name]))
             frames[name] = tuple(
                 pygame.transform.smoothscale(
                     atlas.subsurface(
@@ -142,7 +149,7 @@ class SisiPet:
                     ),
                     PET_SIZE,
                 )
-                for column in range(FRAME_COUNTS[name])
+                for column in columns
             )
         self._frames = frames
         return frames
@@ -176,7 +183,9 @@ class SisiPet:
     def current_sprite(self, sleeping: bool = False) -> pygame.Surface:
         animation = "sleeping" if sleeping else self._animation_name()
         frames = self._sprite_frames()[animation]
-        index = int(self._state.animation_elapsed * FRAME_RATES[animation]) % len(frames)
+        elapsed = self._state.sleep_animation_elapsed if sleeping \
+            else self._state.animation_elapsed
+        index = int(elapsed * FRAME_RATES[animation]) % len(frames)
         return frames[index]
 
     def advance(self, mono: float, sleeping: bool = False) -> None:
@@ -186,9 +195,10 @@ class SisiPet:
             return
         dt = max(0.0, min(0.25, mono - state.last_t))
         state.last_t = mono
-        state.animation_elapsed += dt
         if sleeping:
+            state.sleep_animation_elapsed += dt
             return
+        state.animation_elapsed += dt
         if state.dragging:
             return
 
