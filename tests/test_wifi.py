@@ -36,7 +36,7 @@ def test_parse_wifi_list_dedupes_and_sorts():
 
 
 def test_connect_with_password_builds_explicit_profile(monkeypatch):
-    """有密碼＝刪舊 profile → 顯式 connection add（自帶 key-mgmt）→ up。
+    """有密碼＝先建暫時 profile（con-name ≠ SSID）並 up → 成功後才刪舊 id=SSID 並改名。
     不走 dev wifi connect——那條路依賴掃描快取推斷加密，AP 不在快取就報
     key-mgmt property is missing（實機 Kevin_2.4 踩到）。"""
     calls = []
@@ -48,10 +48,26 @@ def test_connect_with_password_builds_explicit_profile(monkeypatch):
     monkeypatch.setattr(wifi.subprocess, "run", fake_run)
     ok, msg = wifi.connect("Office", "s3cret!pw", security="WPA2")
     assert ok
+    # 建立前清理這個暫時 profile
     assert calls[0][:4] == ["nmcli", "connection", "delete", "id"]
+    temp_id = calls[0][4]
+    assert temp_id != "Office" and temp_id.startswith("temp-")
+
+    # 建立暫時 profile (con-name 為 temp_id)
     assert calls[1][:3] == ["nmcli", "connection", "add"]
+    con_idx = calls[1].index("con-name")
+    assert calls[1][con_idx + 1] == temp_id
+    ssid_idx = calls[1].index("ssid")
+    assert calls[1][ssid_idx + 1] == "Office"
     assert "wpa-psk" in calls[1] and "wifi-sec.psk" in calls[1]
-    assert calls[2][:3] == ["nmcli", "connection", "up"]
+
+    # 帶起暫時 profile
+    assert calls[2] == ["nmcli", "connection", "up", "id", temp_id]
+
+    # 啟動成功後才刪除舊 id=SSID profile，並將暫時 profile 改名為 SSID
+    assert calls[3] == ["nmcli", "connection", "delete", "id", "Office"]
+    assert calls[4] == ["nmcli", "connection", "modify", "id", temp_id, "connection.id", "Office"]
+
     assert "s3cret!pw" not in msg, "訊息不得含密碼"
 
 
@@ -102,6 +118,31 @@ def test_connect_failure_returns_false_with_short_message(monkeypatch):
     # 「已儲存」、之後點了直接用壞密碼連、密碼鍵盤永遠不再出現。
     deletes = [c for c in calls if c[:4] == ["nmcli", "connection", "delete", "id"]]
     assert len(deletes) == 2, "連線失敗後應再刪一次壞 profile（前置刪＋失敗清理）"
+
+
+def test_connect_failure_preserves_existing_ssid_profile(monkeypatch):
+    """temp connection up 失敗時，絕不 delete id=SSID，僅清理 temp profile，回傳錯誤不含密碼。"""
+    calls = []
+
+    def fake_run(args, capture_output, text, timeout):
+        calls.append(args)
+        rc = 4 if args[:3] == ["nmcli", "connection", "up"] else 0
+        return subprocess.CompletedProcess(
+            args, rc, stdout="", stderr="Error: Connection activation failed: secrets-failed")
+
+    monkeypatch.setattr(wifi.subprocess, "run", fake_run)
+    ok, msg = wifi.connect("Office", "s3cret!pw", security="WPA2")
+    assert ok is False
+    assert "s3cret!pw" not in msg, "錯誤訊息不得含密碼"
+
+    # 驗證從未刪除 id="Office" (既有 SSID profile)
+    deleted_ids = [c[4] for c in calls if c[:4] == ["nmcli", "connection", "delete", "id"]]
+    assert "Office" not in deleted_ids, "連線失敗時不得刪除既有 id=SSID profile"
+
+    # 驗證僅清理暫時 profile
+    assert len(deleted_ids) == 2, "應有 2 次刪除暫時 profile 操作（前置刪＋失敗清理）"
+    assert deleted_ids[0] == deleted_ids[1]
+    assert deleted_ids[0] != "Office" and deleted_ids[0].startswith("temp-")
 
 
 def test_scan_returns_empty_when_nmcli_missing(monkeypatch):

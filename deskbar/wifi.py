@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from dataclasses import dataclass
 
@@ -143,30 +144,33 @@ def connect(ssid: str, password: "str | None" = None,
             security: str = "") -> "tuple[bool, str]":
     """連線。回 (成功?, 給人看的短訊息——絕不含密碼)。
 
-    有給密碼＝（重）設定這個網路：先刪同名舊 profile，再「顯式建 profile→
-    帶起」。不用 `dev wifi connect`——那條路要靠 nmcli 的掃描快取推斷 AP 加密
-    方式，AP 剛好不在快取（掃描剛失效/radio 剛重啟）就回
-    「802-11-wireless-security.key-mgmt: property is missing」（實機 Kevin_2.4
-    踩到）。key-mgmt 由掃描結果的 SECURITY 欄自選：WPA3-only → sae，
+    有給密碼＝（重）設定這個網路：先建立暫時 profile（con-name 不等於 SSID）
+    並帶起；成功後才刪舊 id=SSID profile 並將暫時 profile 改名為 SSID，維持
+    known_ssids 邏輯。若失敗僅刪除暫時 profile，保留既有 id=SSID profile 作
+    回退。key-mgmt 由掃描結果的 SECURITY 欄自選：WPA3-only → sae，
     其餘 → wpa-psk（WPA2/WPA3 過渡模式用 wpa-psk 可連）。
 
     沒給密碼＝開放網路或已儲存的網路：先 `connection up`（用既有 profile，
     同樣不依賴掃描快取），沒有 profile 再退回 `dev wifi connect`（開放網路）。
     """
     if password:
-        _run(["connection", "delete", "id", ssid], 10)   # rc 忽略：本來就可能不存在
+        temp_id = f"temp-{hashlib.sha256(ssid.encode()).hexdigest()[:8]}"
+        if temp_id == ssid:
+            temp_id = f"temp2-{hashlib.sha256(ssid.encode()).hexdigest()[:8]}"
+        _run(["connection", "delete", "id", temp_id], 10)   # rc 忽略：本來就可能不存在
         key_mgmt = "sae" if ("WPA3" in security and "WPA2" not in security) \
             else "wpa-psk"
         rc, out = _run(["connection", "add", "type", "wifi", "ifname", WLAN_DEV,
-                        "con-name", ssid, "ssid", ssid,
+                        "con-name", temp_id, "ssid", ssid,
                         "wifi-sec.key-mgmt", key_mgmt, "wifi-sec.psk", password], 15)
         if rc == 0:
-            rc, out = _run(["connection", "up", "id", ssid], _TIMEOUT_CONNECT)
-        if rc != 0:
-            # 失敗也要把剛建立的壞 profile 清掉——留著的話，這個網路下次掃描
-            # 會被當成「已儲存」、點了直接用壞密碼重連，鍵盤永遠不再出現
-            # （實機回報：打錯密碼的 WiFi 改不了密碼）。
+            rc, out = _run(["connection", "up", "id", temp_id], _TIMEOUT_CONNECT)
+        if rc == 0:
             _run(["connection", "delete", "id", ssid], 10)
+            _run(["connection", "modify", "id", temp_id, "connection.id", ssid], 10)
+        else:
+            # 失敗僅清理暫時 profile，保留既有 id=SSID profile 作回退。
+            _run(["connection", "delete", "id", temp_id], 10)
     else:
         rc, out = _run(["connection", "up", "id", ssid], _TIMEOUT_CONNECT)
         if rc != 0:
