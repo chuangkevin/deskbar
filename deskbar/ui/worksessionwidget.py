@@ -56,14 +56,14 @@ def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now:
     else:
         active_items = snap.work_sessions.active_items(now)
 
-    dispatch_w, dispatch_h = 170, 30
+    dispatch_w, dispatch_h = 232, 46
     dispatch_x = rect.x + (rect.w - dispatch_w) / 2
     dispatch_y = rect.y + 10
     dispatch_rect = Rect(dispatch_x, dispatch_y, dispatch_w, dispatch_h)
     dispatch = pygame.Rect(round(dispatch_x), round(dispatch_y), dispatch_w, dispatch_h)
-    pygame.draw.rect(surface, theme.C["work_claude"], dispatch, border_radius=15)
-    pygame.draw.rect(surface, theme.C["panel_line"], dispatch, width=1, border_radius=15)
-    _text(surface, "Claude Dispatch ↗", 14, theme.C["work_claude_text"],
+    pygame.draw.rect(surface, theme.C["work_claude"], dispatch, border_radius=23)
+    pygame.draw.rect(surface, theme.C["panel_line"], dispatch, width=2, border_radius=23)
+    _text(surface, "Claude Dispatch ↗", 18, theme.C["work_claude_text"],
           dispatch.centerx, dispatch.centery, anchor="center", bold=True)
     hits.append(Hit(dispatch_rect, "enqueue_claude_dispatch", None))
 

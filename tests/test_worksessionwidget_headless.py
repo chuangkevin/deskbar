@@ -133,6 +133,8 @@ def test_render_center_view_shows_unread_badge_and_honest_labels(monkeypatch):
     assert not any("此對話" in t for t in texts)
     assert not any("%" in t for t in texts)
     assert "Claude Dispatch ↗" in texts
+    dispatch = next(hit for hit in hits if hit.action == "enqueue_claude_dispatch")
+    assert (dispatch.rect.w, dispatch.rect.h) == (232, 46)
 
 
 def test_workbench_source_identity_colors_are_codex_sky_blue_and_claude_orange():

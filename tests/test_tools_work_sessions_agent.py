@@ -145,7 +145,7 @@ def test_target_opener_uses_fixed_argv_and_no_shell():
     assert open_session_target("codex", "codex-native-id", runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
     assert calls[-1] == ((['/usr/bin/open', '-b', 'com.openai.codex'],), {'check': False, 'timeout': 10, 'shell': False})
     assert open_claude_dispatch(runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
-    assert calls[-1] == ((['/usr/bin/open', 'claude://claude.ai/dispatch'],), {'check': False, 'timeout': 10, 'shell': False})
+    assert calls[-1] == ((['/usr/bin/open', 'claude://claude.ai/tasks'],), {'check': False, 'timeout': 10, 'shell': False})
     assert open_session_target("unknown", runner=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError())) is False
     tree = ast.parse(Path(__file__).parents[1].joinpath("tools/work_sessions_agent.py").read_text(encoding="utf-8"))
     assert not any(isinstance(node, ast.Call) and any(
