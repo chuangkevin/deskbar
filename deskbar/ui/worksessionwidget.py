@@ -58,7 +58,7 @@ def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now:
 
     dispatch_w, dispatch_h = 232, 46
     dispatch_x = rect.x + (rect.w - dispatch_w) / 2
-    dispatch_y = rect.y + 10
+    dispatch_y = rect.y + rect.h - dispatch_h - 10
     dispatch_rect = Rect(dispatch_x, dispatch_y, dispatch_w, dispatch_h)
     dispatch = pygame.Rect(round(dispatch_x), round(dispatch_y), dispatch_w, dispatch_h)
     pygame.draw.rect(surface, theme.C["work_claude"], dispatch, border_radius=23)
@@ -69,16 +69,19 @@ def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now:
 
     if not active_items:
         _text(surface, "目前無 30 分鐘內的活動 Session", 20, theme.C["muted"],
-              rect.x + rect.w / 2, rect.y + rect.h / 2, anchor="center")
+              rect.x + rect.w / 2, (rect.y + dispatch_y) / 2, anchor="center")
         return hits
 
     items = active_items[:6]
     cols = 2 if rect.w >= 500 else 1
     rows = 3 if cols == 2 else min(6, max(1, len(items)))
     gap_y = 8
-    card_h = min(112, (rect.h - (rows - 1) * gap_y) / rows)
+    # On wide displays Dispatch lives in Sisi's middle lane, so it does not
+    # compete with either card deck.  A single-column layout reserves space.
+    content_h = rect.h if cols == 2 else max(0, dispatch_y - 10 - rect.y)
+    card_h = min(112, (content_h - (rows - 1) * gap_y) / rows)
     deck_h = rows * card_h + (rows - 1) * gap_y
-    deck_y = rect.y + max(0, (rect.h - deck_h) / 2)
+    deck_y = rect.y + max(0, (content_h - deck_h) / 2)
     if cols == 2:
         middle_lane = min(280, max(120, rect.w * 0.24))
         card_w = (rect.w - middle_lane) / 2
