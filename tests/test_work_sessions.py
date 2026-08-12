@@ -50,7 +50,7 @@ def test_only_the_six_most_recent_active_sessions_are_exposed():
     ]
 
 
-def test_payload_rejects_sensitive_fields_and_normalizes_path_to_basename():
+def test_payload_rejects_sensitive_fields_and_redacts_absolute_paths_without_truncating_titles():
     unsafe = _payload(cwd="/private/project")
     with pytest.raises(ValueError, match="sensitive"):
         snapshot_from_payload(unsafe, now=NOW)
@@ -60,8 +60,16 @@ def test_payload_rejects_sensitive_fields_and_normalizes_path_to_basename():
         snapshot_from_payload(unsafe_title, now=NOW)
 
     snapshot = snapshot_from_payload(_payload(label="/private/project", project_label="/private/project"), now=NOW)
-    assert snapshot.items[0].label == "project"
+    assert snapshot.items[0].label == "未命名 Session"
     assert snapshot.items[0].project_label == "project"
+
+    titled = snapshot_from_payload(_payload(
+        label="設定 /Users/kevin/Documents/Projects/portal 的開發服務",
+    ), now=NOW)
+    assert titled.items[0].label == "設定 的開發服務"
+
+    slash_title = snapshot_from_payload(_payload(label="A/B 測試修正"), now=NOW)
+    assert slash_title.items[0].label == "A/B 測試修正"
 
     dispatch = snapshot_from_payload(_payload(progress_label="2/4 完成 · 進行中"), now=NOW)
     assert dispatch.items[0].progress_label == "2/4 完成 · 進行中"

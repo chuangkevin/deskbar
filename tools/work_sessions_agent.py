@@ -12,7 +12,9 @@ import argparse
 import json
 import os
 import pwd
+import re
 import secrets
+import select
 import sqlite3
 import subprocess
 import sys
@@ -48,6 +50,8 @@ APP_OPEN_ARGS = {
     "claude": ("/usr/bin/open", "-a", "Claude"),
 }
 _TAIL_BYTES = 128 * 1024
+_CODEX_APP_SERVER = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+_CODEX_APP_SERVER_TIMEOUT_SECONDS = 6
 
 
 def _current_user_home() -> Path:
@@ -97,6 +101,7 @@ class CodexThreadDetails:
     cwd: object
     source: object = None
     thread_source: object = None
+    name: object = None
 
     @property
     def is_internal_work_record(self) -> bool:
@@ -104,6 +109,11 @@ class CodexThreadDetails:
         source = self.source.strip().lower() if isinstance(self.source, str) else ""
         thread_source = self.thread_source.strip().lower() if isinstance(self.thread_source, str) else ""
         return source == "exec" or thread_source == "subagent"
+
+    @property
+    def display_title(self) -> object:
+        """``name`` is Codex's current task-list display name when available."""
+        return self.name if _clean_label(self.name) else self.title
 
 
 _WORKING_TYPES = frozenset({
@@ -120,15 +130,24 @@ _RESULT_TYPES = frozenset({
 })
 
 
+_PRIVATE_ABSOLUTE_PATH_RE = re.compile(r"/(?:Users|private|Volumes|home)(?:/[^\s/]+)+")
+
+
 def _clean_label(value: object, max_len: int = 80) -> str:
-    """Clean and sanitize display title or label: press whitespace, strip path separators, limit length."""
+    """Clean a user-visible title without destroying it when it contains a path.
+
+    Codex titles are sometimes generated from the first message and can include a
+    project path between two meaningful phrases.  The old implementation split
+    on every slash, turning such a title into its trailing fragment.  Redact only
+    known absolute filesystem paths, while retaining the rest of the title.
+    """
     if not isinstance(value, str):
         return ""
     cleaned = " ".join(value.split()).strip()
     if not cleaned:
         return ""
-    if "/" in cleaned or "\\" in cleaned:
-        cleaned = cleaned.replace("\\", "/").split("/")[-1].strip()
+    cleaned = _PRIVATE_ABSOLUTE_PATH_RE.sub("", cleaned)
+    cleaned = " ".join(cleaned.split()).strip()
     return cleaned[:max_len]
 
 
@@ -299,7 +318,7 @@ def _codex_thread_details(home: Path, native_ids: Iterable[str]) -> dict[str, Co
                 if "id" not in columns:
                     continue
                 selected_columns = ["id"]
-                selected_columns.extend(name for name in ("title", "cwd", "source", "thread_source") if name in columns)
+                selected_columns.extend(name for name in ("name", "title", "cwd", "source", "thread_source") if name in columns)
                 details: dict[str, CodexThreadDetails] = {}
                 for offset in range(0, len(identifiers), 900):
                     part = identifiers[offset:offset + 900]
@@ -317,6 +336,7 @@ def _codex_thread_details(home: Path, native_ids: Iterable[str]) -> dict[str, Co
                                 row_map.get("cwd"),
                                 row_map.get("source"),
                                 row_map.get("thread_source"),
+                                row_map.get("name"),
                             )
                 return details
             finally:
@@ -324,6 +344,128 @@ def _codex_thread_details(home: Path, native_ids: Iterable[str]) -> dict[str, Co
         except (OSError, sqlite3.Error):
             continue
     return {}
+
+
+def _details_from_codex_app_server_data(
+    response_data: object, identifiers: Iterable[str],
+) -> dict[str, CodexThreadDetails]:
+    """Keep only safe display metadata from a ``thread/list`` response."""
+    if not isinstance(response_data, list):
+        return {}
+    wanted = {item for item in identifiers if isinstance(item, str) and item}
+    details: dict[str, CodexThreadDetails] = {}
+    for value in response_data:
+        if not isinstance(value, dict):
+            continue
+        native_id = value.get("id")
+        if not isinstance(native_id, str) or native_id not in wanted:
+            continue
+        details[native_id] = CodexThreadDetails(
+            value.get("title"),
+            value.get("cwd"),
+            value.get("source"),
+            value.get("threadSource"),
+            value.get("name"),
+        )
+    return details
+
+
+def _codex_app_server_details(native_ids: Iterable[str]) -> dict[str, CodexThreadDetails]:
+    """Read current visible task names from Codex's own local app server.
+
+    The SQLite index can retain the original first-message title after Codex has
+    renamed a task in its UI.  ``thread/list`` is the same local source used by
+    that UI, so it is authoritative for the title that a person sees.  We keep
+    only id/name/cwd/source metadata and deliberately ignore every other field
+    in the response.
+    """
+    identifiers = tuple(dict.fromkeys(item for item in native_ids if isinstance(item, str) and item))
+    if not identifiers or not _CODEX_APP_SERVER.is_file():
+        return {}
+
+    initialize = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {"clientInfo": {"name": "deskbar-session-titles", "version": "1"}},
+    }
+    list_threads = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "thread/list",
+        "params": {
+            "limit": 500,
+            "sortKey": "recency_at",
+            "sortDirection": "desc",
+            "sourceKinds": ["vscode"],
+            "useStateDbOnly": False,
+        },
+    }
+    try:
+        process = subprocess.Popen(
+            [str(_CODEX_APP_SERVER), "app-server", "--stdio"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if process.stdin is None or process.stdout is None:
+        process.terminate()
+        return {}
+
+    deadline = time.monotonic() + _CODEX_APP_SERVER_TIMEOUT_SECONDS
+
+    def next_response() -> dict | None:
+        """Wait for one JSON-RPC line without letting a broken server block collection."""
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            readable, _, _ = select.select([process.stdout], [], [], remaining)
+            if not readable:
+                return None
+            line = process.stdout.readline()
+            if not line:
+                return None
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            return value if isinstance(value, dict) else None
+
+    try:
+        process.stdin.write(json.dumps(initialize, separators=(",", ":")) + "\n")
+        process.stdin.flush()
+        while True:
+            response = next_response()
+            if response is None:
+                return {}
+            if response.get("id") == 1:
+                break
+
+        process.stdin.write(json.dumps(list_threads, separators=(",", ":")) + "\n")
+        process.stdin.flush()
+        while True:
+            response = next_response()
+            if response is None:
+                return {}
+            if response.get("id") != 2:
+                continue
+            payload = response.get("result")
+            response_data = payload.get("data") if isinstance(payload, dict) else None
+            return _details_from_codex_app_server_data(response_data, identifiers)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=0.5)
+        except subprocess.SubprocessError:
+            process.kill()
 
 
 class SessionCollector:
@@ -426,14 +568,25 @@ class SessionCollector:
             problems.add("permission")
         except OSError:
             problems.add("unavailable")
-        details = _codex_thread_details(self.home, (record.native_id for record in records))
+        native_ids = tuple(record.native_id for record in records)
+        # app-server describes the login user's live Codex UI.  Fixture homes
+        # and alternate users correctly retain the read-only SQLite fallback.
+        try:
+            is_login_home = self.home.resolve() == _current_user_home().resolve()
+        except OSError:
+            is_login_home = False
+        app_details = _codex_app_server_details(native_ids) if is_login_home else {}
+        sqlite_details = _codex_thread_details(self.home, native_ids)
+        # Current UI metadata wins; SQLite fills in anything the app list did
+        # not include (for example an older but still-active local JSONL task).
+        details = {**sqlite_details, **app_details}
         titled_records: list[LocalSession] = []
         for record in records:
             detail = details.get(record.native_id)
             if detail is not None and detail.is_internal_work_record:
                 continue
             label, project_label = safe_session_labels(
-                detail.title if detail is not None else record.label,
+                detail.display_title if detail is not None else record.label,
                 detail.cwd if detail is not None and detail.cwd else record.project_label,
                 "未命名 Session",
             )

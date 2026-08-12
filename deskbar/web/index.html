@@ -15,6 +15,10 @@ h1{font-size:20px;font-weight:600}
 .nav-pill:hover,.nav-pill:focus-visible{background:#3a3a3a;color:#fff}
 .card{background:#1c1c1c;border:1px solid #333;border-radius:10px;padding:14px;margin:10px 0;min-width:0;overflow-wrap:anywhere}
 .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.alarm-row{align-items:flex-start;flex-wrap:wrap}
+.alarm-row>div:first-child{flex:1 1 130px;min-width:0}
+.alarm-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex:0 1 auto;flex-wrap:wrap}
+.alarm-editor-status{color:#78beff;font-size:14px;margin:8px 0;min-height:20px}
 .time{font-size:28px;font-variant-numeric:tabular-nums}
 .days,.label{color:#9a9a9a;font-size:13px}
 button{background:#2a2a2a;color:#eee;border:1px solid #444;border-radius:8px;padding:8px 14px;min-height:44px}
@@ -66,6 +70,7 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
 }
 
 @media(max-width:374px){body{padding:12px}.row{align-items:stretch;flex-wrap:wrap}.row input[type=text]{min-width:0;flex:1 1 180px}.cal-row select,.cal-row input[type=text]{max-width:100%}}
+@media(max-width:479px){.alarm-row{flex-direction:column}.alarm-actions{width:100%;justify-content:flex-start}.alarm-actions button{flex:1 1 132px;padding-inline:8px}}
 </style></head><body>
 <h1>deskbar</h1>
 <nav class="sticky-nav" aria-label="頁面快速導航">
@@ -87,7 +92,9 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
 <div class="card">
  <div class="row"><input type="time" id="t" value="09:00"><input type="text" id="lb" placeholder="標籤（例如：打卡）"></div>
  <div class="wk" id="wk"></div>
- <button onclick="add()">新增鬧鐘</button>
+ <label class="d"><input type="checkbox" id="arrival"> 手機到場後才提醒</label>
+ <div id="alarm-editor-status" class="alarm-editor-status" aria-live="polite"></div>
+ <div class="row"><button id="save-alarm" onclick="saveAlarm()">新增鬧鐘</button><button id="cancel-edit" onclick="cancelEdit()" hidden>取消編輯</button></div>
 </div>
 <h2 id="sec-cals">日曆</h2>
 <div id="cals"></div>
@@ -97,36 +104,64 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const WD=["一","二","三","四","五","六","日"];
 const wk=document.getElementById("wk");
+let alarms=[];
+let editingAlarmId=null;
 WD.forEach((w,i)=>{wk.insertAdjacentHTML("beforeend",
  `<label class="d"><input type="checkbox" value="${i}">${w}</label>`)});
 async function load(){
  const as=await (await fetch("/api/alarms")).json();
+ alarms=as;
  const td=new Date().toLocaleDateString("sv-SE");
  document.getElementById("list").innerHTML=as.map(a=>{
   const sk=a.skip_date===td;
   const off=!a.enabled||sk;
-  const dt=(a.days.length?a.days.map(d=>"週"+WD[d]).join(" "):"一次性")+(sk?"（今天略過）":"");
+  const dt=(a.days.length?a.days.map(d=>"週"+WD[d]).join(" "):"一次性")+(a.arrival_trigger?"（到場後提醒）":"")+(sk?"（今天略過）":"");
   const sb=a.days.length?`<button onclick="skip('${esc(a.id)}',${sk?null:`'${td}'`})">${sk?"取消略過":"今天略過"}</button>`:"";
-  return `<div class="card ${off?"off":""}"><div class="row">
+  return `<div class="card ${off?"off":""}"><div class="row alarm-row">
    <div><div class="time">${esc(a.time)}</div>
    <div class="label">${esc(a.label)}</div>
    <div class="days">${dt}</div></div>
-   <div>${sb}<button onclick="tog('${esc(a.id)}',${!a.enabled})">${a.enabled?"停用":"啟用"}</button>
+   <div class="alarm-actions"><button onclick="editAlarm('${esc(a.id)}')">編輯</button>${sb}<button onclick="arrival('${esc(a.id)}',${!a.arrival_trigger})">${a.arrival_trigger?"改準時提醒":"改到場後提醒"}</button><button onclick="tog('${esc(a.id)}',${!a.enabled})">${a.enabled?"停用":"啟用"}</button>
    <button class="del" onclick="del('${esc(a.id)}')">刪除</button></div>
   </div></div>`;
  }).join("")||'<div class="card">尚無鬧鐘</div>';
 }
-async function add(){
+function editorStatus(){return document.getElementById("alarm-editor-status")}
+function editAlarm(id){
+ const a=alarms.find(x=>x.id===id); if(!a)return;
+ editingAlarmId=id;
+ document.getElementById("t").value=a.time;
+ document.getElementById("lb").value=a.label;
+ document.getElementById("arrival").checked=!!a.arrival_trigger;
+ wk.querySelectorAll("input").forEach(x=>x.checked=a.days.includes(+x.value));
+ document.getElementById("save-alarm").textContent="儲存變更";
+ document.getElementById("cancel-edit").hidden=false;
+ editorStatus().textContent=`正在編輯 ${a.time}・${a.label}`;
+ document.getElementById("t").focus();
+}
+function cancelEdit(){
+ editingAlarmId=null;
+ document.getElementById("save-alarm").textContent="新增鬧鐘";
+ document.getElementById("cancel-edit").hidden=true;
+ editorStatus().textContent="";
+ document.getElementById("lb").value="";
+ document.getElementById("arrival").checked=false;
+ wk.querySelectorAll("input").forEach(x=>x.checked=false);
+}
+async function saveAlarm(){
  const days=[...wk.querySelectorAll("input:checked")].map(x=>+x.value);
- const r=await fetch("/api/alarms",{method:"POST",headers:{"Content-Type":"application/json"},
-  body:JSON.stringify({time:document.getElementById("t").value,days,
-  label:document.getElementById("lb").value})});
- if(!r.ok){alert("格式錯誤");return} document.getElementById("lb").value="";load();
+ const payload={time:document.getElementById("t").value,days,
+  label:document.getElementById("lb").value,arrival_trigger:document.getElementById("arrival").checked};
+ const url=editingAlarmId?"/api/alarms/"+editingAlarmId:"/api/alarms";
+ const r=await fetch(url,{method:editingAlarmId?"PATCH":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+ if(!r.ok){alert("格式錯誤，請確認時間與星期");return} cancelEdit();load();
 }
 async function tog(id,en){await fetch("/api/alarms/"+id,{method:"PATCH",
  headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:en})});load()}
 async function skip(id,d){await fetch("/api/alarms/"+id,{method:"PATCH",
  headers:{"Content-Type":"application/json"},body:JSON.stringify({skip_date:d})});load()}
+async function arrival(id,on){await fetch("/api/alarms/"+id,{method:"PATCH",
+ headers:{"Content-Type":"application/json"},body:JSON.stringify({arrival_trigger:on})});load()}
 async function del(id){await fetch("/api/alarms/"+id,{method:"DELETE"});load()}
 async function loadCals(){
  const box=document.getElementById("cals");

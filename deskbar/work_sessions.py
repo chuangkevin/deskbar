@@ -8,6 +8,7 @@ running.
 from __future__ import annotations
 
 import secrets
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ _SENSITIVE_KEYS = frozenset({
     "prompt", "response", "lastPrompt", "customTitle", "token", "cookie",
     "cwd", "session_id", "sessionId", "session_uuid", "title",
 })
+_PRIVATE_ABSOLUTE_PATH_RE = re.compile(r"/(?:Users|private|Volumes|home)(?:/[^\s/]+)+")
 
 
 def utc_now() -> datetime:
@@ -225,8 +227,11 @@ def snapshot_from_payload(payload: object, *, now: datetime | None = None) -> Wo
         if not isinstance(raw_label, str) or not raw_label.strip():
             raise ValueError("invalid label")
         cleaned_label = " ".join(raw_label.split()).strip()
-        if "/" in cleaned_label or "\\" in cleaned_label:
-            cleaned_label = cleaned_label.replace("\\", "/").split("/")[-1].strip()
+        # Titles can legitimately contain a slash (for example a user-written
+        # A/B task name).  Keep that title intact, but never retain a private
+        # absolute filesystem path if an untrusted collector sends one.
+        cleaned_label = _PRIVATE_ABSOLUTE_PATH_RE.sub("", cleaned_label)
+        cleaned_label = " ".join(cleaned_label.split()).strip()
         label = cleaned_label[:80] or "未命名 Session"
 
         raw_progress = raw.get("progress_label", "")

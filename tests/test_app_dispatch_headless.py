@@ -57,7 +57,7 @@ def test_add_alarm_dispatch(tmp_path, monkeypatch):
     app.alarm_draft["minute"] = 5
     app.alarm_draft["days"] = {3, 1, 5}
 
-    _click(app, "add_alarm")
+    _click(app, "save_alarm")
 
     alarms = app.alarm_store.list()
     assert len(alarms) == 1
@@ -65,6 +65,33 @@ def test_add_alarm_dispatch(tmp_path, monkeypatch):
     assert a.time == "07:05"
     assert a.days == [1, 3, 5]
     assert app.alarm_draft["days"] == set()
+
+
+def test_add_arrival_alarm_and_toggle_existing_dispatch(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch)
+    _click(app, "draft_arrival_trigger")
+    _click(app, "save_alarm")
+    added = app.alarm_store.list()[0]
+    assert added.arrival_trigger is True
+    assert app.alarm_draft["arrival_trigger"] is False
+
+    _click(app, "toggle_alarm_arrival", data_filter=added.id)
+    assert app.alarm_store.list()[0].arrival_trigger is False
+
+
+def test_edit_alarm_dispatch(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch)
+    added = app.alarm_store.add("09:00", [0], "公司打卡")
+    _click(app, "edit_alarm", data_filter=added.id)
+    assert app.alarm_draft["editing_id"] == added.id
+    assert app.alarm_draft["label_override"] == "公司打卡"
+
+    app.alarm_draft["hour"] = 8
+    app.alarm_draft["minute"] = 45
+    app.alarm_draft["arrival_trigger"] = True
+    _click(app, "save_alarm")
+    got = app.alarm_store.list()[0]
+    assert (got.time, got.label, got.arrival_trigger) == ("08:45", "公司打卡", True)
 
 
 def test_toggle_alarm_dispatch(tmp_path, monkeypatch):

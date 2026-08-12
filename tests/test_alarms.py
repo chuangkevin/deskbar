@@ -32,6 +32,58 @@ def test_due_fires_once_crossing_minute(tmp_path, monkeypatch):
     assert s.due(T(9, 0), T(9, 1)) == []  # 已停用（一次性）
 
 
+def test_arrival_alarm_waits_for_phone_and_fires_once_per_day(tmp_path, monkeypatch):
+    s = mk(tmp_path, monkeypatch)
+    a = s.add("09:00", [0], "打卡", arrival_trigger=True)
+
+    # 既有時間鬧鐘路徑不得提早響；人到了才由到場路徑提醒。
+    assert s.due(T(8, 59), T(9, 0)) == []
+    assert s.due_on_arrival(T(9, 5), phone_present=False) == []
+    fired = s.due_on_arrival(T(9, 5), phone_present=True)
+    assert [x.id for x in fired] == [a.id]
+    assert s.due_on_arrival(T(10, 0), phone_present=True) == []
+
+    # 成功日期寫入檔案，重開後也不會重複提醒。
+    assert mk(tmp_path, monkeypatch).due_on_arrival(T(10, 0), phone_present=True) == []
+
+
+def test_arrival_alarm_respects_skip_and_one_shot(tmp_path, monkeypatch):
+    s = mk(tmp_path, monkeypatch)
+    skipped = s.add("09:00", [0], "打卡", arrival_trigger=True)
+    s.set_skip_date(skipped.id, "2026-07-27")
+    assert s.due_on_arrival(T(9, 5), phone_present=True) == []
+
+    once = s.add("09:00", [], "一次", arrival_trigger=True)
+    assert [x.id for x in s.due_on_arrival(T(9, 5), phone_present=True)] == [once.id]
+    assert {a.id: a.enabled for a in s.list()}[once.id] is False
+
+
+def test_arrival_trigger_normalizes_and_can_be_changed(tmp_path, monkeypatch):
+    from deskbar.alarms import _normalize_alarm
+    a = _normalize_alarm({"id": "a1", "time": "09:00", "arrival_trigger": True,
+                          "arrival_fired_date": "2026-07-27"})
+    assert a is not None and a.arrival_trigger and a.arrival_fired_date == "2026-07-27"
+    assert _normalize_alarm({"id": "a1", "time": "09:00", "arrival_trigger": "yes"}).arrival_trigger is False
+
+    s = mk(tmp_path, monkeypatch)
+    created = s.add("09:00", [0], "打卡")
+    assert s.set_arrival_trigger(created.id, True)
+    assert s.list()[0].arrival_trigger is True
+
+
+def test_update_changes_editable_fields_atomically(tmp_path, monkeypatch):
+    s = mk(tmp_path, monkeypatch)
+    a = s.add("09:00", [0], "舊標籤")
+    assert s.update(a.id, time="08:45", days=[4, 1, 1], label="打卡", arrival_trigger=True)
+    got = s.list()[0]
+    assert (got.time, got.days, got.label, got.arrival_trigger) == ("08:45", [1, 4], "打卡", True)
+
+    # 壞輸入不可留下半套修改。
+    assert not s.update(a.id, time="99:00", label="不應寫入")
+    got = s.list()[0]
+    assert (got.time, got.label) == ("08:45", "打卡")
+
+
 def test_one_shot_disables_after_fire(tmp_path, monkeypatch):
     s = mk(tmp_path, monkeypatch)
     s.add("09:00", [], "once")

@@ -37,6 +37,9 @@ class Alarm:
     # enabled=False 代表永久停用，直到手動重新開啟；
     # skip_date 代表僅略過指定日期，隔天自動恢復響鈴。
     skip_date: str | None = None
+    # True 時不在指定時間直接響；等手機在場後才提醒。每天最多一次。
+    arrival_trigger: bool = False
+    arrival_fired_date: str | None = None
 
 
 def _normalize_alarm(raw: object) -> Alarm | None:
@@ -75,7 +78,15 @@ def _normalize_alarm(raw: object) -> Alarm | None:
             enabled = True
         skip_date_raw = raw.get("skip_date")
         skip_date = skip_date_raw if _is_valid_date_str(skip_date_raw) else None
-        return Alarm(id=aid, time=time_s, days=days, label=label, enabled=enabled, skip_date=skip_date)
+        arrival_trigger = raw.get("arrival_trigger")
+        if not isinstance(arrival_trigger, bool):
+            arrival_trigger = False
+        arrival_fired_raw = raw.get("arrival_fired_date")
+        arrival_fired_date = (arrival_fired_raw
+                              if _is_valid_date_str(arrival_fired_raw) else None)
+        return Alarm(id=aid, time=time_s, days=days, label=label, enabled=enabled,
+                     skip_date=skip_date, arrival_trigger=arrival_trigger,
+                     arrival_fired_date=arrival_fired_date)
     except Exception:
         return None
 
@@ -114,8 +125,9 @@ class AlarmStore:
         with self._lock:
             return [Alarm(**asdict(a)) for a in self._alarms]
 
-    def add(self, time: str, days: list[int], label: str) -> Alarm:
-        a = Alarm(id=uuid.uuid4().hex[:8], time=time, days=sorted(days), label=label)
+    def add(self, time: str, days: list[int], label: str, *, arrival_trigger: bool = False) -> Alarm:
+        a = Alarm(id=uuid.uuid4().hex[:8], time=time, days=sorted(days), label=label,
+                  arrival_trigger=arrival_trigger)
         with self._lock:
             self._alarms.append(a)
             self._save_locked()
@@ -153,6 +165,47 @@ class AlarmStore:
                     return True
             return False
 
+    def set_arrival_trigger(self, alarm_id: str, enabled: bool) -> bool:
+        """切換「到場後提醒」。停用時保留今日已提醒紀錄，避免同日重複跳窗。"""
+        with self._lock:
+            for a in self._alarms:
+                if a.id == alarm_id:
+                    a.arrival_trigger = enabled
+                    self._save_locked()
+                    return True
+            return False
+
+    def update(self, alarm_id: str, *, time: str | None = None, days: list[int] | None = None,
+               label: str | None = None, arrival_trigger: bool | None = None) -> bool:
+        """原子更新一顆鬧鐘的可編輯欄位；輸入有一項不合法就完全不寫入。"""
+        if time is not None and (not isinstance(time, str) or not _TIME_RE.match(time)):
+            return False
+        if days is not None and (
+                not isinstance(days, list)
+                or any(not isinstance(d, int) or isinstance(d, bool) or d < 0 or d > 6
+                       for d in days)):
+            return False
+        if label is not None and not isinstance(label, str):
+            return False
+        if arrival_trigger is not None and not isinstance(arrival_trigger, bool):
+            return False
+
+        with self._lock:
+            for a in self._alarms:
+                if a.id != alarm_id:
+                    continue
+                if time is not None:
+                    a.time = time
+                if days is not None:
+                    a.days = sorted(set(days))
+                if label is not None:
+                    a.label = label[:40] or "提醒"
+                if arrival_trigger is not None:
+                    a.arrival_trigger = arrival_trigger
+                self._save_locked()
+                return True
+            return False
+
     def toggle(self, alarm_id: str) -> bool:
         """在既有 lock 下原子翻轉 enabled，避免與 Flask thread／due() 自動停用互相競爭。"""
         with self._lock:
@@ -171,6 +224,9 @@ class AlarmStore:
             for a in self._alarms:
                 if not a.enabled:
                     continue
+                # 到場提醒由 due_on_arrival() 處理；不能在時間一到就先直接響。
+                if a.arrival_trigger:
+                    continue
                 # 清除早於今天的過期略過日期，維護檔案與 UI 乾淨
                 if a.skip_date is not None and a.skip_date < today_s:
                     a.skip_date = None
@@ -188,6 +244,40 @@ class AlarmStore:
                 if not a.days:
                     a.enabled = False
                     dirty = True
+            if dirty:
+                self._save_locked()
+        return fired
+
+    def due_on_arrival(self, now: datetime, *, phone_present: bool) -> list[Alarm]:
+        """回傳已過設定時間、且手機在場的到場提醒。
+
+        使用持久化的 ``arrival_fired_date`` 去重，因此 App 重啟、手機短暫離開再
+        回來，都不會在同一天重複提醒。這裡只讀 AppState 的在場結果，不會主動
+        掃描或碰 Wi-Fi／Bluetooth。
+        """
+        if not phone_present:
+            return []
+        fired: list[Alarm] = []
+        today_s = now.date().isoformat()
+        with self._lock:
+            dirty = False
+            for a in self._alarms:
+                if not a.enabled or not a.arrival_trigger:
+                    continue
+                if a.skip_date is not None and a.skip_date < today_s:
+                    a.skip_date = None
+                    dirty = True
+                if a.skip_date == today_s or a.arrival_fired_date == today_s:
+                    continue
+                hh, mm = a.time.split(":")
+                fire = now.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+                if now < fire or (a.days and now.weekday() not in a.days):
+                    continue
+                fired.append(Alarm(**asdict(a)))
+                a.arrival_fired_date = today_s
+                if not a.days:
+                    a.enabled = False
+                dirty = True
             if dirty:
                 self._save_locked()
         return fired

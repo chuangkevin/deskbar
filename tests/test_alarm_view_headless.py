@@ -19,7 +19,7 @@ def _max_brightness(surf, x0, y0, x1, y1) -> int:
 
 
 def _draft():
-    return {"hour": 7, "minute": 30, "days": set(), "label_idx": 0}
+    return {"hour": 7, "minute": 30, "days": set(), "label_idx": 0, "arrival_trigger": False}
 
 
 def test_alarm_view_actions_present():
@@ -27,7 +27,7 @@ def test_alarm_view_actions_present():
     hits = alarm_view.render(surf, None, _draft(), NOW)
     actions = {h.action for h in hits}
     for a in ("settings_done", "draft_hour", "draft_minute", "draft_day",
-              "draft_label", "add_alarm"):
+              "draft_label", "draft_arrival_trigger", "save_alarm"):
         assert a in actions
 
 
@@ -42,8 +42,12 @@ def test_alarm_view_lists_existing(tmp_path, monkeypatch):
     hits = alarm_view.render(surf, store, _draft(), NOW)
 
     toggle_data = {h.data for h in hits if h.action == "toggle_alarm"}
+    arrival_data = {h.data for h in hits if h.action == "toggle_alarm_arrival"}
+    edit_data = {h.data for h in hits if h.action == "edit_alarm"}
     delete_data = {h.data for h in hits if h.action == "delete_alarm"}
     assert toggle_data == {a1.id, a2.id}
+    assert arrival_data == {a1.id, a2.id}
+    assert edit_data == {a1.id, a2.id}
     assert delete_data == {a1.id, a2.id}
 
 
@@ -99,13 +103,23 @@ def test_alarm_view_skip_button_and_rects():
     skip_hits = [h for h in hits if h.action == "skip_alarm"]
     assert len(skip_hits) == 1
     assert skip_hits[0].data == a_repeat.id
-    assert skip_hits[0].rect.x == 710
-    assert skip_hits[0].rect.w == 150
+    assert skip_hits[0].rect.x == 758
+    assert skip_hits[0].rect.w == 122
 
     repeat_delete = next(h for h in hits if h.action == "delete_alarm" and h.data == a_repeat.id)
-    assert repeat_delete.rect.x == 880
-    assert repeat_delete.rect.w == 100
+    assert repeat_delete.rect.x == 888
+    assert repeat_delete.rect.w == 64
 
     once_delete = next(h for h in hits if h.action == "delete_alarm" and h.data == a_once.id)
-    assert once_delete.rect.x == 710
-    assert once_delete.rect.w == 100
+    assert once_delete.rect.x == 758
+    assert once_delete.rect.w == 84
+
+
+def test_alarm_view_loads_existing_alarm_into_editor_without_losing_custom_label():
+    draft = _draft()
+    alarm = Alarm(id="x", time="08:45", days=[0, 2], label="公司打卡", arrival_trigger=True)
+    alarm_view.load_alarm_into_draft(draft, alarm)
+    assert draft["editing_id"] == "x"
+    assert draft["days"] == {0, 2}
+    assert draft["arrival_trigger"] is True
+    assert alarm_view.draft_label(draft) == "公司打卡"

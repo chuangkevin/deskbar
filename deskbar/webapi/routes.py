@@ -46,10 +46,12 @@ def register_routes(app: Flask, context: WebContext) -> None:
     def add_alarm():
         d = request.get_json(force=True, silent=True) or {}
         time_s, days, label = d.get("time", ""), d.get("days", []), str(d.get("label", ""))[:40]
+        arrival_trigger = d.get("arrival_trigger", False)
         if not isinstance(time_s, str) or not _TIME_RE.match(time_s) or not isinstance(days, list) \
-                or any((not isinstance(x, int)) or isinstance(x, bool) or x < 0 or x > 6 for x in days):
+                or any((not isinstance(x, int)) or isinstance(x, bool) or x < 0 or x > 6 for x in days) \
+                or not isinstance(arrival_trigger, bool):
             return jsonify({"error": "invalid time or days"}), 400
-        a = context.store.add(time_s, days, label or "提醒")
+        a = context.store.add(time_s, days, label or "提醒", arrival_trigger=arrival_trigger)
         return jsonify(asdict(a)), 201
 
     @app.patch("/api/alarms/<aid>")
@@ -57,11 +59,25 @@ def register_routes(app: Flask, context: WebContext) -> None:
         d = request.get_json(force=True, silent=True) or {}
         has_enabled = "enabled" in d
         has_skip_date = "skip_date" in d
-        if not has_enabled and not has_skip_date:
-            return jsonify({"error": "enabled or skip_date required"}), 400
+        has_arrival_trigger = "arrival_trigger" in d
+        has_time = "time" in d
+        has_days = "days" in d
+        has_label = "label" in d
+        if not any((has_enabled, has_skip_date, has_arrival_trigger, has_time, has_days, has_label)):
+            return jsonify({"error": "at least one editable field is required"}), 400
 
         if has_enabled and not isinstance(d.get("enabled"), bool):
             return jsonify({"error": "enabled must be boolean"}), 400
+        if has_arrival_trigger and not isinstance(d.get("arrival_trigger"), bool):
+            return jsonify({"error": "arrival_trigger must be boolean"}), 400
+        if has_time and (not isinstance(d.get("time"), str) or not _TIME_RE.match(d["time"])):
+            return jsonify({"error": "time must be HH:MM"}), 400
+        if has_days and (not isinstance(d.get("days"), list)
+                         or any(not isinstance(x, int) or isinstance(x, bool) or x < 0 or x > 6
+                                for x in d["days"])):
+            return jsonify({"error": "days must be weekday numbers"}), 400
+        if has_label and not isinstance(d.get("label"), str):
+            return jsonify({"error": "label must be a string"}), 400
 
         if has_skip_date:
             skip_date = d.get("skip_date")
@@ -76,8 +92,16 @@ def register_routes(app: Flask, context: WebContext) -> None:
             context.store.set_enabled(aid, d["enabled"])
         if has_skip_date:
             context.store.set_skip_date(aid, d["skip_date"])
+        if has_arrival_trigger:
+            context.store.set_arrival_trigger(aid, d["arrival_trigger"])
 
-        return jsonify({"ok": True})
+        if has_time or has_days or has_label:
+            context.store.update(aid, time=d["time"] if has_time else None,
+                                 days=d["days"] if has_days else None,
+                                 label=d["label"] if has_label else None)
+
+        updated = next(a for a in context.store.list() if a.id == aid)
+        return jsonify(asdict(updated))
 
     @app.delete("/api/alarms/<aid>")
     def delete_alarm(aid):

@@ -164,7 +164,8 @@ class App:
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Asia/Taipei"))
         self.alarm_draft = {"hour": (now.hour + 1) % 24, "minute": 0, "days": set(),
-                             "label_idx": 0}
+                             "label_idx": 0, "label_override": None,
+                             "arrival_trigger": False, "editing_id": None}
 
     @property
     def view(self) -> str:
@@ -498,6 +499,20 @@ class App:
                             except OSError as e:
                                 print(f"[deskbar] alarm toggle write failed: {e}",
                                       file=sys.stderr)
+                    elif a == "edit_alarm":
+                        if self.alarm_store is not None:
+                            target = next((x for x in self.alarm_store.list() if x.id == h.data), None)
+                            if target is not None:
+                                alarm_view.load_alarm_into_draft(self.alarm_draft, target)
+                    elif a == "toggle_alarm_arrival":
+                        if self.alarm_store is not None:
+                            try:
+                                target = next((x for x in self.alarm_store.list() if x.id == h.data), None)
+                                if target is not None:
+                                    self.alarm_store.set_arrival_trigger(h.data, not target.arrival_trigger)
+                            except OSError as e:
+                                print(f"[deskbar] alarm arrival toggle write failed: {e}",
+                                      file=sys.stderr)
                     elif a == "skip_alarm":
                         if self.alarm_store is not None:
                             try:
@@ -528,17 +543,34 @@ class App:
                         alarm_view.bump_draft(self.alarm_draft, "day", h.data)
                     elif a == "draft_label":
                         alarm_view.bump_draft(self.alarm_draft, "label", h.data)
-                    elif a == "add_alarm":
+                    elif a == "draft_arrival_trigger":
+                        alarm_view.bump_draft(self.alarm_draft, "arrival_trigger", h.data)
+                    elif a == "cancel_alarm_edit":
+                        self.alarm_draft["editing_id"] = None
+                        self.alarm_draft["label_override"] = None
+                    elif a == "save_alarm":
                         if self.alarm_store is not None:
                             hh, mm = self.alarm_draft["hour"], self.alarm_draft["minute"]
                             days = sorted(self.alarm_draft["days"])
-                            label = alarm_view.LABELS[self.alarm_draft["label_idx"]]
+                            label = alarm_view.draft_label(self.alarm_draft)
                             try:
-                                self.alarm_store.add("%02d:%02d" % (hh, mm), days, label)
+                                editing_id = self.alarm_draft.get("editing_id")
+                                if editing_id:
+                                    self.alarm_store.update(
+                                        editing_id, time="%02d:%02d" % (hh, mm), days=days,
+                                        label=label,
+                                        arrival_trigger=bool(self.alarm_draft.get("arrival_trigger")))
+                                else:
+                                    self.alarm_store.add(
+                                        "%02d:%02d" % (hh, mm), days, label,
+                                        arrival_trigger=bool(self.alarm_draft.get("arrival_trigger")))
                             except OSError as e:
-                                print(f"[deskbar] alarm add write failed: {e}",
+                                print(f"[deskbar] alarm save write failed: {e}",
                                       file=sys.stderr)
                             self.alarm_draft["days"] = set()
+                            self.alarm_draft["arrival_trigger"] = False
+                            self.alarm_draft["editing_id"] = None
+                            self.alarm_draft["label_override"] = None
                     elif a == "toggle_cal":
                         email, cal = h.data
                         cals = self.settings.accounts[email].calendars
@@ -1726,6 +1758,9 @@ class App:
         if self.alarm_store is not None:
             due = self.alarm_store.due(self._last_alarm_check, now)
             self._last_alarm_check = now
+            presence = self.state.snapshot().presence
+            due += self.alarm_store.due_on_arrival(
+                now, phone_present=bool(presence.enabled and presence.present))
             if due:
                 self.firing.extend(due)
                 self._firing_since = mono   # 新來的鬧鐘重置計時：每顆都有完整 5 分鐘

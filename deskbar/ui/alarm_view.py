@@ -51,8 +51,35 @@ def bump_draft(draft: dict, field: str, delta) -> dict:
             days.add(delta)
         draft["days"] = days
     elif field == "label":
-        draft["label_idx"] = (draft["label_idx"] + 1) % len(LABELS)
+        if draft.get("label_override") is not None:
+            draft["label_override"] = None
+            draft["label_idx"] = 0
+        else:
+            draft["label_idx"] = (draft["label_idx"] + 1) % len(LABELS)
+    elif field == "arrival_trigger":
+        draft["arrival_trigger"] = not bool(draft.get("arrival_trigger", False))
     return draft
+
+
+def load_alarm_into_draft(draft: dict, alarm) -> dict:
+    """將既有鬧鐘帶進右側編輯器；自訂標籤必須原樣保留，不能被預設標籤蓋掉。"""
+    hour, minute = (int(v) for v in alarm.time.split(":"))
+    draft["hour"] = hour
+    draft["minute"] = minute
+    draft["days"] = set(alarm.days)
+    draft["arrival_trigger"] = alarm.arrival_trigger
+    draft["editing_id"] = alarm.id
+    if alarm.label in LABELS:
+        draft["label_idx"] = LABELS.index(alarm.label)
+        draft["label_override"] = None
+    else:
+        draft["label_idx"] = 0
+        draft["label_override"] = alarm.label
+    return draft
+
+
+def draft_label(draft: dict) -> str:
+    return draft.get("label_override") or LABELS[draft["label_idx"] % len(LABELS)]
 
 
 def render(surface, store, draft, now) -> list[Hit]:
@@ -61,12 +88,12 @@ def render(surface, store, draft, now) -> list[Hit]:
     _btn(surface, "完成", 1700, 20, 180, 52, "settings_done", None, hits)
     pygame.draw.line(surface, theme.C["panel_line"], (DIVIDER_X, 0), (DIVIDER_X, 480))
 
-    _render_list(surface, store, hits, now)
+    _render_list(surface, store, hits, now, draft)
     _render_draft(surface, draft, hits)
     return hits
 
 
-def _render_list(surface, store, hits, now) -> None:
+def _render_list(surface, store, hits, now, draft) -> None:
     alarms = store.list()[:4] if store is not None else []
     if not alarms:
         _text(surface, "尚無鬧鐘——右側可新增，或掃描設定頁 QR 用手機設定",
@@ -81,6 +108,12 @@ def _render_list(surface, store, hits, now) -> None:
         # 拉出明顯明暗差，一眼分得出哪些鬧鐘目前不會響。
         time_color = theme.C["text"] if not is_muted else theme.C["muted"]
         label_color = theme.C["text2"] if not is_muted else theme.C["muted"]
+        selected = draft.get("editing_id") == a.id
+        row = pygame.Rect(24, y - 8, 528, 68)
+        pygame.draw.rect(surface, theme.C["now"] if selected else theme.C["card"], row,
+                         border_radius=10)
+        pygame.draw.rect(surface, theme.C["panel_line"], row, 1, border_radius=10)
+        hits.append(Hit(Rect(row.x, row.y, row.w, row.h), "edit_alarm", a.id))
         _text(surface, a.time, 40, time_color, 40, y)
         label = a.label if len(a.label) <= 12 else a.label[:12] + "…"
         _text(surface, label, 22, label_color, 190, y + 4)
@@ -90,23 +123,32 @@ def _render_list(surface, store, hits, now) -> None:
                 if valid_days else "一次性")
         if is_skipped:
             days += "（今天略過）"
+        if a.arrival_trigger:
+            days += " · 到場後提醒"
         _text(surface, days, 20, theme.C["muted"], 190, y + 34)
+        _text(surface, "編輯 ›", 18, theme.C["now_text"] if selected else theme.C["muted"],
+              525, y + 18, "midright")
         toggle_label = "停用" if a.enabled else "啟用"
-        _btn(surface, toggle_label, 560, y, 130, 52, "toggle_alarm", a.id, hits, size=22)
+        _btn(surface, toggle_label, 560, y, 74, 52, "toggle_alarm", a.id, hits, size=20)
+        _btn(surface, "到場後" if not a.arrival_trigger else "準時", 642, y, 108, 52,
+             "toggle_alarm_arrival", a.id, hits, size=20, active=a.arrival_trigger)
         if valid_days:
             skip_label = "取消略過" if is_skipped else "今天略過"
-            _btn(surface, skip_label, 710, y, 150, 52, "skip_alarm", a.id, hits, size=22)
-            _btn(surface, "刪除", 880, y, 100, 52, "delete_alarm", a.id, hits,
-                 size=22, fg=theme.C["warn"])
+            _btn(surface, skip_label, 758, y, 122, 52, "skip_alarm", a.id, hits, size=20)
+            _btn(surface, "刪除", 888, y, 64, 52, "delete_alarm", a.id, hits,
+                 size=20, fg=theme.C["warn"])
         else:
-            _btn(surface, "刪除", 710, y, 100, 52, "delete_alarm", a.id, hits,
-                 size=22, fg=theme.C["warn"])
+            _btn(surface, "刪除", 758, y, 84, 52, "delete_alarm", a.id, hits,
+                 size=20, fg=theme.C["warn"])
         y += 85
 
 
 def _render_draft(surface, draft, hits) -> None:
     x0 = DIVIDER_X + 40
-    _text(surface, "新增鬧鐘", 24, theme.C["muted"], x0, 32)
+    editing = bool(draft.get("editing_id"))
+    _text(surface, "編輯鬧鐘" if editing else "新增鬧鐘", 24, theme.C["muted"], x0, 32)
+    if editing:
+        _text(surface, "左側選另一顆可切換編輯", 18, theme.C["muted"], x0 + 150, 36)
     h, m = draft["hour"], draft["minute"]
     _text(surface, f"{h:02d}:{m:02d}", 72, theme.C["text"], x0 + 265, 140, "midtop")
 
@@ -122,7 +164,14 @@ def _render_draft(surface, draft, hits) -> None:
         _btn(surface, WEEKDAY_CHARS[d], bx, 300, dw, 52, "draft_day", d, hits,
              active=(d in days))
 
-    label = LABELS[draft["label_idx"] % len(LABELS)]
+    label = draft_label(draft)
     _btn(surface, f"標籤：{label}", x0, 364, 220, 56, "draft_label", None, hits, size=22)
-    _btn(surface, "新增鬧鐘", x0 + 300, 364, 240, 60, "add_alarm", None, hits,
+    _btn(surface, "到場後提醒" if draft.get("arrival_trigger") else "準時提醒",
+         x0 + 230, 364, 190, 56, "draft_arrival_trigger", None, hits, size=21,
+         active=bool(draft.get("arrival_trigger")))
+    _btn(surface, "儲存變更" if editing else "新增鬧鐘", x0 + 440, 364, 200, 60,
+         "save_alarm", None, hits,
          size=26, active=True)
+    if editing:
+        _btn(surface, "取消", x0 + 650, 364, 180, 60, "cancel_alarm_edit", None, hits,
+             size=24)

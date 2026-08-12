@@ -363,6 +363,77 @@ def test_codex_desktop_title_is_preferred_without_sending_private_thread_fields(
         assert forbidden not in encoded
 
 
+def test_codex_manual_name_wins_and_path_in_generated_title_does_not_lose_its_prefix(tmp_path):
+    recent = NOW - timedelta(minutes=1)
+    _write_jsonl(tmp_path / ".codex/sessions/2026/08/11/new_codex.jsonl", [
+        {"type": "session_meta", "payload": {"session_id": "named-id", "cwd": "/private/old-project"}},
+        {"type": "event_msg", "payload": {"type": "custom_tool_call"}, "timestamp": recent.isoformat()},
+    ], recent)
+    database = tmp_path / ".codex/state_5.sqlite"
+    connection = sqlite3.connect(database)
+    connection.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, name TEXT, cwd TEXT NOT NULL)")
+    connection.execute(
+        "INSERT INTO threads (id, title, name, cwd) VALUES (?, ?, ?, ?)",
+        ("named-id", "設定 /Users/kevin/Documents/Projects/portal 的開發服務", "Portal 開發服務", "/private/portal"),
+    )
+    connection.commit()
+    connection.close()
+
+    payload = SessionCollector(home=tmp_path, now=lambda: NOW, token_factory=lambda: "opaque-token-abcdefghijkl").payload()
+    assert payload["items"][0]["label"] == "Portal 開發服務"
+
+    connection = sqlite3.connect(database)
+    connection.execute("UPDATE threads SET name = NULL")
+    connection.commit()
+    connection.close()
+    payload = SessionCollector(home=tmp_path, now=lambda: NOW, token_factory=lambda: "opaque-token-abcdefghijkl").payload()
+    assert payload["items"][0]["label"] == "設定 的開發服務"
+
+
+def test_codex_app_server_uses_the_same_display_name_as_the_codex_task_list():
+    native_id = "019feabd-3ca5-7483-b908-6ff57c5e704f"
+    details = session_agent._details_from_codex_app_server_data([{
+        "id": native_id,
+        "name": "Deskbar",
+        "title": "你有辦法維護deskbar嗎？",
+        "cwd": "/private/deskbar",
+        "source": "vscode",
+        "threadSource": "user",
+        "preview": "must not be used",
+    }], [native_id])
+
+    assert details[native_id].display_title == "Deskbar"
+    assert details[native_id].cwd == "/private/deskbar"
+
+
+def test_login_home_prefers_codex_app_server_display_name_over_stale_sqlite(monkeypatch, tmp_path):
+    recent = NOW - timedelta(minutes=1)
+    native_id = "019feabd-3ca5-7483-b908-6ff57c5e704f"
+    _write_jsonl(tmp_path / ".codex/sessions/2026/08/11/new_codex.jsonl", [
+        {"type": "session_meta", "payload": {"session_id": native_id, "cwd": "/private/old-project"}},
+        {"type": "event_msg", "payload": {"type": "custom_tool_call"}, "timestamp": recent.isoformat()},
+    ], recent)
+    database = tmp_path / ".codex/state_5.sqlite"
+    connection = sqlite3.connect(database)
+    connection.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, cwd TEXT NOT NULL)")
+    connection.execute(
+        "INSERT INTO threads (id, title, cwd) VALUES (?, ?, ?)",
+        (native_id, "你有辦法維護deskbar嗎？", "/private/old-project"),
+    )
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(session_agent, "_current_user_home", lambda: tmp_path)
+    monkeypatch.setattr(session_agent, "_codex_app_server_details", lambda _ids: {
+        native_id: session_agent.CodexThreadDetails(
+            "你有辦法維護deskbar嗎？", "/private/deskbar", "vscode", "user", "Deskbar",
+        ),
+    })
+
+    payload = SessionCollector(home=tmp_path, now=lambda: NOW).payload()
+    assert payload["items"][0]["label"] == "Deskbar"
+    assert payload["items"][0]["project_label"] == "deskbar"
+
+
 def test_codex_sqlite_source_metadata_filters_exec_and_subagent_records(tmp_path):
     recent = NOW - timedelta(minutes=1)
     session_meta = {
