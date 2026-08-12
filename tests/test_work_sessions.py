@@ -162,6 +162,24 @@ def test_mark_work_sessions_seen_clears_unread_status():
     assert state.snapshot().work_sessions.unread_count(NOW) == 0
 
 
+def test_acknowledged_open_marks_only_that_session_seen():
+    from deskbar.store import AppState
+    now = datetime.now(timezone.utc)
+    state = AppState()
+    first = WorkSessionItem("codex", "first", now - timedelta(minutes=5), "open-111111111111")
+    second = WorkSessionItem("claude", "second", now - timedelta(minutes=5), "open-222222222222")
+    state.set_work_sessions(WorkSessionSnapshot((first, second)), now=now)
+    first_new = WorkSessionItem("codex", "first", now - timedelta(minutes=1), "open-111111111111")
+    second_new = WorkSessionItem("claude", "second", now - timedelta(minutes=1), "open-222222222222")
+    state.set_work_sessions(WorkSessionSnapshot((first_new, second_new)), now=now)
+    action_id = state.enqueue_work_session_action(first_new.open_id)
+
+    assert state.ack_work_session_action(action_id, opened=True)
+    snap = state.snapshot().work_sessions
+    assert not snap.is_item_unread(first_new, now)
+    assert snap.is_item_unread(second_new, now)
+
+
 def test_activity_state_validation_and_backward_compatibility():
     # Missing activity_state -> defaults to "unknown"
     snap = snapshot_from_payload(_payload(), now=NOW)

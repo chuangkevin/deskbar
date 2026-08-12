@@ -475,8 +475,9 @@ def register_routes(app: Flask, context: WebContext) -> None:
             return jsonify({"error": "unauthorized"}), 401
 
         d = request.get_json(force=True, silent=True)
-        if not isinstance(d, dict) or not isinstance(d.get("action_id"), str) or not d.get("action_id").strip():
+        if (not isinstance(d, dict) or not isinstance(d.get("action_id"), str)
+                or not d.get("action_id").strip() or not isinstance(d.get("opened", False), bool)):
             return jsonify({"error": "invalid action_id"}), 400
 
-        context.usage_state.ack_work_session_action(d["action_id"].strip())
+        context.usage_state.ack_work_session_action(d["action_id"].strip(), opened=d.get("opened", False))
         return "", 204

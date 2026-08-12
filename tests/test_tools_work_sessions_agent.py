@@ -268,7 +268,12 @@ def test_agent_opens_known_claude_target_and_acks_mismatches(tmp_path):
     agent.collect_and_push()
     assert agent.poll_and_focus() == 3
     assert opened == [("claude", cli_uuid)]
-    assert [post[0] for post in client.posts].count("/api/work-sessions/actions/ack") == 3
+    acks = [post for post in client.posts if post[0] == "/api/work-sessions/actions/ack"]
+    assert acks == [
+        ("/api/work-sessions/actions/ack", {"action_id": "known", "opened": True}),
+        ("/api/work-sessions/actions/ack", {"action_id": "wrong-source", "opened": False}),
+        ("/api/work-sessions/actions/ack", {"action_id": "unknown", "opened": False}),
+    ]
 
 
 def test_agent_dispatches_only_the_explicit_claude_dispatch_action(tmp_path):
@@ -302,6 +307,8 @@ def test_agent_dispatches_only_the_explicit_claude_dispatch_action(tmp_path):
         "/api/work-sessions/actions/ack",
         "/api/work-sessions/actions/ack",
     ]
+    assert client.posts[0][1] == {"action_id": "dispatch", "opened": True}
+    assert client.posts[1][1] == {"action_id": "forged", "opened": False}
 
 
 def test_new_codex_format_and_activity_state(tmp_path):

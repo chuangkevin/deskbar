@@ -660,15 +660,16 @@ class WorkSessionsAgent:
                 and action.get("kind") == "claude_dispatch"
                 and set(action).issubset({"action_id", "source", "kind"})
             )
+            opened = False
             if is_dispatch:
-                self.dispatch_opener()
+                opened = self.dispatch_opener()
             else:
                 open_id = action.get("open_id")
                 target = self.collector.target_for_open_id(open_id)
                 if target is not None and source == target.source:
-                    self.opener(target.source, target.native_id)
+                    opened = self.opener(target.source, target.native_id)
             # Always ACK invalid/expired local capabilities too: they must never retry forever.
-            self.client.post("/api/work-sessions/actions/ack", {"action_id": action_id})
+            self.client.post("/api/work-sessions/actions/ack", {"action_id": action_id, "opened": opened})
             completed += 1
         return completed
 

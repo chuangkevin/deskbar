@@ -184,8 +184,26 @@ class AppState:
     def poll_work_session_actions(self) -> list[dict]:
         return self._work_sessions_queue.poll()
 
-    def ack_work_session_action(self, action_id: str) -> bool:
-        return self._work_sessions_queue.ack(action_id)
+    def ack_work_session_action(self, action_id: str, *, opened: bool = False) -> bool:
+        """Acknowledge a Mac action and mark exactly its opened session as read."""
+        with self._lock:
+            action = self._work_sessions_queue.consume(action_id)
+            if action is None:
+                return False
+            if opened and action.kind == "session" and action.open_id:
+                item = self._work_sessions.item_for_open_id(action.open_id, utc_now())
+                if item is not None and item.source == action.source:
+                    key = (item.source, item.open_id)
+                    self._work_sessions_seen[key] = item.last_active_at
+                    unseen = frozenset(key_ for key_ in self._work_sessions.unseen_keys if key_ != key)
+                    self._work_sessions = WorkSessionSnapshot(
+                        items=self._work_sessions.items,
+                        errors=self._work_sessions.errors,
+                        fetched_at=self._work_sessions.fetched_at,
+                        unseen_keys=unseen,
+                    )
+                    self._seq += 1
+            return True
 
     def save_cache(self) -> None:
         """原子寫入（tempfile + os.replace），比照 config.save_settings：斷電/例外中斷

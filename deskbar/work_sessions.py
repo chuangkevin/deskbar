@@ -174,8 +174,12 @@ class WorkSessionActionQueue:
             return [self._actions[action_id].to_wire() for action_id in sorted(self._actions)]
 
     def ack(self, action_id: str) -> bool:
+        return self.consume(action_id) is not None
+
+    def consume(self, action_id: str) -> WorkSessionAction | None:
+        """Atomically remove and return an action so callers can apply its result."""
         with self._lock:
-            return self._actions.pop(action_id, None) is not None
+            return self._actions.pop(action_id, None)
 
     def _purge(self, now: float) -> None:
         for action_id, action in tuple(self._actions.items()):

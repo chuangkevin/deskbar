@@ -37,6 +37,21 @@ def test_push_filters_and_queues_action(alarm_store):
     assert client.get("/api/work-sessions/actions").get_json()["actions"] == []
 
 
+def test_successfully_opened_desktop_session_marks_only_that_item_seen(alarm_store):
+    state = AppState()
+    client = create_app(alarm_store, usage_state=state).test_client()
+    assert client.post("/api/work-sessions", json=_payload(last_active_at=(NOW - timedelta(minutes=5)).isoformat())).status_code == 204
+    assert client.post("/api/work-sessions", json=_payload(last_active_at=(NOW - timedelta(minutes=1)).isoformat())).status_code == 204
+    item = state.snapshot().work_sessions.items[0]
+    assert state.snapshot().work_sessions.is_item_unread(item, datetime.now(timezone.utc))
+
+    action_id = state.enqueue_work_session_action(item.open_id)
+    assert client.post("/api/work-sessions/actions/ack", json={"action_id": action_id, "opened": True}).status_code == 204
+
+    assert not state.snapshot().work_sessions.is_item_unread(item, datetime.now(timezone.utc))
+    assert client.post("/api/work-sessions/actions/ack", json={"action_id": "x", "opened": "yes"}).status_code == 400
+
+
 def test_read_only_status_omits_action_capability(alarm_store):
     client = create_app(alarm_store, usage_state=AppState()).test_client()
     assert client.post("/api/work-sessions", json=_payload(activity_state="result", project_label="myproj")).status_code == 204
