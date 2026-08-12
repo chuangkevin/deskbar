@@ -1,10 +1,9 @@
 """工作 Session UI 元件 (Pygame Dashboard Widget 與 Full Sessions View)。
 
 1. Center Workbench 視圖 (render_center_view)：
-   - 2 欄 × 3 列緊湊卡片 (窄 rect 時退為 1 欄)，最多顯示 6 筆。
-   - 每格標示顯眼來源 chip (Codex / Claude)、專案 basename、明確安全狀態 pill
-     (結果已就緒 / 執行中 / 等待更新 / 最近活動) 與相對時間。
-   - 未讀且為 result 時強調「結果待看」；未讀而非 result 標「有新進度」。
+   - 最多 6 張任務膠囊，寬畫面左右各 3 張，中間刻意留給喜喜活動。
+   - 每張標示來源（Codex / Claude）、名稱、明確狀態、專案／時間與開啟動作。
+   - 未讀完成標示「結果待看」；未讀進行中標示「有新進度」。
 
 2. Dashboard Summary 視圖 (render_summary)：
    - 僅當活躍 (strictly < 30m) Session 數量 > 0 時繪製。
@@ -32,17 +31,14 @@ def _text(surface: pygame.Surface, s: str, size: int, color, x: float, y: float,
 
 
 def _status_pill_info(state: str) -> tuple[str, str]:
-    """Return (display_text, icon_prefix) for status pill.
-    Never relies on color alone because text explicitly states the status.
-    """
+    """Return compact state copy that never depends on color alone."""
     if state == "result":
-        return "結果已就緒", "✓"
+        return "就緒", "✓"
     elif state == "working":
         return "執行中", "▶"
     elif state == "waiting":
-        return "等待更新", "⏳"
-    else:
-        return "最近活動", "•"
+        return "等待回覆", "⏳"
+    return "最近活動", "•"
 
 
 def _source_chip_colors(source: str) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
@@ -53,7 +49,7 @@ def _source_chip_colors(source: str) -> tuple[tuple[int, int, int], tuple[int, i
 
 
 def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now: datetime) -> list[Hit]:
-    """渲染中欄 Center View 工作台 (最多 6 張 2x3 緊湊卡片)。"""
+    """Render two quiet task decks, leaving a central lane for Sisi."""
     hits: list[Hit] = []
     if snap is None or not hasattr(snap, "work_sessions") or snap.work_sessions is None:
         active_items = ()
@@ -61,101 +57,79 @@ def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now:
         active_items = snap.work_sessions.active_items(now)
 
     if not active_items:
-        empty_str = "目前無 30 分鐘內的活動 Session"
-        _text(surface, empty_str, 20, theme.C["muted"],
+        _text(surface, "目前無 30 分鐘內的活動 Session", 20, theme.C["muted"],
               rect.x + rect.w / 2, rect.y + rect.h / 2, anchor="center")
         return hits
 
     items = active_items[:6]
     cols = 2 if rect.w >= 500 else 1
     rows = 3 if cols == 2 else min(6, max(1, len(items)))
-    gap_x = 16 if cols == 2 else 0
-    gap_y = 10
-    card_w = (rect.w - (cols - 1) * gap_x) / cols
-    card_h = (rect.h - (rows - 1) * gap_y) / rows
+    gap_y = 12
+    card_h = min(88, (rect.h - (rows - 1) * gap_y) / rows)
+    deck_h = rows * card_h + (rows - 1) * gap_y
+    deck_y = rect.y + max(0, (rect.h - deck_h) / 2)
+    if cols == 2:
+        middle_lane = min(280, max(120, rect.w * 0.24))
+        card_w = (rect.w - middle_lane) / 2
+        col_x = (rect.x, rect.x + card_w + middle_lane)
+    else:
+        card_w = rect.w
+        col_x = (rect.x,)
 
     for idx, item in enumerate(items):
-        c = idx % cols
-        r = idx // cols
-        cx = rect.x + c * (card_w + gap_x)
-        cy = rect.y + r * (card_h + gap_y)
+        col = idx % cols
+        row = idx // cols
+        cx = col_x[col]
+        cy = deck_y + row * (card_h + gap_y)
         card_rect = Rect(cx, cy, card_w, card_h)
+        card = pygame.Rect(round(cx), round(cy), round(card_w), round(card_h))
+        pygame.draw.rect(surface, theme.C["card"], card, border_radius=22)
 
-        pr = pygame.Rect(round(cx), round(cy), round(card_w), round(card_h))
-        pygame.draw.rect(surface, theme.C["card"], pr, border_radius=10)
+        is_unread = snap.work_sessions.is_item_unread(item, now)
+        state = getattr(item, "activity_state", "unknown")
+        is_result = state == "result"
+        border = theme.C["ok"] if (is_unread and is_result) else theme.C["panel_line"]
+        pygame.draw.rect(surface, border, card, width=2 if (is_unread and is_result) else 1, border_radius=22)
 
-        is_unread = snap.work_sessions.is_item_unread(item, now) if hasattr(snap, "work_sessions") and snap.work_sessions else False
-        act_state = getattr(item, "activity_state", "unknown")
-        is_result = (act_state == "result")
-
-        # Border
-        border_color = theme.C["ok"] if (is_unread and is_result) else theme.C["panel_line"]
-        border_w = 2 if (is_unread and is_result) else 1
-        pygame.draw.rect(surface, border_color, pr, width=border_w, border_radius=10)
-
-        # Source Chip (Codex vs Claude)
         source_name = _source_display_name(item.source)
-        chip_bg, chip_text = _source_chip_colors(item.source)
-        chip_w, chip_h = 56, 22
-        chip_r = pygame.Rect(round(cx + 12), round(cy + 10), chip_w, chip_h)
-        pygame.draw.rect(surface, chip_bg, chip_r, border_radius=5)
-        _text(surface, source_name, 13, chip_text, chip_r.centerx, chip_r.centery, anchor="center", bold=True)
+        source_color, _ = _source_chip_colors(item.source)
+        pygame.draw.circle(surface, source_color, (round(cx + 21), round(cy + 20)), 5)
+        _text(surface, source_name, 12, source_color, cx + 32, cy + 12, bold=True)
 
-        # Unread badge
-        badge_w = 0
-        if is_unread:
-            badge_text = "結果待看" if is_result else "有新進度"
-            badge_bg = theme.C["ok"] if is_result else theme.C["now"]
-            badge_w, badge_h = 76, 22
-            badge_r = pygame.Rect(round(cx + card_w - 12 - badge_w), round(cy + 10), badge_w, badge_h)
-            pygame.draw.rect(surface, badge_bg, badge_r, border_radius=6)
-            _text(surface, badge_text, 13, theme.C["now_text"], badge_r.centerx, badge_r.centery, anchor="center", bold=True)
+        btn_w, btn_h = 88, 22
+        btn = pygame.Rect(round(cx + card_w - 12 - btn_w), round(cy + 9), btn_w, btn_h)
+        pygame.draw.rect(surface, theme.C["bg"], btn, border_radius=11)
+        pygame.draw.rect(surface, theme.C["panel_line"], btn, width=1, border_radius=11)
+        _text(surface, f"開啟 {source_name}", 12, theme.C["text"], btn.centerx, btn.centery, anchor="center")
 
-        # Level 1: Title (Prominent session title)
-        title_x = cx + 76
-        max_title_w = max(40, card_w - (title_x - cx) - (badge_w + 16 if is_unread else 16))
-        lbl = item.label
-        lbl_img = theme.text_surface(lbl, 18, theme.C["text"], bold=True)
-        if lbl_img.get_width() > max_title_w:
-            while len(lbl) > 2 and theme.text_surface(lbl + "…", 18, theme.C["text"], bold=True).get_width() > max_title_w:
-                lbl = lbl[:-1]
-            lbl += "…"
-        _text(surface, lbl, 18, theme.C["text"], title_x, cy + 11, bold=True)
+        title = item.label
+        max_title_w = max(40, card_w - 32)
+        while len(title) > 2 and theme.text_surface(title, 18, theme.C["text"], bold=True).get_width() > max_title_w:
+            title = title[:-1]
+        if title != item.label:
+            title += "…"
+        _text(surface, title, 18, theme.C["text"], cx + 16, cy + 31, bold=True)
 
-        # Level 2: Project Basename
-        proj_str = f"專案：{item.project_label}" if getattr(item, "project_label", "") else ""
-        if proj_str:
-            max_proj_w = max(40, card_w - 24)
-            p_lbl = proj_str
-            p_img = theme.text_surface(p_lbl, 14, theme.C["text2"])
-            if p_img.get_width() > max_proj_w:
-                while len(p_lbl) > 2 and theme.text_surface(p_lbl + "…", 14, theme.C["text2"]).get_width() > max_proj_w:
-                    p_lbl = p_lbl[:-1]
-                p_lbl += "…"
-            _text(surface, p_lbl, 14, theme.C["text2"], cx + 12, cy + 40)
-
-        # Level 3: Status Pill & Relative Time
-        pill_text, pill_icon = _status_pill_info(act_state)
-        rel_time = fmt_relative_time(item.last_active_at, now)
-
-        if act_state == "result":
-            pill_color = theme.C["ok"]
-        elif act_state == "working":
-            pill_color = chip_bg
+        status, icon = _status_pill_info(state)
+        status_color = theme.C["ok"] if is_result else (source_color if state == "working" else theme.C["muted"])
+        if is_unread and is_result:
+            badge = "結果待看"
+        elif is_unread:
+            badge = f"{status} · 有新進度"
         else:
-            pill_color = theme.C["muted"]
+            badge = status
+        _text(surface, f"{icon} {badge}", 14, status_color, cx + 16, cy + 59, bold=True)
 
-        full_status_str = f"{pill_icon} {pill_text}" + (f" · {rel_time}" if rel_time else "")
-        _text(surface, full_status_str, 14, pill_color, cx + 12, cy + 68, bold=True)
-
-        # Action Button (bottom right)
-        btn_w, btn_h = 92, 24
-        btn_r = pygame.Rect(round(cx + card_w - 12 - btn_w), round(cy + card_h - 32), btn_w, btn_h)
-        pygame.draw.rect(surface, theme.C["bg"], btn_r, border_radius=6)
-        pygame.draw.rect(surface, theme.C["panel_line"], btn_r, width=1, border_radius=6)
-        btn_label = f"開啟 {source_name}"
-        btn_img = theme.text_surface(btn_label, 13, theme.C["text"])
-        surface.blit(btn_img, btn_img.get_rect(center=btn_r.center))
+        relative = fmt_relative_time(item.last_active_at, now)
+        detail = " · ".join(part for part in (getattr(item, "project_label", ""), relative) if part)
+        if detail:
+            while len(detail) > 2 and theme.text_surface(detail, 12, theme.C["muted"]).get_width() > 108:
+                detail = detail[:-1]
+            if detail.endswith("…"):
+                detail = detail[:-1]
+            elif len(detail) < len(" · ".join(part for part in (getattr(item, "project_label", ""), relative) if part)):
+                detail += "…"
+            _text(surface, detail, 12, theme.C["muted"], cx + card_w - 14, cy + 61, anchor="topright")
 
         hits.append(Hit(card_rect, "enqueue_work_session_action", item.open_id))
 

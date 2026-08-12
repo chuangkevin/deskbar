@@ -96,7 +96,9 @@ def test_focus_uses_fixed_argv_and_no_shell():
         returncode = 0
 
     assert focus_source_app("codex", runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
-    assert calls == [((['/usr/bin/open', '-a', 'ChatGPT'],), {'check': False, 'timeout': 10, 'shell': False})]
+    assert calls == [((['/usr/bin/open', '-b', 'com.openai.codex'],), {'check': False, 'timeout': 10, 'shell': False})]
+    assert focus_source_app("claude", runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
+    assert calls[-1] == ((['/usr/bin/open', '-a', 'Claude'],), {'check': False, 'timeout': 10, 'shell': False})
     assert focus_source_app("unknown", runner=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError())) is False
     tree = ast.parse(Path(__file__).parents[1].joinpath("tools/work_sessions_agent.py").read_text(encoding="utf-8"))
     assert not any(isinstance(node, ast.Call) and any(
@@ -215,6 +217,8 @@ def test_claude_title_priority_order(tmp_path):
         "lastActivityAt": recent.isoformat(),
         "title": "App Override Title"
     }), encoding="utf-8")
+    import os
+    os.utime(app_file, (recent.timestamp(), recent.timestamp()))
 
     collector = SessionCollector(home=tmp_path, now=lambda: NOW, token_factory=lambda: "opaque-token-abcdefghijkl")
     payload = collector.payload()

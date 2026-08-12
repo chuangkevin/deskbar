@@ -40,7 +40,8 @@ DEFAULT_URL = "http://100.98.35.59:8080"
 POLL_SECONDS = 5.0
 COLLECT_SECONDS = 15.0
 APP_OPEN_ARGS = {
-    "codex": ("/usr/bin/open", "-a", "ChatGPT"),
+    # Bundle ID survives display-name changes and makes the target unambiguous.
+    "codex": ("/usr/bin/open", "-b", "com.openai.codex"),
     "claude": ("/usr/bin/open", "-a", "Claude"),
 }
 _TAIL_BYTES = 128 * 1024

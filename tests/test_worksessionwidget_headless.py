@@ -125,10 +125,10 @@ def test_render_center_view_shows_unread_badge_and_honest_labels(monkeypatch):
 
     hits = worksessionwidget.render_center_view(surface, snap, settings, tl_area, NOW)
     assert len(hits) == 2
-    assert "結果待看" in texts
-    assert "有新進度" in texts
-    assert "✓ 結果已就緒 · 1分前" in texts
-    assert "▶ 執行中 · 2分前" in texts
+    assert any("結果待看" in text for text in texts)
+    assert any("有新進度" in text for text in texts)
+    assert "✓ 結果待看" in texts
+    assert any(text.startswith("▶ 執行中") for text in texts)
     assert not any("此對話" in t for t in texts)
     assert not any("%" in t for t in texts)
 
@@ -139,3 +139,17 @@ def test_workbench_source_identity_colors_are_codex_sky_blue_and_claude_orange()
     assert codex_bg == theme.C["work_codex"]
     assert claude_bg == theme.C["work_claude"]
     assert codex_bg != claude_bg
+
+
+def test_center_workbench_keeps_a_middle_lane_for_sisi_and_six_click_targets():
+    from deskbar.layout import Rect
+
+    surface = pygame.Surface((1920, 480))
+    tl_area = Rect(420, 52, 1100, 368)
+    hits = worksessionwidget.render_center_view(surface, _snap(count=6), Settings(), tl_area, NOW)
+
+    assert len(hits) == 6
+    left = [hit for hit in hits if hit.rect.x < tl_area.x + tl_area.w / 2]
+    right = [hit for hit in hits if hit.rect.x >= tl_area.x + tl_area.w / 2]
+    assert len(left) == len(right) == 3
+    assert max(hit.rect.x + hit.rect.w for hit in left) < min(hit.rect.x for hit in right)
