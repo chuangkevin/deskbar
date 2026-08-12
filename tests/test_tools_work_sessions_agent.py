@@ -226,3 +226,14 @@ def test_claude_title_priority_order(tmp_path):
     item = payload["items"][0]
     assert item["label"] == "App Override Title"
     assert item["project_label"] == "proj_alpha"
+
+
+def test_claude_metadata_without_title_or_project_is_not_a_visible_task(tmp_path):
+    recent = NOW - timedelta(minutes=1)
+    _write_jsonl(tmp_path / ".claude/projects/-/queue.jsonl", [
+        {"sessionId": "queue-only", "type": "queue-operation", "timestamp": recent.isoformat()},
+    ], recent)
+
+    payload = SessionCollector(home=tmp_path, now=lambda: NOW).payload()
+
+    assert payload["items"] == []

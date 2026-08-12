@@ -436,6 +436,11 @@ class SessionCollector:
         records: list[LocalSession] = []
         for native_id, info in found.items():
             chosen_title = info["title"] or info["custom_title"]
+            # Claude can leave behind a queue-operation JSONL with no title and
+            # no cwd.  It is not a user-identifiable task, so do not turn it
+            # into a misleading "未命名 Session" card.
+            if not _clean_label(chosen_title) and not _clean_label(info["cwd"]):
+                continue
             label, project_label = safe_session_labels(chosen_title, info["cwd"], "未命名 Session")
             records.append(LocalSession("claude", native_id, label, project_label, info["active_at"], info["activity_state"]))
 
