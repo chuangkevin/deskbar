@@ -132,6 +132,9 @@ def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now:
             badge = f"{status} · 有新進度"
         else:
             badge = status
+        progress = getattr(item, "progress_label", "")
+        if progress:
+            badge = progress
         _text(surface, f"{icon} {badge}", 16, status_color, cx + 18, cy + 78, bold=True)
 
         relative = fmt_relative_time(item.last_active_at, now)

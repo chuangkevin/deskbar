@@ -138,6 +138,26 @@ def test_render_center_view_shows_unread_badge_and_honest_labels(monkeypatch):
     assert dispatch.rect.y + dispatch.rect.h == tl_area.y + tl_area.h - 10
 
 
+def test_render_center_view_shows_dispatch_task_progress(monkeypatch):
+    from deskbar.layout import Rect
+    texts = []
+    original = worksessionwidget._text
+
+    def spy(*args, **kwargs):
+        texts.append(args[1])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(worksessionwidget, "_text", spy)
+    item = WorkSessionItem(
+        "claude", "Dispatch task", NOW - timedelta(minutes=1), "opaque-open-id-dispatch",
+        activity_state="working", project_label="Claude Dispatch", progress_label="2/4 完成 · 進行中",
+    )
+    snap = Snapshot([], None, {}, 0, work_sessions=WorkSessionSnapshot((item,)))
+    worksessionwidget.render_center_view(pygame.Surface((1920, 480)), snap, Settings(), Rect(420, 52, 1100, 368), NOW)
+
+    assert "▶ 2/4 完成 · 進行中" in texts
+
+
 def test_workbench_source_identity_colors_are_codex_sky_blue_and_claude_orange():
     codex_bg, _ = worksessionwidget._source_chip_colors("codex")
     claude_bg, _ = worksessionwidget._source_chip_colors("claude")

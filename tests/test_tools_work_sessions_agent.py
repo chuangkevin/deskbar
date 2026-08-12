@@ -133,6 +133,42 @@ def test_claude_app_metadata_mtime_is_only_a_fallback_when_activity_is_known(tmp
     assert SessionCollector(home=tmp_path, now=lambda: NOW).payload()["items"] == []
 
 
+def test_collector_includes_recent_claude_dispatch_with_safe_task_progress(tmp_path):
+    recent = NOW - timedelta(minutes=1)
+    cli_uuid = "123e4567-e89b-12d3-a456-426614174000"
+    session_id = "local_dispatch_task"
+    base = tmp_path / "Library/Application Support/Claude/local-agent-mode-sessions/org"
+    descriptor = base / f"{session_id}.json"
+    descriptor.parent.mkdir(parents=True)
+    descriptor.write_text(json.dumps({
+        "sessionId": session_id,
+        "cliSessionId": cli_uuid,
+        "sessionType": "dispatch_child",
+        "title": "Release checklist",
+        "lastActivityAt": int(recent.timestamp() * 1000),
+        "initialMessage": "private prompt must never be sent",
+    }), encoding="utf-8")
+    tasks = base / session_id / ".claude/tasks/task-group"
+    tasks.mkdir(parents=True)
+    for task_id, status in (("1", "completed"), ("2", "completed"), ("3", "in_progress"), ("4", "pending")):
+        (tasks / f"{task_id}.json").write_text(json.dumps({
+            "id": task_id, "status": status, "subject": "private task detail",
+        }), encoding="utf-8")
+
+    collector = SessionCollector(home=tmp_path, now=lambda: NOW, token_factory=lambda: "opaque-token-abcdefghijkl")
+    payload = collector.payload()
+
+    assert payload["items"] == [{
+        "source": "claude", "label": "Release checklist", "project_label": "Claude Dispatch",
+        "last_active_at": recent.isoformat().replace("+00:00", "Z"),
+        "open_id": "opaque-token-abcdefghijkl", "activity_state": "working",
+        "progress_label": "2/4 完成 · 進行中",
+    }]
+    assert collector.target_for_open_id("opaque-token-abcdefghijkl") == session_agent.OpenTarget("claude", cli_uuid)
+    encoded = json.dumps(payload)
+    assert "private" not in encoded and session_id not in encoded and cli_uuid not in encoded
+
+
 def test_missing_source_is_reported_without_crashing(tmp_path):
     payload = SessionCollector(home=tmp_path, now=lambda: NOW).payload()
     assert payload["items"] == []

@@ -74,6 +74,7 @@ class LocalSession:
     project_label: str
     last_active_at: datetime
     activity_state: str = "unknown"
+    progress_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -233,6 +234,37 @@ def _best_time(*instants: datetime | str | None) -> datetime | None:
     return max(usable) if usable else None
 
 
+def _dispatch_task_progress(tasks_root: Path) -> tuple[str, str]:
+    """Return a privacy-safe Dispatch task summary and the aggregate state."""
+    statuses: list[str] = []
+    try:
+        for path in tasks_root.glob("*/*.json"):
+            try:
+                value = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+                continue
+            status = value.get("status") if isinstance(value, dict) else None
+            if isinstance(status, str) and status in {"pending", "in_progress", "completed"}:
+                statuses.append(status)
+    except OSError:
+        return "", "unknown"
+    if not statuses:
+        return "", "unknown"
+    total = len(statuses)
+    completed = statuses.count("completed")
+    in_progress = statuses.count("in_progress")
+    if in_progress:
+        state = "working"
+        suffix = "進行中"
+    elif completed == total:
+        state = "result"
+        suffix = "已完成"
+    else:
+        state = "waiting"
+        suffix = "待處理"
+    return f"{completed}/{total} 完成 · {suffix}", state
+
+
 def _canonical_uuid(value: object) -> str | None:
     if not isinstance(value, str):
         return None
@@ -336,14 +368,17 @@ class SessionCollector:
             key = (record.source, record.native_id)
             open_id = self._open_ids.setdefault(key, self._token_factory())
             current_open_targets[open_id] = OpenTarget(record.source, record.native_id)
-            items.append({
+            item = {
                 "source": record.source,
                 "label": record.label,
                 "project_label": record.project_label,
                 "last_active_at": _iso(record.last_active_at),
                 "open_id": open_id,
                 "activity_state": record.activity_state,
-            })
+            }
+            if record.progress_label:
+                item["progress_label"] = record.progress_label
+            items.append(item)
         self._open_targets = current_open_targets
         return {
             "items": items,
@@ -415,7 +450,8 @@ class SessionCollector:
     def _collect_claude(self) -> tuple[list[LocalSession], list[SourceProblem]]:
         projects = self.home / ".claude" / "projects"
         app_sessions = self.home / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
-        if not projects.exists() and not app_sessions.exists():
+        dispatch_root = self.home / "Library" / "Application Support" / "Claude" / "local-agent-mode-sessions"
+        if not projects.exists() and not app_sessions.exists() and not dispatch_root.exists():
             return [], [SourceProblem("claude", "unavailable")]
         found: dict[str, dict] = {}
         problems: set[str] = set()
@@ -487,6 +523,38 @@ class SessionCollector:
             except OSError:
                 problems.add("unavailable")
 
+        if dispatch_root.exists():
+            try:
+                for path in dispatch_root.rglob("local_*.json"):
+                    try:
+                        value = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+                        if not isinstance(value, dict) or value.get("sessionType") != "dispatch_child":
+                            continue
+                        active_at = parse_timestamp(value.get("lastActivityAt"))
+                        if active_at is None or (self.now().astimezone(timezone.utc) - active_at).total_seconds() >= MAX_ACTIVE_AGE_SECONDS:
+                            continue
+                        session_id = value.get("sessionId")
+                        native_id = _canonical_uuid(value.get("cliSessionId")) or session_id
+                        if not isinstance(session_id, str) or not isinstance(native_id, str) or not native_id:
+                            continue
+                        progress, act_state = _dispatch_task_progress(path.parent / session_id / ".claude" / "tasks")
+                        update_candidate(
+                            native_id,
+                            title=value.get("title"),
+                            cwd="Claude Dispatch",
+                            active_at=active_at,
+                            activity_state=act_state,
+                        )
+                        found[native_id]["progress_label"] = progress
+                    except PermissionError:
+                        problems.add("permission")
+                    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+                        problems.add("corrupt")
+            except PermissionError:
+                problems.add("permission")
+            except OSError:
+                problems.add("unavailable")
+
         records: list[LocalSession] = []
         for info in found.values():
             chosen_title = info["title"] or info["custom_title"]
@@ -496,7 +564,10 @@ class SessionCollector:
             if not _clean_label(chosen_title) and not _clean_label(info["cwd"]):
                 continue
             label, project_label = safe_session_labels(chosen_title, info["cwd"], "未命名 Session")
-            records.append(LocalSession("claude", info["native_id"], label, project_label, info["active_at"], info["activity_state"]))
+            records.append(LocalSession(
+                "claude", info["native_id"], label, project_label, info["active_at"],
+                info["activity_state"], info.get("progress_label", ""),
+            ))
 
         return records, [SourceProblem("claude", code) for code in sorted(problems)]
 

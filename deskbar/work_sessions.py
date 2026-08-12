@@ -68,6 +68,7 @@ class WorkSessionItem:
     open_id: str
     activity_state: ActivityState = "unknown"
     project_label: str = "未命名專案"
+    progress_label: str = ""
 
     def is_active(self, now: datetime, cutoff_seconds: float = MAX_ACTIVE_AGE_SECONDS) -> bool:
         instant = self.last_active_at.astimezone(timezone.utc)
@@ -224,13 +225,21 @@ def snapshot_from_payload(payload: object, *, now: datetime | None = None) -> Wo
             cleaned_label = cleaned_label.replace("\\", "/").split("/")[-1].strip()
         label = cleaned_label[:80] or "未命名 Session"
 
+        raw_progress = raw.get("progress_label", "")
+        if not isinstance(raw_progress, str):
+            raise ValueError("invalid progress_label")
+        progress_label = " ".join(raw_progress.split())[:80]
+
         if "project_label" in raw:
             project_label = safe_project_label(raw.get("project_label"))
         else:
             project_label = safe_project_label(raw.get("label"))
 
         seen_open_ids.add(open_id)
-        parsed_items.append(WorkSessionItem(source, label, stamp, open_id, activity_state=activity_state, project_label=project_label))
+        parsed_items.append(WorkSessionItem(
+            source, label, stamp, open_id, activity_state=activity_state,
+            project_label=project_label, progress_label=progress_label,
+        ))
 
     parsed_errors: list[WorkSessionError] = []
     for raw in raw_errors:

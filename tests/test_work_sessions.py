@@ -63,6 +63,12 @@ def test_payload_rejects_sensitive_fields_and_normalizes_path_to_basename():
     assert snapshot.items[0].label == "project"
     assert snapshot.items[0].project_label == "project"
 
+    dispatch = snapshot_from_payload(_payload(progress_label="2/4 完成 · 進行中"), now=NOW)
+    assert dispatch.items[0].progress_label == "2/4 完成 · 進行中"
+
+    with pytest.raises(ValueError, match="progress_label"):
+        snapshot_from_payload(_payload(progress_label=2), now=NOW)
+
 
 def test_stale_payload_is_removed_before_store_and_valid_open_id_can_resolve():
     data = _payload(last_active_at=(NOW - timedelta(minutes=31)).isoformat())
