@@ -38,7 +38,9 @@ from deskbar.work_sessions import (
 )
 
 DEFAULT_URL = "http://100.98.35.59:8080"
-POLL_SECONDS = 5.0
+# This is the click-to-desktop control path.  Keep its worst-case queue wait
+# below one second; session collection remains the lower-frequency operation.
+POLL_SECONDS = 1.0
 COLLECT_SECONDS = 15.0
 APP_OPEN_ARGS = {
     # Bundle ID survives display-name changes and makes the target unambiguous.

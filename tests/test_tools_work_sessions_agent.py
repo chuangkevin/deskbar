@@ -6,6 +6,7 @@ from pathlib import Path
 
 import tools.work_sessions_agent as session_agent
 from tools.work_sessions_agent import (
+    POLL_SECONDS,
     DeskbarClient,
     SessionCollector,
     WorkSessionsAgent,
@@ -14,6 +15,11 @@ from tools.work_sessions_agent import (
 )
 
 NOW = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
+
+
+def test_action_polling_has_one_second_worst_case_latency_budget():
+    """Deskbar touch actions must not sit in the Pi queue for several seconds."""
+    assert POLL_SECONDS <= 1.0
 
 
 def _write_jsonl(path: Path, values: list[dict], mtime: datetime):
