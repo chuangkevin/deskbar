@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from uuid import UUID
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -74,17 +75,15 @@ class LocalSession:
 
 
 @dataclass(frozen=True)
-class SourceProblem:
+class OpenTarget:
     source: str
-    code: str
+    native_id: str
 
 
 @dataclass(frozen=True)
-class CodexThreadDetails:
-    title: object
-    cwd: object
-    source: object = None
-    thread_source: object = None
+class SourceProblem:
+    source: str
+    code: str
 
 
 @dataclass(frozen=True)
@@ -93,13 +92,15 @@ class CodexThreadDetails:
 
     title: object
     cwd: object
-    source: str | None = None
-    thread_source: str | None = None
+    source: object = None
+    thread_source: object = None
 
     @property
     def is_internal_work_record(self) -> bool:
         """Internal exec/subagent threads are not selectable Codex tasks."""
-        return self.source == "exec" or self.thread_source == "subagent"
+        source = self.source.strip().lower() if isinstance(self.source, str) else ""
+        thread_source = self.thread_source.strip().lower() if isinstance(self.thread_source, str) else ""
+        return source == "exec" or thread_source == "subagent"
 
 
 _WORKING_TYPES = frozenset({
@@ -230,6 +231,16 @@ def _best_time(*instants: datetime | str | None) -> datetime | None:
     return max(usable) if usable else None
 
 
+def _canonical_uuid(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = UUID(value)
+    except (ValueError, AttributeError):
+        return None
+    return value if str(parsed) == value else None
+
+
 def _codex_thread_details(home: Path, native_ids: Iterable[str]) -> dict[str, CodexThreadDetails]:
     """Read only the visible Codex title and cwd for known local session ids.
 
@@ -251,24 +262,27 @@ def _codex_thread_details(home: Path, native_ids: Iterable[str]) -> dict[str, Co
             connection = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True, timeout=0.2)
             try:
                 columns = {row[1] for row in connection.execute("PRAGMA table_info(threads)")}
-                optional_columns = [name for name in ("source", "thread_source") if name in columns]
+                if "id" not in columns:
+                    continue
+                selected_columns = ["id"]
+                selected_columns.extend(name for name in ("title", "cwd", "source", "thread_source") if name in columns)
                 details: dict[str, CodexThreadDetails] = {}
                 for offset in range(0, len(identifiers), 900):
                     part = identifiers[offset:offset + 900]
                     placeholders = ",".join("?" for _ in part)
                     rows = connection.execute(
-                        f"SELECT id, title, cwd{''.join(f', {name}' for name in optional_columns)} "
+                        f"SELECT {', '.join(selected_columns)} "
                         f"FROM threads WHERE id IN ({placeholders})", part
                     )
                     for row in rows:
-                        native_id, title, cwd, *metadata = row
+                        row_map = dict(zip(selected_columns, row))
+                        native_id = row_map.get("id")
                         if isinstance(native_id, str):
-                            metadata_by_name = dict(zip(optional_columns, metadata))
                             details[native_id] = CodexThreadDetails(
-                                title,
-                                cwd,
-                                metadata_by_name.get("source"),
-                                metadata_by_name.get("thread_source"),
+                                row_map.get("title"),
+                                row_map.get("cwd"),
+                                row_map.get("source"),
+                                row_map.get("thread_source"),
                             )
                 return details
             finally:
@@ -292,7 +306,7 @@ class SessionCollector:
         self.now = now
         self._token_factory = token_factory
         self._open_ids: dict[tuple[str, str], str] = {}
-        self._open_sources: dict[str, str] = {}
+        self._open_targets: dict[str, OpenTarget] = {}
 
     def collect(self) -> tuple[list[LocalSession], list[SourceProblem]]:
         codex, codex_problems = self._collect_codex()
@@ -315,11 +329,11 @@ class SessionCollector:
     def payload(self) -> dict:
         records, problems = self.collect()
         items = []
-        current_open_ids: dict[str, str] = {}
+        current_open_targets: dict[str, OpenTarget] = {}
         for record in records:
             key = (record.source, record.native_id)
             open_id = self._open_ids.setdefault(key, self._token_factory())
-            current_open_ids[open_id] = record.source
+            current_open_targets[open_id] = OpenTarget(record.source, record.native_id)
             items.append({
                 "source": record.source,
                 "label": record.label,
@@ -328,15 +342,15 @@ class SessionCollector:
                 "open_id": open_id,
                 "activity_state": record.activity_state,
             })
-        self._open_sources = current_open_ids
+        self._open_targets = current_open_targets
         return {
             "items": items,
             "errors": [{"source": problem.source, "code": problem.code} for problem in problems],
             "fetched_at": _iso(self.now()),
         }
 
-    def source_for_open_id(self, open_id: object) -> str | None:
-        return self._open_sources.get(open_id) if isinstance(open_id, str) else None
+    def target_for_open_id(self, open_id: object) -> OpenTarget | None:
+        return self._open_targets.get(open_id) if isinstance(open_id, str) else None
 
     def _collect_codex(self) -> tuple[list[LocalSession], list[SourceProblem]]:
         root = self.home / ".codex" / "sessions"
@@ -382,7 +396,7 @@ class SessionCollector:
             if detail is not None and detail.is_internal_work_record:
                 continue
             label, project_label = safe_session_labels(
-                detail.title if detail is not None and detail.title else record.label,
+                detail.title if detail is not None else record.label,
                 detail.cwd if detail is not None and detail.cwd else record.project_label,
                 "未命名 Session",
             )
@@ -453,7 +467,7 @@ class SessionCollector:
                     try:
                         value = json.loads(path.read_text(encoding="utf-8", errors="replace"))
                         if isinstance(value, dict):
-                            sid = value.get("sessionId")
+                            sid = _canonical_uuid(value.get("cliSessionId")) or value.get("sessionId")
                             title = value.get("title")
                             cwd = value.get("cwd")
                             act_state = _classify_event(value)
@@ -469,7 +483,7 @@ class SessionCollector:
                 problems.add("unavailable")
 
         records: list[LocalSession] = []
-        for native_id, info in found.items():
+        for info in found.values():
             chosen_title = info["title"] or info["custom_title"]
             # Claude can leave behind a queue-operation JSONL with no title and
             # no cwd.  It is not a user-identifiable task, so do not turn it
@@ -477,7 +491,7 @@ class SessionCollector:
             if not _clean_label(chosen_title) and not _clean_label(info["cwd"]):
                 continue
             label, project_label = safe_session_labels(chosen_title, info["cwd"], "未命名 Session")
-            records.append(LocalSession("claude", native_id, label, project_label, info["active_at"], info["activity_state"]))
+            records.append(LocalSession("claude", info["native_id"], label, project_label, info["active_at"], info["activity_state"]))
 
         return records, [SourceProblem("claude", code) for code in sorted(problems)]
 
@@ -506,8 +520,13 @@ class DeskbarClient:
         return json.loads(raw) if raw else {}
 
 
-def focus_source_app(source: str, runner: Callable[..., object] = subprocess.run) -> bool:
+def open_session_target(source: str, native_id: str | None = None,
+                        runner: Callable[..., object] = subprocess.run) -> bool:
     args = APP_OPEN_ARGS.get(source)
+    if source == "claude":
+        resume_id = _canonical_uuid(native_id)
+        if resume_id is not None:
+            args = ("/usr/bin/open", f"claude://resume?session={resume_id}")
     if args is None:
         return False
     try:
@@ -517,9 +536,13 @@ def focus_source_app(source: str, runner: Callable[..., object] = subprocess.run
     return getattr(result, "returncode", 0) == 0
 
 
+def focus_source_app(source: str, runner: Callable[..., object] = subprocess.run) -> bool:
+    return open_session_target(source, None, runner=runner)
+
+
 class WorkSessionsAgent:
     def __init__(self, collector: SessionCollector, client: DeskbarClient,
-                 opener: Callable[[str], bool] = focus_source_app) -> None:
+                 opener: Callable[[str, str], bool] = open_session_target) -> None:
         self.collector, self.client, self.opener = collector, client, opener
 
     def collect_and_push(self) -> dict:
@@ -536,8 +559,9 @@ class WorkSessionsAgent:
             action_id, open_id, source = action.get("action_id"), action.get("open_id"), action.get("source")
             if not isinstance(action_id, str):
                 continue
-            if source == self.collector.source_for_open_id(open_id):
-                self.opener(source)
+            target = self.collector.target_for_open_id(open_id)
+            if target is not None and source == target.source:
+                self.opener(target.source, target.native_id)
             # Always ACK invalid/expired local capabilities too: they must never retry forever.
             self.client.post("/api/work-sessions/actions/ack", {"action_id": action_id})
             completed += 1

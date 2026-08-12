@@ -83,32 +83,32 @@ def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now:
         cy = deck_y + row * (card_h + gap_y)
         card_rect = Rect(cx, cy, card_w, card_h)
         card = pygame.Rect(round(cx), round(cy), round(card_w), round(card_h))
-        pygame.draw.rect(surface, theme.C["card"], card, border_radius=22)
+        pygame.draw.rect(surface, theme.C["card"], card, border_radius=24)
 
         is_unread = snap.work_sessions.is_item_unread(item, now)
         state = getattr(item, "activity_state", "unknown")
         is_result = state == "result"
         border = theme.C["ok"] if (is_unread and is_result) else theme.C["panel_line"]
-        pygame.draw.rect(surface, border, card, width=2 if (is_unread and is_result) else 1, border_radius=22)
+        pygame.draw.rect(surface, border, card, width=2 if (is_unread and is_result) else 1, border_radius=24)
 
         source_name = _source_display_name(item.source)
         source_color, _ = _source_chip_colors(item.source)
         pygame.draw.circle(surface, source_color, (round(cx + 23), round(cy + 22)), 6)
         _text(surface, source_name, 14, source_color, cx + 36, cy + 13, bold=True)
 
-        btn_w, btn_h = 96, 26
+        btn_w, btn_h = 104, 28
         btn = pygame.Rect(round(cx + card_w - 14 - btn_w), round(cy + 10), btn_w, btn_h)
-        pygame.draw.rect(surface, theme.C["bg"], btn, border_radius=11)
-        pygame.draw.rect(surface, theme.C["panel_line"], btn, width=1, border_radius=11)
+        pygame.draw.rect(surface, theme.C["bg"], btn, border_radius=14)
+        pygame.draw.rect(surface, theme.C["panel_line"], btn, width=1, border_radius=14)
         _text(surface, f"開啟 {source_name}", 13, theme.C["text"], btn.centerx, btn.centery, anchor="center")
 
         title = item.label
         max_title_w = max(40, card_w - 36)
-        while len(title) > 2 and theme.text_surface(title, 21, theme.C["text"], bold=True).get_width() > max_title_w:
+        while len(title) > 2 and theme.text_surface(title, 22, theme.C["text"], bold=True).get_width() > max_title_w:
             title = title[:-1]
         if title != item.label:
             title += "…"
-        _text(surface, title, 21, theme.C["text"], cx + 18, cy + 42, bold=True)
+        _text(surface, title, 22, theme.C["text"], cx + 18, cy + 41, bold=True)
 
         status, icon = _status_pill_info(state)
         status_color = theme.C["ok"] if is_result else (source_color if state == "working" else theme.C["muted"])

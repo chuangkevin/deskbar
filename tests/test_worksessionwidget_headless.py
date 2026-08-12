@@ -152,5 +152,11 @@ def test_center_workbench_keeps_a_middle_lane_for_sisi_and_six_click_targets():
     left = [hit for hit in hits if hit.rect.x < tl_area.x + tl_area.w / 2]
     right = [hit for hit in hits if hit.rect.x >= tl_area.x + tl_area.w / 2]
     assert len(left) == len(right) == 3
-    assert max(hit.rect.x + hit.rect.w for hit in left) < min(hit.rect.x for hit in right)
     assert all(hit.rect.h >= 108 for hit in hits)
+    for hit in hits:
+        assert tl_area.x <= hit.rect.x
+        assert tl_area.y <= hit.rect.y
+        assert hit.rect.x + hit.rect.w <= tl_area.x + tl_area.w
+        assert hit.rect.y + hit.rect.h <= tl_area.y + tl_area.h
+    assert max(hit.rect.x + hit.rect.w for hit in left) < min(hit.rect.x for hit in right)
+    assert min(hit.rect.x for hit in right) - max(hit.rect.x + hit.rect.w for hit in left) >= 120

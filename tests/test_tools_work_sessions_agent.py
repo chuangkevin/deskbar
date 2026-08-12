@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import tools.work_sessions_agent as session_agent
-from tools.work_sessions_agent import DeskbarClient, SessionCollector, WorkSessionsAgent, focus_source_app
+from tools.work_sessions_agent import DeskbarClient, SessionCollector, WorkSessionsAgent, open_session_target
 
 NOW = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
 
@@ -50,6 +50,40 @@ def test_collector_dedupes_sources_filters_stale_and_never_pushes_private_fields
         assert forbidden not in encoded
 
 
+def test_claude_app_cli_session_uuid_is_local_only_open_target(tmp_path):
+    recent = NOW - timedelta(minutes=1)
+    cli_uuid = "123e4567-e89b-12d3-a456-426614174000"
+    local_id = "local_private_session_id"
+    private_cwd = "/Users/kevin/Documents/Private Client"
+    app_file = tmp_path / "Library/Application Support/Claude/claude-code-sessions/a/b/c.json"
+    app_file.parent.mkdir(parents=True)
+    app_file.write_text(json.dumps({
+        "sessionId": local_id,
+        "cliSessionId": cli_uuid,
+        "cwd": private_cwd,
+        "lastActivityAt": recent.isoformat(),
+        "title": "Safe App Title",
+        "prompt": "do not transmit prompt",
+        "body": "do not transmit body",
+    }), encoding="utf-8")
+    import os
+    os.utime(app_file, (recent.timestamp(), recent.timestamp()))
+
+    collector = SessionCollector(home=tmp_path, now=lambda: NOW, token_factory=lambda: "opaque-token-abcdefghijkl")
+    payload = collector.payload()
+
+    assert len(payload["items"]) == 1
+    item = payload["items"][0]
+    assert item["source"] == "claude"
+    assert item["open_id"] == "opaque-token-abcdefghijkl"
+    target = collector.target_for_open_id(item["open_id"])
+    assert target is not None
+    assert (target.source, target.native_id) == ("claude", cli_uuid)
+    encoded = json.dumps(payload)
+    for forbidden in (local_id, cli_uuid, private_cwd, "do not transmit", "claude://resume"):
+        assert forbidden not in encoded
+
+
 def test_missing_source_is_reported_without_crashing(tmp_path):
     payload = SessionCollector(home=tmp_path, now=lambda: NOW).payload()
     assert payload["items"] == []
@@ -89,17 +123,20 @@ def test_collector_only_parses_metadata_and_tail_record(monkeypatch, tmp_path):
     assert len(calls) <= 4
 
 
-def test_focus_uses_fixed_argv_and_no_shell():
+def test_target_opener_uses_fixed_argv_and_no_shell():
     calls = []
+    cli_uuid = "123e4567-e89b-12d3-a456-426614174000"
 
     class Result:
         returncode = 0
 
-    assert focus_source_app("codex", runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
-    assert calls == [((['/usr/bin/open', '-b', 'com.openai.codex'],), {'check': False, 'timeout': 10, 'shell': False})]
-    assert focus_source_app("claude", runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
+    assert open_session_target("claude", cli_uuid, runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
+    assert calls == [((['/usr/bin/open', f'claude://resume?session={cli_uuid}'],), {'check': False, 'timeout': 10, 'shell': False})]
+    assert open_session_target("claude", "local-not-a-uuid", runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
     assert calls[-1] == ((['/usr/bin/open', '-a', 'Claude'],), {'check': False, 'timeout': 10, 'shell': False})
-    assert focus_source_app("unknown", runner=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError())) is False
+    assert open_session_target("codex", "codex-native-id", runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
+    assert calls[-1] == ((['/usr/bin/open', '-b', 'com.openai.codex'],), {'check': False, 'timeout': 10, 'shell': False})
+    assert open_session_target("unknown", runner=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError())) is False
     tree = ast.parse(Path(__file__).parents[1].joinpath("tools/work_sessions_agent.py").read_text(encoding="utf-8"))
     assert not any(isinstance(node, ast.Call) and any(
         isinstance(keyword, ast.keyword) and keyword.arg == "shell" and isinstance(keyword.value, ast.Constant)
@@ -107,11 +144,20 @@ def test_focus_uses_fixed_argv_and_no_shell():
     ) for node in ast.walk(tree))
 
 
-def test_agent_only_opens_known_opaque_capability_and_acks(tmp_path):
+def test_agent_opens_known_claude_target_and_acks_mismatches(tmp_path):
     recent = NOW - timedelta(minutes=1)
-    _write_jsonl(tmp_path / ".codex/sessions/2026/08/11/codex.jsonl", [
-        {"session_meta": {"session_id": "native", "cwd": "/private/deskbar"}}, {"timestamp": recent.isoformat()},
-    ], recent)
+    cli_uuid = "123e4567-e89b-12d3-a456-426614174000"
+    app_file = tmp_path / "Library/Application Support/Claude/claude-code-sessions/a/b/c.json"
+    app_file.parent.mkdir(parents=True)
+    app_file.write_text(json.dumps({
+        "sessionId": "local_private_session_id",
+        "cliSessionId": cli_uuid,
+        "cwd": "/private/deskbar",
+        "lastActivityAt": recent.isoformat(),
+        "title": "Claude Task",
+    }), encoding="utf-8")
+    import os
+    os.utime(app_file, (recent.timestamp(), recent.timestamp()))
     collector = SessionCollector(home=tmp_path, now=lambda: NOW, token_factory=lambda: "opaque-token-abcdefghijkl")
 
     class Client:
@@ -123,16 +169,17 @@ def test_agent_only_opens_known_opaque_capability_and_acks(tmp_path):
             self.gets += 1
             open_id = collector.payload()["items"][0]["open_id"]
             return {"actions": [
-                {"action_id": "known", "open_id": open_id, "source": "codex"},
-                {"action_id": "unknown", "open_id": "not-a-capability", "source": "codex"},
+                {"action_id": "known", "open_id": open_id, "source": "claude"},
+                {"action_id": "wrong-source", "open_id": open_id, "source": "codex"},
+                {"action_id": "unknown", "open_id": "not-a-capability", "source": "claude"},
             ]}
 
     client, opened = Client(), []
-    agent = WorkSessionsAgent(collector, client, opener=opened.append)
+    agent = WorkSessionsAgent(collector, client, opener=lambda source, native_id: opened.append((source, native_id)) or True)
     agent.collect_and_push()
-    assert agent.poll_and_focus() == 2
-    assert opened == ["codex"]
-    assert [post[0] for post in client.posts].count("/api/work-sessions/actions/ack") == 2
+    assert agent.poll_and_focus() == 3
+    assert opened == [("claude", cli_uuid)]
+    assert [post[0] for post in client.posts].count("/api/work-sessions/actions/ack") == 3
 
 
 def test_new_codex_format_and_activity_state(tmp_path):
@@ -187,11 +234,17 @@ def test_codex_desktop_title_is_preferred_without_sending_private_thread_fields(
         assert forbidden not in encoded
 
 
-def test_codex_filters_internal_exec_and_subagent_records_from_app_task_list(tmp_path):
+def test_codex_sqlite_source_metadata_filters_exec_and_subagent_records(tmp_path):
     recent = NOW - timedelta(minutes=1)
-    for native_id in ("desktop-task", "internal-exec", "internal-subagent"):
+    session_meta = {
+        "internal-exec": ("/private/exec-project", "delegated prompt should not be shown"),
+        "internal-subagent": ("/private/subagent-project", "subagent prompt should not be shown"),
+        "visible-vscode": ("/private/jsonl-vscode", "JSONL title must not win"),
+        "visible-user": ("/private/jsonl-user", "JSONL user title must not win"),
+    }
+    for native_id, (cwd, title) in session_meta.items():
         _write_jsonl(tmp_path / f".codex/sessions/2026/08/11/{native_id}.jsonl", [
-            {"type": "session_meta", "payload": {"session_id": native_id, "cwd": "/private/deskbar"}},
+            {"type": "session_meta", "payload": {"session_id": native_id, "cwd": cwd, "title": title}},
             {"type": "event_msg", "payload": {"type": "custom_tool_call"}, "timestamp": recent.isoformat()},
         ], recent)
     database = tmp_path / ".codex/state_5.sqlite"
@@ -203,17 +256,25 @@ def test_codex_filters_internal_exec_and_subagent_records_from_app_task_list(tmp
     connection.executemany(
         "INSERT INTO threads (id, title, cwd, source, thread_source) VALUES (?, ?, ?, ?, ?)",
         [
-            ("desktop-task", "Codex App 顯示的標題", "/private/deskbar", "vscode", "user"),
-            ("internal-exec", "整段內部 prompt", "/private/deskbar", "exec", "user"),
-            ("internal-subagent", "子代理 prompt", "/private/deskbar", "vscode", "subagent"),
+            ("internal-exec", "Internal Exec Prompt", "/private/exec-project", "exec", "user"),
+            ("internal-subagent", "Subagent Internal Work", "/private/subagent-project", "vscode", "subagent"),
+            ("visible-vscode", "Visible VS Code Task", "/private/deskbar", "vscode", "user"),
+            ("visible-user", "Visible User Task", "/private/app-task", "user", "user"),
         ],
     )
     connection.commit()
     connection.close()
 
-    payload = SessionCollector(home=tmp_path, now=lambda: NOW).payload()
+    payload = SessionCollector(home=tmp_path, now=lambda: NOW, token_factory=lambda: "opaque-token-abcdefghijkl").payload()
 
-    assert [item["label"] for item in payload["items"]] == ["Codex App 顯示的標題"]
+    assert {item["label"] for item in payload["items"]} == {"Visible VS Code Task", "Visible User Task"}
+    assert {item["project_label"] for item in payload["items"]} == {"deskbar", "app-task"}
+    encoded = json.dumps(payload)
+    for forbidden in (
+        "internal-exec", "internal-subagent", "Internal Exec Prompt", "Subagent Internal Work",
+        "delegated prompt", "subagent prompt", "JSONL title", "/private/",
+    ):
+        assert forbidden not in encoded
 
 
 def test_duplicate_codex_rollout_records_become_one_opaque_item(tmp_path):
