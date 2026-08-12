@@ -79,6 +79,29 @@ class SourceProblem:
     code: str
 
 
+@dataclass(frozen=True)
+class CodexThreadDetails:
+    title: object
+    cwd: object
+    source: object = None
+    thread_source: object = None
+
+
+@dataclass(frozen=True)
+class CodexThreadDetails:
+    """Only the display metadata required to match the Codex task list."""
+
+    title: object
+    cwd: object
+    source: str | None = None
+    thread_source: str | None = None
+
+    @property
+    def is_internal_work_record(self) -> bool:
+        """Internal exec/subagent threads are not selectable Codex tasks."""
+        return self.source == "exec" or self.thread_source == "subagent"
+
+
 _WORKING_TYPES = frozenset({
     "reasoning", "thinking", "thought", "tool", "tool_use", "tool_call",
     "tool_result", "function_call", "function_call_output", "exec", "bash",
@@ -207,7 +230,7 @@ def _best_time(*instants: datetime | str | None) -> datetime | None:
     return max(usable) if usable else None
 
 
-def _codex_thread_details(home: Path, native_ids: Iterable[str]) -> dict[str, tuple[object, object]]:
+def _codex_thread_details(home: Path, native_ids: Iterable[str]) -> dict[str, CodexThreadDetails]:
     """Read only the visible Codex title and cwd for known local session ids.
 
     The desktop app keeps thread titles in a small SQLite index, while the
@@ -227,16 +250,26 @@ def _codex_thread_details(home: Path, native_ids: Iterable[str]) -> dict[str, tu
         try:
             connection = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True, timeout=0.2)
             try:
-                details: dict[str, tuple[object, object]] = {}
+                columns = {row[1] for row in connection.execute("PRAGMA table_info(threads)")}
+                optional_columns = [name for name in ("source", "thread_source") if name in columns]
+                details: dict[str, CodexThreadDetails] = {}
                 for offset in range(0, len(identifiers), 900):
                     part = identifiers[offset:offset + 900]
                     placeholders = ",".join("?" for _ in part)
                     rows = connection.execute(
-                        f"SELECT id, title, cwd FROM threads WHERE id IN ({placeholders})", part
+                        f"SELECT id, title, cwd{''.join(f', {name}' for name in optional_columns)} "
+                        f"FROM threads WHERE id IN ({placeholders})", part
                     )
-                    for native_id, title, cwd in rows:
+                    for row in rows:
+                        native_id, title, cwd, *metadata = row
                         if isinstance(native_id, str):
-                            details[native_id] = (title, cwd)
+                            metadata_by_name = dict(zip(optional_columns, metadata))
+                            details[native_id] = CodexThreadDetails(
+                                title,
+                                cwd,
+                                metadata_by_name.get("source"),
+                                metadata_by_name.get("thread_source"),
+                            )
                 return details
             finally:
                 connection.close()
@@ -345,10 +378,12 @@ class SessionCollector:
         details = _codex_thread_details(self.home, (record.native_id for record in records))
         titled_records: list[LocalSession] = []
         for record in records:
-            title, cwd = details.get(record.native_id, (None, None))
+            detail = details.get(record.native_id)
+            if detail is not None and detail.is_internal_work_record:
+                continue
             label, project_label = safe_session_labels(
-                title or record.label,
-                cwd or record.project_label,
+                detail.title if detail is not None and detail.title else record.label,
+                detail.cwd if detail is not None and detail.cwd else record.project_label,
                 "未命名 Session",
             )
             titled_records.append(LocalSession(

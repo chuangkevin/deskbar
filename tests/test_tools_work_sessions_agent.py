@@ -187,6 +187,35 @@ def test_codex_desktop_title_is_preferred_without_sending_private_thread_fields(
         assert forbidden not in encoded
 
 
+def test_codex_filters_internal_exec_and_subagent_records_from_app_task_list(tmp_path):
+    recent = NOW - timedelta(minutes=1)
+    for native_id in ("desktop-task", "internal-exec", "internal-subagent"):
+        _write_jsonl(tmp_path / f".codex/sessions/2026/08/11/{native_id}.jsonl", [
+            {"type": "session_meta", "payload": {"session_id": native_id, "cwd": "/private/deskbar"}},
+            {"type": "event_msg", "payload": {"type": "custom_tool_call"}, "timestamp": recent.isoformat()},
+        ], recent)
+    database = tmp_path / ".codex/state_5.sqlite"
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, cwd TEXT NOT NULL, "
+        "source TEXT, thread_source TEXT)"
+    )
+    connection.executemany(
+        "INSERT INTO threads (id, title, cwd, source, thread_source) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("desktop-task", "Codex App 顯示的標題", "/private/deskbar", "vscode", "user"),
+            ("internal-exec", "整段內部 prompt", "/private/deskbar", "exec", "user"),
+            ("internal-subagent", "子代理 prompt", "/private/deskbar", "vscode", "subagent"),
+        ],
+    )
+    connection.commit()
+    connection.close()
+
+    payload = SessionCollector(home=tmp_path, now=lambda: NOW).payload()
+
+    assert [item["label"] for item in payload["items"]] == ["Codex App 顯示的標題"]
+
+
 def test_duplicate_codex_rollout_records_become_one_opaque_item(tmp_path):
     recent = NOW - timedelta(minutes=1)
     earlier = NOW - timedelta(minutes=2)

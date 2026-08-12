@@ -64,8 +64,8 @@ def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now:
     items = active_items[:6]
     cols = 2 if rect.w >= 500 else 1
     rows = 3 if cols == 2 else min(6, max(1, len(items)))
-    gap_y = 12
-    card_h = min(88, (rect.h - (rows - 1) * gap_y) / rows)
+    gap_y = 8
+    card_h = min(112, (rect.h - (rows - 1) * gap_y) / rows)
     deck_h = rows * card_h + (rows - 1) * gap_y
     deck_y = rect.y + max(0, (rect.h - deck_h) / 2)
     if cols == 2:
@@ -93,22 +93,22 @@ def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now:
 
         source_name = _source_display_name(item.source)
         source_color, _ = _source_chip_colors(item.source)
-        pygame.draw.circle(surface, source_color, (round(cx + 21), round(cy + 20)), 5)
-        _text(surface, source_name, 12, source_color, cx + 32, cy + 12, bold=True)
+        pygame.draw.circle(surface, source_color, (round(cx + 23), round(cy + 22)), 6)
+        _text(surface, source_name, 14, source_color, cx + 36, cy + 13, bold=True)
 
-        btn_w, btn_h = 88, 22
-        btn = pygame.Rect(round(cx + card_w - 12 - btn_w), round(cy + 9), btn_w, btn_h)
+        btn_w, btn_h = 96, 26
+        btn = pygame.Rect(round(cx + card_w - 14 - btn_w), round(cy + 10), btn_w, btn_h)
         pygame.draw.rect(surface, theme.C["bg"], btn, border_radius=11)
         pygame.draw.rect(surface, theme.C["panel_line"], btn, width=1, border_radius=11)
-        _text(surface, f"開啟 {source_name}", 12, theme.C["text"], btn.centerx, btn.centery, anchor="center")
+        _text(surface, f"開啟 {source_name}", 13, theme.C["text"], btn.centerx, btn.centery, anchor="center")
 
         title = item.label
-        max_title_w = max(40, card_w - 32)
-        while len(title) > 2 and theme.text_surface(title, 18, theme.C["text"], bold=True).get_width() > max_title_w:
+        max_title_w = max(40, card_w - 36)
+        while len(title) > 2 and theme.text_surface(title, 21, theme.C["text"], bold=True).get_width() > max_title_w:
             title = title[:-1]
         if title != item.label:
             title += "…"
-        _text(surface, title, 18, theme.C["text"], cx + 16, cy + 31, bold=True)
+        _text(surface, title, 21, theme.C["text"], cx + 18, cy + 42, bold=True)
 
         status, icon = _status_pill_info(state)
         status_color = theme.C["ok"] if is_result else (source_color if state == "working" else theme.C["muted"])
@@ -118,18 +118,18 @@ def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now:
             badge = f"{status} · 有新進度"
         else:
             badge = status
-        _text(surface, f"{icon} {badge}", 14, status_color, cx + 16, cy + 59, bold=True)
+        _text(surface, f"{icon} {badge}", 16, status_color, cx + 18, cy + 78, bold=True)
 
         relative = fmt_relative_time(item.last_active_at, now)
         detail = " · ".join(part for part in (getattr(item, "project_label", ""), relative) if part)
         if detail:
-            while len(detail) > 2 and theme.text_surface(detail, 12, theme.C["muted"]).get_width() > 108:
+            while len(detail) > 2 and theme.text_surface(detail, 14, theme.C["muted"]).get_width() > 150:
                 detail = detail[:-1]
             if detail.endswith("…"):
                 detail = detail[:-1]
             elif len(detail) < len(" · ".join(part for part in (getattr(item, "project_label", ""), relative) if part)):
                 detail += "…"
-            _text(surface, detail, 12, theme.C["muted"], cx + card_w - 14, cy + 61, anchor="topright")
+            _text(surface, detail, 14, theme.C["muted"], cx + card_w - 16, cy + 80, anchor="topright")
 
         hits.append(Hit(card_rect, "enqueue_work_session_action", item.open_id))
 
