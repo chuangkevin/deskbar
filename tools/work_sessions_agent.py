@@ -538,10 +538,10 @@ def open_session_target(source: str, native_id: str | None = None,
 
 
 def open_claude_dispatch(runner: Callable[..., object] = subprocess.run) -> bool:
-    """Open Claude's fixed Tasks/Dispatch route, never a Pi-supplied URL."""
+    """Open Claude's fixed Dispatch route, never a Pi-supplied URL."""
     try:
         result = runner(
-            ["/usr/bin/open", "claude://claude.ai/tasks"],
+            ["/usr/bin/open", "claude://claude.ai/cowork/agent"],
             check=False,
             timeout=10,
             shell=False,
