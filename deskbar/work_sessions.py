@@ -32,13 +32,22 @@ def utc_now() -> datetime:
 
 
 def parse_timestamp(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    # Claude Desktop persists lastActivityAt as a Unix epoch in milliseconds.
+    # It is activity metadata, unlike a file's mtime which can move during a
+    # background metadata rewrite.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            seconds = value / 1000 if abs(value) >= 100_000_000_000 else value
+            return datetime.fromtimestamp(seconds, timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    return None
 
 
 def safe_project_label(value: object) -> str:

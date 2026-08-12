@@ -90,6 +90,43 @@ def test_claude_app_cli_session_uuid_is_local_only_open_target(tmp_path):
         assert forbidden not in encoded
 
 
+def test_claude_epoch_millisecond_activity_time_beats_a_fresh_metadata_mtime(tmp_path):
+    """A background metadata rewrite must not resurrect an idle Claude task."""
+    stale = NOW - timedelta(minutes=31)
+    fresh_mtime = NOW - timedelta(minutes=1)
+    app_file = tmp_path / "Library/Application Support/Claude/claude-code-sessions/a/b/c.json"
+    app_file.parent.mkdir(parents=True)
+    app_file.write_text(json.dumps({
+        "sessionId": "idle-claude-session",
+        "cwd": "/private/idle-project",
+        "title": "Idle Claude task",
+        "lastActivityAt": int(stale.timestamp() * 1000),
+    }), encoding="utf-8")
+    import os
+    os.utime(app_file, (fresh_mtime.timestamp(), fresh_mtime.timestamp()))
+
+    payload = SessionCollector(home=tmp_path, now=lambda: NOW).payload()
+
+    assert payload["items"] == []
+
+
+def test_claude_app_metadata_mtime_is_only_a_fallback_when_activity_is_known(tmp_path):
+    stale = NOW - timedelta(minutes=31)
+    fresh_mtime = NOW - timedelta(minutes=1)
+    app_file = tmp_path / "Library/Application Support/Claude/claude-code-sessions/a/b/c.json"
+    app_file.parent.mkdir(parents=True)
+    app_file.write_text(json.dumps({
+        "sessionId": "idle-claude-session",
+        "cwd": "/private/idle-project",
+        "title": "Idle Claude task",
+        "lastActivityAt": stale.isoformat(),
+    }), encoding="utf-8")
+    import os
+    os.utime(app_file, (fresh_mtime.timestamp(), fresh_mtime.timestamp()))
+
+    assert SessionCollector(home=tmp_path, now=lambda: NOW).payload()["items"] == []
+
+
 def test_missing_source_is_reported_without_crashing(tmp_path):
     payload = SessionCollector(home=tmp_path, now=lambda: NOW).payload()
     assert payload["items"] == []

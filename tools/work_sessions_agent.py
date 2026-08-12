@@ -471,7 +471,10 @@ class SessionCollector:
                             title = value.get("title")
                             cwd = value.get("cwd")
                             act_state = _classify_event(value)
-                            active_at = _best_time(parse_timestamp(value.get("lastActivityAt")), _mtime(path))
+                            # lastActivityAt is the actual session activity.  A JSON
+                            # metadata file can be rewritten by Claude background sync,
+                            # so its mtime must be only a fallback, never a newer vote.
+                            active_at = parse_timestamp(value.get("lastActivityAt")) or _mtime(path)
                             update_candidate(sid, title=title, cwd=cwd, active_at=active_at, activity_state=act_state)
                     except PermissionError:
                         problems.add("permission")
