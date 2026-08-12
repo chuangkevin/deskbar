@@ -272,16 +272,23 @@ def _dispatch_task_progress(tasks_root: Path) -> tuple[str, str]:
     total = len(statuses)
     completed = statuses.count("completed")
     in_progress = statuses.count("in_progress")
+    pending = statuses.count("pending")
     if in_progress:
         state = "working"
-        suffix = "進行中"
     elif completed == total:
         state = "result"
-        suffix = "已完成"
     else:
         state = "waiting"
-        suffix = "待處理"
-    return f"{completed}/{total} 完成 · {suffix}", state
+
+    # Always retain the numerator/denominator, including 0/N, so the status
+    # zone can show a real starting point rather than only "N 待處理".
+    parts = [f"{completed}/{total} 完成"]
+    if in_progress > 0:
+        parts.append(f"{in_progress} 進行中")
+    if pending > 0:
+        parts.append(f"{pending} 待處理")
+
+    return " · ".join(parts), state
 
 
 def _canonical_uuid(value: object) -> str | None:

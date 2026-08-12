@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 import pygame
 
 from deskbar.layout import Rect
@@ -67,9 +68,43 @@ def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now:
           dispatch.centerx, dispatch.centery, anchor="center", bold=True)
     hits.append(Hit(dispatch_rect, "enqueue_claude_dispatch", None))
 
+    dispatch_item = None
+    for item in active_items:
+        if getattr(item, "project_label", "") == "Claude Dispatch" and getattr(item, "progress_label", ""):
+            dispatch_item = item
+            break
+
+    if dispatch_item is not None:
+        progress_str = getattr(dispatch_item, "progress_label", "")
+        _text(surface, f"Dispatch · {progress_str}", 14, theme.C["text"],
+              dispatch.centerx, dispatch_y - 24, anchor="center", bold=True)
+        ratio = 0.0
+        match = re.match(r"^\s*(\d+)\s*/\s*(\d+)", progress_str)
+        if match:
+            try:
+                done = int(match.group(1))
+                total = int(match.group(2))
+                if total > 0:
+                    ratio = max(0.0, min(1.0, done / total))
+            except (ValueError, ZeroDivisionError):
+                ratio = 0.0
+
+        bar_w, bar_h = dispatch_w, 6
+        bar_x = dispatch_x
+        bar_y = dispatch_y - 10
+        bg_bar = pygame.Rect(round(bar_x), round(bar_y), bar_w, bar_h)
+        pygame.draw.rect(surface, theme.C["panel_line"], bg_bar, border_radius=3)
+        fill_w = round(bar_w * ratio)
+        if fill_w > 0:
+            fill_bar = pygame.Rect(round(bar_x), round(bar_y), fill_w, bar_h)
+            pygame.draw.rect(surface, theme.C["work_claude"], fill_bar, border_radius=3)
+    else:
+        _text(surface, "Dispatch：等待 Claude 建立 task", 14, theme.C["muted"],
+              dispatch.centerx, dispatch_y - 16, anchor="center")
+
     if not active_items:
         _text(surface, "目前無 30 分鐘內的活動 Session", 20, theme.C["muted"],
-              rect.x + rect.w / 2, (rect.y + dispatch_y) / 2, anchor="center")
+              rect.x + rect.w / 2, (rect.y + dispatch_y - 30) / 2, anchor="center")
         return hits
 
     items = active_items[:6]
@@ -77,8 +112,8 @@ def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now:
     rows = 3 if cols == 2 else min(6, max(1, len(items)))
     gap_y = 8
     # On wide displays Dispatch lives in Sisi's middle lane, so it does not
-    # compete with either card deck.  A single-column layout reserves space.
-    content_h = rect.h if cols == 2 else max(0, dispatch_y - 10 - rect.y)
+    # compete with either card deck. A single-column layout reserves space.
+    content_h = rect.h if cols == 2 else max(0, dispatch_y - 36 - rect.y)
     card_h = min(112, (content_h - (rows - 1) * gap_y) / rows)
     deck_h = rows * card_h + (rows - 1) * gap_y
     deck_y = rect.y + max(0, (content_h - deck_h) / 2)

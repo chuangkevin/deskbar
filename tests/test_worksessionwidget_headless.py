@@ -141,21 +141,62 @@ def test_render_center_view_shows_unread_badge_and_honest_labels(monkeypatch):
 def test_render_center_view_shows_dispatch_task_progress(monkeypatch):
     from deskbar.layout import Rect
     texts = []
-    original = worksessionwidget._text
+    drawn_rects = []
+    original_text = worksessionwidget._text
+    original_draw_rect = pygame.draw.rect
 
-    def spy(*args, **kwargs):
+    def spy_text(*args, **kwargs):
         texts.append(args[1])
-        return original(*args, **kwargs)
+        return original_text(*args, **kwargs)
 
-    monkeypatch.setattr(worksessionwidget, "_text", spy)
+    def spy_draw_rect(*args, **kwargs):
+        drawn_rects.append(args)
+        return original_draw_rect(*args, **kwargs)
+
+    monkeypatch.setattr(worksessionwidget, "_text", spy_text)
+    monkeypatch.setattr(pygame.draw, "rect", spy_draw_rect)
+
     item = WorkSessionItem(
         "claude", "Dispatch task", NOW - timedelta(minutes=1), "opaque-open-id-dispatch",
-        activity_state="working", project_label="Claude Dispatch", progress_label="2/4 完成 · 進行中",
+        activity_state="working", project_label="Claude Dispatch", progress_label="2/4 完成 · 1 進行中 · 1 待處理",
     )
     snap = Snapshot([], None, {}, 0, work_sessions=WorkSessionSnapshot((item,)))
-    worksessionwidget.render_center_view(pygame.Surface((1920, 480)), snap, Settings(), Rect(420, 52, 1100, 368), NOW)
+    tl_area = Rect(420, 52, 1100, 368)
+    hits = worksessionwidget.render_center_view(pygame.Surface((1920, 480)), snap, Settings(), tl_area, NOW)
 
-    assert "▶ 2/4 完成 · 進行中" in texts
+    assert "Dispatch · 2/4 完成 · 1 進行中 · 1 待處理" in texts
+    dispatch_hit = next(hit for hit in hits if hit.action == "enqueue_claude_dispatch")
+    assert tl_area.x <= dispatch_hit.rect.x <= tl_area.x + tl_area.w
+    assert tl_area.y <= dispatch_hit.rect.y <= tl_area.y + tl_area.h
+    assert dispatch_hit.rect.x + dispatch_hit.rect.w <= tl_area.x + tl_area.w
+    assert dispatch_hit.rect.y + dispatch_hit.rect.h <= tl_area.y + tl_area.h
+
+    # Progress bar filled rect check: height == 6 and width > 0
+    progress_bar_fills = [
+        args[1] for args in drawn_rects
+        if len(args) >= 3 and isinstance(args[2], pygame.Rect) and args[2].h == 6 and args[2].w > 0
+    ]
+    assert len(progress_bar_fills) >= 1
+
+
+def test_render_center_view_shows_dispatch_waiting_copy_when_no_progress(monkeypatch):
+    from deskbar.layout import Rect
+    texts = []
+    original_text = worksessionwidget._text
+
+    def spy_text(*args, **kwargs):
+        texts.append(args[1])
+        return original_text(*args, **kwargs)
+
+    monkeypatch.setattr(worksessionwidget, "_text", spy_text)
+
+    snap = Snapshot([], None, {}, 0, work_sessions=WorkSessionSnapshot(()))
+    tl_area = Rect(420, 52, 1100, 368)
+    hits = worksessionwidget.render_center_view(pygame.Surface((1920, 480)), snap, Settings(), tl_area, NOW)
+
+    assert "Dispatch：等待 Claude 建立 task" in texts
+    dispatch_hit = next(hit for hit in hits if hit.action == "enqueue_claude_dispatch")
+    assert dispatch_hit.rect.w > 0 and dispatch_hit.rect.h > 0
 
 
 def test_workbench_source_identity_colors_are_codex_sky_blue_and_claude_orange():

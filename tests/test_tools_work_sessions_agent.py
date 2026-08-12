@@ -162,11 +162,45 @@ def test_collector_includes_recent_claude_dispatch_with_safe_task_progress(tmp_p
         "source": "claude", "label": "Release checklist", "project_label": "Claude Dispatch",
         "last_active_at": recent.isoformat().replace("+00:00", "Z"),
         "open_id": "opaque-token-abcdefghijkl", "activity_state": "working",
-        "progress_label": "2/4 完成 · 進行中",
+        "progress_label": "2/4 完成 · 1 進行中 · 1 待處理",
     }]
     assert collector.target_for_open_id("opaque-token-abcdefghijkl") == session_agent.OpenTarget("claude", cli_uuid)
     encoded = json.dumps(payload)
     assert "private" not in encoded and session_id not in encoded and cli_uuid not in encoded
+
+
+def test_dispatch_task_progress_formatting(tmp_path):
+    tasks = tmp_path / "tasks"
+    tasks.mkdir(parents=True)
+
+    # 4 completed -> "4/4 完成", "result"
+    for i in range(1, 5):
+        (tasks / f"{i}.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+    progress, state = session_agent._dispatch_task_progress(tmp_path)
+    assert progress == "4/4 完成"
+    assert state == "result"
+
+    # Add pending task -> "4/5 完成 · 1 待處理", "waiting"
+    (tasks / "5.json").write_text(json.dumps({"status": "pending"}), encoding="utf-8")
+    progress, state = session_agent._dispatch_task_progress(tmp_path)
+    assert progress == "4/5 完成 · 1 待處理"
+    assert state == "waiting"
+
+    # Add in_progress task -> "4/6 完成 · 1 進行中 · 1 待處理", "working"
+    (tasks / "6.json").write_text(json.dumps({"status": "in_progress"}), encoding="utf-8")
+    progress, state = session_agent._dispatch_task_progress(tmp_path)
+    assert progress == "4/6 完成 · 1 進行中 · 1 待處理"
+    assert state == "working"
+
+    # A newly-created group has an explicit baseline, not an ambiguous
+    # "2 待處理" with no denominator.
+    all_pending = tmp_path / "all-pending" / "group"
+    all_pending.mkdir(parents=True)
+    for i in range(1, 3):
+        (all_pending / f"{i}.json").write_text(json.dumps({"status": "pending"}), encoding="utf-8")
+    progress, state = session_agent._dispatch_task_progress(all_pending.parent)
+    assert progress == "0/2 完成 · 2 待處理"
+    assert state == "waiting"
 
 
 def test_missing_source_is_reported_without_crashing(tmp_path):
