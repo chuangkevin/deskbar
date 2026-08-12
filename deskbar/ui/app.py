@@ -488,6 +488,9 @@ class App:
                         # h.data 是 Mac 產生的 opaque capability。AppState 會再次
                         # 驗證它仍屬於 30 分鐘內顯示中的 item，絕不接收 command。
                         self.state.enqueue_work_session_action(str(h.data))
+                    elif a == "enqueue_claude_dispatch":
+                        # 這是唯一固定的非任務動作；Mac agent 不接受 Pi 傳入 URL。
+                        self.state.enqueue_claude_dispatch_action()
                     elif a == "toggle_alarm":
                         if self.alarm_store is not None:
                             try:

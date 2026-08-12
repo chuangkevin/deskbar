@@ -84,6 +84,25 @@ def test_action_queue_ack_and_ttl_are_one_time():
     assert queue.poll(now_mono=10.0 + ACTION_TTL_SECONDS) == []
 
 
+def test_claude_dispatch_action_is_explicit_and_has_no_session_capability():
+    queue = WorkSessionActionQueue()
+    action_id = queue.enqueue_claude_dispatch(now_mono=10.0)
+    assert queue.poll(now_mono=10.0) == [{
+        "action_id": action_id,
+        "source": "claude",
+        "kind": "claude_dispatch",
+    }]
+
+
+def test_store_enqueues_fixed_dispatch_without_a_session_capability():
+    from deskbar.store import AppState
+
+    state = AppState()
+    state.set_work_sessions(WorkSessionSnapshot((_item("codex"),)))
+    assert state.enqueue_claude_dispatch_action()
+    assert state.poll_work_session_actions()[0].get("open_id") is None
+
+
 def test_initial_baseline_does_not_mark_old_sessions_as_unread():
     from deskbar.store import AppState
     state = AppState()

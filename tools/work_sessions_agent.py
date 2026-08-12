@@ -523,14 +523,29 @@ class DeskbarClient:
 def open_session_target(source: str, native_id: str | None = None,
                         runner: Callable[..., object] = subprocess.run) -> bool:
     args = APP_OPEN_ARGS.get(source)
-    if source == "claude":
-        resume_id = _canonical_uuid(native_id)
-        if resume_id is not None:
-            args = ("/usr/bin/open", f"claude://resume?session={resume_id}")
+    target_id = _canonical_uuid(native_id)
+    if source == "codex" and target_id is not None:
+        args = ("/usr/bin/open", f"codex://threads/{target_id}")
+    elif source == "claude" and target_id is not None:
+        args = ("/usr/bin/open", f"claude://resume?session={target_id}")
     if args is None:
         return False
     try:
         result = runner(list(args), check=False, timeout=10, shell=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return getattr(result, "returncode", 0) == 0
+
+
+def open_claude_dispatch(runner: Callable[..., object] = subprocess.run) -> bool:
+    """Open Claude's fixed Dispatch destination, never a Pi-supplied URL."""
+    try:
+        result = runner(
+            ["/usr/bin/open", "claude://claude.ai/dispatch"],
+            check=False,
+            timeout=10,
+            shell=False,
+        )
     except (OSError, subprocess.SubprocessError):
         return False
     return getattr(result, "returncode", 0) == 0
@@ -542,8 +557,12 @@ def focus_source_app(source: str, runner: Callable[..., object] = subprocess.run
 
 class WorkSessionsAgent:
     def __init__(self, collector: SessionCollector, client: DeskbarClient,
-                 opener: Callable[[str, str], bool] = open_session_target) -> None:
-        self.collector, self.client, self.opener = collector, client, opener
+                 opener: Callable[[str, str], bool] = open_session_target,
+                 dispatch_opener: Callable[[], bool] = open_claude_dispatch) -> None:
+        self.collector = collector
+        self.client = client
+        self.opener = opener
+        self.dispatch_opener = dispatch_opener
 
     def collect_and_push(self) -> dict:
         payload = self.collector.payload()
@@ -556,12 +575,22 @@ class WorkSessionsAgent:
         for action in response.get("actions", []) if isinstance(response, dict) else []:
             if not isinstance(action, dict):
                 continue
-            action_id, open_id, source = action.get("action_id"), action.get("open_id"), action.get("source")
+            action_id = action.get("action_id")
             if not isinstance(action_id, str):
                 continue
-            target = self.collector.target_for_open_id(open_id)
-            if target is not None and source == target.source:
-                self.opener(target.source, target.native_id)
+            source = action.get("source")
+            is_dispatch = (
+                source == "claude"
+                and action.get("kind") == "claude_dispatch"
+                and set(action).issubset({"action_id", "source", "kind"})
+            )
+            if is_dispatch:
+                self.dispatch_opener()
+            else:
+                open_id = action.get("open_id")
+                target = self.collector.target_for_open_id(open_id)
+                if target is not None and source == target.source:
+                    self.opener(target.source, target.native_id)
             # Always ACK invalid/expired local capabilities too: they must never retry forever.
             self.client.post("/api/work-sessions/actions/ack", {"action_id": action_id})
             completed += 1

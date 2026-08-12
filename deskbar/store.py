@@ -176,6 +176,11 @@ class AppState:
                 return None
             return self._work_sessions_queue.enqueue(open_id=item.open_id, source=item.source)
 
+    def enqueue_claude_dispatch_action(self) -> str | None:
+        """Queue the fixed Claude Dispatch page; it is not tied to one session."""
+        with self._lock:
+            return self._work_sessions_queue.enqueue_claude_dispatch()
+
     def poll_work_session_actions(self) -> list[dict]:
         return self._work_sessions_queue.poll()
 

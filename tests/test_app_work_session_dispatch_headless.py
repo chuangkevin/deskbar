@@ -29,6 +29,10 @@ def test_dashboard_and_item_actions_only_enqueue_current_opaque_capability(tmp_p
     app._dispatch(1, 1)
     assert len(state.poll_work_session_actions()) == 1
 
+    app.hits = [Hit(Rect(0, 0, 10, 10), "enqueue_claude_dispatch", None)]
+    app._dispatch(1, 1)
+    assert any(action.get("kind") == "claude_dispatch" for action in state.poll_work_session_actions())
+
 
 def test_toggle_center_entering_sessions_marks_sessions_as_seen(tmp_path, monkeypatch):
     monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))

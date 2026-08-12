@@ -56,6 +56,17 @@ def render_center_view(surface: pygame.Surface, snap, settings, rect: Rect, now:
     else:
         active_items = snap.work_sessions.active_items(now)
 
+    dispatch_w, dispatch_h = 170, 30
+    dispatch_x = rect.x + (rect.w - dispatch_w) / 2
+    dispatch_y = rect.y + 10
+    dispatch_rect = Rect(dispatch_x, dispatch_y, dispatch_w, dispatch_h)
+    dispatch = pygame.Rect(round(dispatch_x), round(dispatch_y), dispatch_w, dispatch_h)
+    pygame.draw.rect(surface, theme.C["work_claude"], dispatch, border_radius=15)
+    pygame.draw.rect(surface, theme.C["panel_line"], dispatch, width=1, border_radius=15)
+    _text(surface, "Claude Dispatch ↗", 14, theme.C["work_claude_text"],
+          dispatch.centerx, dispatch.centery, anchor="center", bold=True)
+    hits.append(Hit(dispatch_rect, "enqueue_claude_dispatch", None))
+
     if not active_items:
         _text(surface, "目前無 30 分鐘內的活動 Session", 20, theme.C["muted"],
               rect.x + rect.w / 2, rect.y + rect.h / 2, anchor="center")

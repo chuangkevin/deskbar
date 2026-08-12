@@ -5,7 +5,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import tools.work_sessions_agent as session_agent
-from tools.work_sessions_agent import DeskbarClient, SessionCollector, WorkSessionsAgent, open_session_target
+from tools.work_sessions_agent import (
+    DeskbarClient,
+    SessionCollector,
+    WorkSessionsAgent,
+    open_claude_dispatch,
+    open_session_target,
+)
 
 NOW = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
 
@@ -134,8 +140,12 @@ def test_target_opener_uses_fixed_argv_and_no_shell():
     assert calls == [((['/usr/bin/open', f'claude://resume?session={cli_uuid}'],), {'check': False, 'timeout': 10, 'shell': False})]
     assert open_session_target("claude", "local-not-a-uuid", runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
     assert calls[-1] == ((['/usr/bin/open', '-a', 'Claude'],), {'check': False, 'timeout': 10, 'shell': False})
+    assert open_session_target("codex", cli_uuid, runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
+    assert calls[-1] == ((['/usr/bin/open', f'codex://threads/{cli_uuid}'],), {'check': False, 'timeout': 10, 'shell': False})
     assert open_session_target("codex", "codex-native-id", runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
     assert calls[-1] == ((['/usr/bin/open', '-b', 'com.openai.codex'],), {'check': False, 'timeout': 10, 'shell': False})
+    assert open_claude_dispatch(runner=lambda *args, **kwargs: calls.append((args, kwargs)) or Result())
+    assert calls[-1] == ((['/usr/bin/open', 'claude://claude.ai/dispatch'],), {'check': False, 'timeout': 10, 'shell': False})
     assert open_session_target("unknown", runner=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError())) is False
     tree = ast.parse(Path(__file__).parents[1].joinpath("tools/work_sessions_agent.py").read_text(encoding="utf-8"))
     assert not any(isinstance(node, ast.Call) and any(
@@ -180,6 +190,39 @@ def test_agent_opens_known_claude_target_and_acks_mismatches(tmp_path):
     assert agent.poll_and_focus() == 3
     assert opened == [("claude", cli_uuid)]
     assert [post[0] for post in client.posts].count("/api/work-sessions/actions/ack") == 3
+
+
+def test_agent_dispatches_only_the_explicit_claude_dispatch_action(tmp_path):
+    collector = SessionCollector(home=tmp_path, now=lambda: NOW)
+
+    class Client:
+        def __init__(self):
+            self.posts = []
+
+        def post(self, path, payload):
+            self.posts.append((path, payload)); return {}
+
+        def get(self, path):
+            assert path == "/api/work-sessions/actions"
+            return {"actions": [
+                {"action_id": "dispatch", "source": "claude", "kind": "claude_dispatch"},
+                {"action_id": "forged", "source": "claude", "kind": "claude_dispatch", "open_id": "not-allowed"},
+            ]}
+
+    client, opened, dispatched = Client(), [], []
+    agent = WorkSessionsAgent(
+        collector,
+        client,
+        opener=lambda source, native_id: opened.append((source, native_id)) or True,
+        dispatch_opener=lambda: dispatched.append(True) or True,
+    )
+    assert agent.poll_and_focus() == 2
+    assert dispatched == [True]
+    assert opened == []
+    assert [post[0] for post in client.posts] == [
+        "/api/work-sessions/actions/ack",
+        "/api/work-sessions/actions/ack",
+    ]
 
 
 def test_new_codex_format_and_activity_state(tmp_path):

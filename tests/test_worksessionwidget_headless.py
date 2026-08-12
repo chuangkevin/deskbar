@@ -80,9 +80,10 @@ def test_render_center_view_displays_up_to_six_cards_within_tl_area_and_bounds()
     snap = _snap(count=10)
     hits = worksessionwidget.render_center_view(surface, snap, settings, tl_area, NOW)
 
-    assert len(hits) == 6
+    card_hits = [hit for hit in hits if hit.action == "enqueue_work_session_action"]
+    assert len(card_hits) == 6
     for hit in hits:
-        assert hit.action == "enqueue_work_session_action"
+        assert hit.action in {"enqueue_work_session_action", "enqueue_claude_dispatch"}
         assert tl_area.x <= hit.rect.x <= tl_area.x + tl_area.w
         assert tl_area.y <= hit.rect.y <= tl_area.y + tl_area.h
         assert hit.rect.x + hit.rect.w <= tl_area.x + tl_area.w
@@ -98,7 +99,7 @@ def test_render_center_view_empty_state_for_zero_items():
     snap = _snap(count=0)
     hits = worksessionwidget.render_center_view(surface, snap, settings, tl_area, NOW)
 
-    assert hits == []
+    assert [hit.action for hit in hits] == ["enqueue_claude_dispatch"]
 
 
 def test_render_center_view_shows_unread_badge_and_honest_labels(monkeypatch):
@@ -124,13 +125,14 @@ def test_render_center_view_shows_unread_badge_and_honest_labels(monkeypatch):
     snap = Snapshot([], None, {}, 0, work_sessions=snapshot)
 
     hits = worksessionwidget.render_center_view(surface, snap, settings, tl_area, NOW)
-    assert len(hits) == 2
+    assert len(hits) == 3
     assert any("結果待看" in text for text in texts)
     assert any("有新進度" in text for text in texts)
     assert "✓ 結果待看" in texts
     assert any(text.startswith("▶ 執行中") for text in texts)
     assert not any("此對話" in t for t in texts)
     assert not any("%" in t for t in texts)
+    assert "Claude Dispatch ↗" in texts
 
 
 def test_workbench_source_identity_colors_are_codex_sky_blue_and_claude_orange():
@@ -148,15 +150,31 @@ def test_center_workbench_keeps_a_middle_lane_for_sisi_and_six_click_targets():
     tl_area = Rect(420, 52, 1100, 368)
     hits = worksessionwidget.render_center_view(surface, _snap(count=6), Settings(), tl_area, NOW)
 
-    assert len(hits) == 6
-    left = [hit for hit in hits if hit.rect.x < tl_area.x + tl_area.w / 2]
-    right = [hit for hit in hits if hit.rect.x >= tl_area.x + tl_area.w / 2]
+    card_hits = [hit for hit in hits if hit.action == "enqueue_work_session_action"]
+    dispatch_hits = [hit for hit in hits if hit.action == "enqueue_claude_dispatch"]
+    assert len(card_hits) == 6
+    assert len(dispatch_hits) == 1
+    left = [hit for hit in card_hits if hit.rect.x < tl_area.x + tl_area.w / 2]
+    right = [hit for hit in card_hits if hit.rect.x >= tl_area.x + tl_area.w / 2]
     assert len(left) == len(right) == 3
-    assert all(hit.rect.h >= 108 for hit in hits)
+    assert all(hit.rect.h >= 108 for hit in card_hits)
+    assert max(hit.rect.x + hit.rect.w for hit in left) < min(hit.rect.x for hit in right)
+    assert min(hit.rect.x for hit in right) - max(hit.rect.x + hit.rect.w for hit in left) >= 120
+
+
+def test_center_workbench_dispatch_is_always_visible_and_within_bounds():
+    from deskbar.layout import Rect
+
+    surface = pygame.Surface((1920, 480))
+    tl_area = Rect(420, 52, 1100, 368)
+    codex_only = Snapshot([], None, {}, 0, work_sessions=WorkSessionSnapshot((
+        WorkSessionItem("codex", "task", NOW - timedelta(minutes=1), "opaque-open-id-codex-only"),
+    )))
+
+    hits = worksessionwidget.render_center_view(surface, codex_only, Settings(), tl_area, NOW)
+    assert sum(hit.action == "enqueue_claude_dispatch" for hit in hits) == 1
     for hit in hits:
         assert tl_area.x <= hit.rect.x
         assert tl_area.y <= hit.rect.y
         assert hit.rect.x + hit.rect.w <= tl_area.x + tl_area.w
         assert hit.rect.y + hit.rect.h <= tl_area.y + tl_area.h
-    assert max(hit.rect.x + hit.rect.w for hit in left) < min(hit.rect.x for hit in right)
-    assert min(hit.rect.x for hit in right) - max(hit.rect.x + hit.rect.w for hit in left) >= 120

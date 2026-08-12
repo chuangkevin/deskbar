@@ -109,12 +109,17 @@ class WorkSessionSnapshot:
 @dataclass(frozen=True)
 class WorkSessionAction:
     action_id: str
-    open_id: str
     source: Source
     expires_at: float
+    open_id: str | None = None
+    kind: Literal["session", "claude_dispatch"] = "session"
 
     def to_wire(self) -> dict[str, str]:
-        return {"action_id": self.action_id, "open_id": self.open_id, "source": self.source}
+        if self.kind == "claude_dispatch":
+            # This fixed intent contains neither an opaque session capability nor
+            # a URL. The Mac agent owns the only allowed Dispatch destination.
+            return {"action_id": self.action_id, "source": "claude", "kind": "claude_dispatch"}
+        return {"action_id": self.action_id, "open_id": self.open_id or "", "source": self.source}
 
 
 class WorkSessionActionQueue:
@@ -127,7 +132,26 @@ class WorkSessionActionQueue:
 
     def enqueue(self, *, open_id: str, source: Source, now_mono: float | None = None) -> str:
         now = time.monotonic() if now_mono is None else now_mono
-        action = WorkSessionAction(secrets.token_urlsafe(18), open_id, source, now + self._ttl_seconds)
+        action = WorkSessionAction(
+            action_id=secrets.token_urlsafe(18),
+            source=source,
+            expires_at=now + self._ttl_seconds,
+            open_id=open_id,
+        )
+        with self._lock:
+            self._purge(now)
+            self._actions[action.action_id] = action
+        return action.action_id
+
+    def enqueue_claude_dispatch(self, now_mono: float | None = None) -> str:
+        """Queue the sole non-session action; its destination is fixed on the Mac."""
+        now = time.monotonic() if now_mono is None else now_mono
+        action = WorkSessionAction(
+            action_id=secrets.token_urlsafe(18),
+            source="claude",
+            expires_at=now + self._ttl_seconds,
+            kind="claude_dispatch",
+        )
         with self._lock:
             self._purge(now)
             self._actions[action.action_id] = action
