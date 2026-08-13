@@ -9,7 +9,7 @@ import pygame
 
 from deskbar.config import SCENE_KEYS
 from deskbar.layout import Rect
-from deskbar.ui import Hit, planet_horizon
+from deskbar.ui import Hit, planet_horizon, scene_glass_rain
 from deskbar.ui.scene_aurora import AuroraRenderer
 from deskbar.ui.scene_common import day_seed, hash_unit
 from deskbar.ui.scene_fireflies import FirefliesRenderer
@@ -21,6 +21,12 @@ from deskbar.ui.scene_runner import RunnerRenderer
 from deskbar.ui.scene_runtime import RendererHandle, SceneFrame, SceneRenderer
 from deskbar.ui.scene_stars import StarsRenderer
 from deskbar.ui.scene_train import TrainRenderer
+from deskbar.ui.scene_weather_museum import (
+    GlassRainRenderer,
+    MagneticFogRenderer,
+    ReverseLightningRenderer,
+    TidalAuroraRenderer,
+)
 
 
 AREA: Final = Rect(402, 8, 1118, 472)
@@ -54,6 +60,10 @@ _FACTORIES: Final[dict[str, RendererFactory]] = {
     "runner": RunnerRenderer,
     "ink": InkRenderer,
     "planet_horizon": planet_horizon.PlanetHorizonRenderer,
+    "glass_rain": GlassRainRenderer,
+    "magnetic_fog": MagneticFogRenderer,
+    "reverse_lightning": ReverseLightningRenderer,
+    "tidal_aurora": TidalAuroraRenderer,
 }
 assert set(_FACTORIES) == set(SCENE_KEYS), "registry 必須與 config.SCENE_KEYS 同步"
 
@@ -109,14 +119,13 @@ def render(
     ui["t_last"] = t
     rect = pygame.Rect(int(AREA.x), int(AREA.y), int(AREA.w), int(AREA.h))
     panel = surface.subsurface(rect.clip(surface.get_rect()))
-    handle.render(
-        panel,
-        SceneFrame(
-            now=now,
-            t=t,
-            dt=delta,
-            weather_code=weather_code,
-            day_seed=day_seed(now),
-        ),
+    frame = SceneFrame(
+        now=now,
+        t=t,
+        dt=delta,
+        weather_code=weather_code,
+        day_seed=day_seed(now),
     )
+    handle.render(panel, frame)
+    scene_glass_rain.draw(panel, frame)
     return [Hit(Rect(AREA.x, AREA.y, AREA.w, AREA.h), "scene_tap", None)]

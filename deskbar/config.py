@@ -7,12 +7,18 @@ from pathlib import Path
 DEFAULT_LAT, DEFAULT_LON, DEFAULT_LABEL = 25.046, 121.517, "台北"
 # 氛圍場景清單（ui/scenes.py 的 registry 與此同步；config 是唯一來源，
 # 讓 webserver/web 不必 import pygame 就能驗證）
-SCENE_KEYS = ("flow", "stars", "ridges", "fireflies", "fish", "aurora",
-              "train", "runner", "ink", "planet_horizon")
+SCENE_KEYS = (
+    "flow", "stars", "ridges", "fireflies", "fish", "aurora", "train",
+    "runner", "ink", "planet_horizon", "glass_rain", "magnetic_fog",
+    "reverse_lightning", "tidal_aurora",
+)
 # 新場景一律先產晨／晝／夜驗證圖，經使用者確認才加入這份預設輪播。
 # 2026-08-04 實機複審後只保留目前仍獲核可的場景；其餘場景可手動選取驗收，
 # 但在美術與動態再次通過前不得進入預設輪播。
-DEFAULT_SCENES = ("stars", "planet_horizon")
+DEFAULT_SCENES = (
+    "stars", "planet_horizon", "glass_rain", "magnetic_fog",
+    "reverse_lightning", "tidal_aurora",
+)
 VALID_VIEW_SPANS = {"half", "day", "week", "month"}
 VALID_VIEW_MODES = {"lanes", "agenda"}
 VALID_THEMES = {"dark", "light"}
