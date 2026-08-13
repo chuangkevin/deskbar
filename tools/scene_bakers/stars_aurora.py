@@ -201,84 +201,83 @@ def generate_aurora_assets(out: Path) -> None:
         (0.205, 0.42, 0.86, 6201, 2.0, 0.13, 0.035),
         (0.255, 0.36, 0.76, 6301, 4.1, 0.15, 0.090),
     )
-    green = _color((72, 211, 139))
-    cyan = _color((69, 174, 184))
-    violet = _color((137, 105, 170))
+    green = _color((64, 224, 148))
+    cyan = _color((56, 185, 205))
+    violet = _color((148, 98, 185))
     for index, (crest_y, ray_length, strength, seed, phase, cyan_base, violet_base) in enumerate(curtain_specs):
-        broad = _periodic_fbm_x(position, period, seed, 4)
-        medium = _periodic_fbm_x(position, period, seed + 31, 11, 3)
-        fine = _periodic_fbm_x(position, period, seed + 53, 29, 3)
+        broad = _periodic_fbm_x(position, period, seed, 3, 3)
+        medium = _periodic_fbm_x(position, period, seed + 31, 7, 3)
+        fine_fold = _periodic_fbm_x(position, period, seed + 53, 13, 2)
+
         fold = (
-            np.sin(unit * np.pi * 2.0 + phase) * 0.038
-            + np.sin(unit * np.pi * 6.0 + phase * 0.7) * 0.025
-            + np.sin(unit * np.pi * 14.0 - phase * 0.4) * 0.013
-            + (broad - 0.5) * 0.075
+            np.sin(unit * np.pi * 2.0 + phase) * 0.045
+            + np.sin(unit * np.pi * 4.0 - phase * 0.8) * 0.028
+            + np.sin(unit * np.pi * 8.0 + phase * 1.3) * 0.015
+            + (broad - 0.5) * 0.080
+            + (medium - 0.5) * 0.035
         )
         crest = height * (crest_y + fold)[None, :]
         distance = y - crest
         positive = np.maximum(distance, 0.0)
         negative = np.maximum(-distance, 0.0)
-        length = height * (
-            ray_length + (broad - 0.5) * 0.13 + (medium - 0.5) * 0.055
+        curtain_length = height * (
+            ray_length + (broad - 0.5) * 0.12 + (medium - 0.5) * 0.05
         )[None, :]
 
-        gate = np.clip((distance + height * 0.012) / (height * 0.035), 0.0, 1.0)
+        crest_glow = np.exp(-((distance) / (height * (0.012 + index * 0.003))) ** 2)
+        upper_fade = np.exp(-negative / (height * 0.045))
+
+        gate = np.clip((distance + height * 0.010) / (height * 0.030), 0.0, 1.0)
         gate = gate * gate * (3.0 - 2.0 * gate)
-        ending = np.clip((length - positive) / (height * 0.10), 0.0, 1.0)
-        ending = ending * ending * (3.0 - 2.0 * ending)
-        cycles = 79 + index * 18
-        thread_phase = (
-            unit[None, :] * np.pi * 2.0 * cycles
-            + (medium[None, :] - 0.5) * 8.0
-            + distance * (0.0085 + index * 0.0012)
-        )
-        threads = (0.5 + 0.5 * np.cos(thread_phase)) ** 10
-        fine_threads = (
-            0.5
-            + 0.5 * np.cos(
-                unit[None, :] * np.pi * 2.0 * (cycles + 53)
-                - (fine[None, :] - 0.5) * 10.0
-                + distance * 0.005
-                + 1.7
-            )
-        ) ** 14
-        striation = 0.15 + threads * 0.51 + fine_threads * 0.34
-        presence = np.clip((broad - 0.17) / 0.69, 0.0, 1.0)[None, :]
-        fold_face = (
-            0.38
-            + 0.62 * (0.5 + 0.5 * np.sin(unit * np.pi * 10.0 + phase)) ** 2
-        )[None, :]
+        veil_decay = np.exp(-positive / (curtain_length * 0.72))
+        veil_cutoff = np.clip((curtain_length - positive) / (height * 0.12), 0.0, 1.0)
+        veil_cutoff = veil_cutoff * veil_cutoff * (3.0 - 2.0 * veil_cutoff)
+        veil = veil_decay * veil_cutoff * (0.45 + medium[None, :] * 0.55)
 
-        edge = np.exp(-(distance / (height * (0.017 + index * 0.002))) ** 2)
-        lower_rays = gate * np.exp(-positive / (length * 0.70)) * ending * striation
-        upper_rays = (1.0 - gate) * np.exp(-negative / (height * 0.085)) * striation
-        veil = gate * np.exp(-positive / (length * 0.92)) * ending
-        veil *= 0.35 + medium[None, :] * 0.65
-        alpha = strength * presence * fold_face * (
-            edge * 0.31 + lower_rays * 0.74 + upper_rays * 0.20 + veil * 0.12
+        fold_face = (
+            0.40
+            + 0.60 * (0.5 + 0.5 * np.sin(unit * np.pi * 6.0 + phase * 1.4 + (broad - 0.5) * 2.5)) ** 2
+        )[None, :]
+        presence = np.clip((broad - 0.12) / 0.76, 0.0, 1.0)[None, :]
+
+        fil_pos = position + np.sin(unit * np.pi * 8.0 + phase) * 100.0
+        fil_noise1 = _periodic_fbm_x(fil_pos, period, seed + 101, 19, 3)
+        fil_noise2 = _periodic_fbm_x(position, period, seed + 203, 31, 2)
+        fil_raw = np.clip((fil_noise1 * 0.6 + fil_noise2 * 0.4 - 0.48) / 0.36, 0.0, 1.0)
+        filaments = (fil_raw ** 3.5)[None, :]
+        fil_len_var = 0.4 + 0.6 * (0.5 + 0.5 * np.sin(unit[None, :] * np.pi * 12.0 + (fine_fold[None, :] - 0.5) * 4.0))
+        filaments_attenuated = filaments * np.exp(-positive / (curtain_length * (0.25 + 0.55 * fil_len_var))) * gate
+
+        alpha_curtain = (
+            crest_glow * 0.38
+            + (1.0 - gate) * upper_fade * 0.25
+            + veil * 0.52
+            + filaments_attenuated * 0.30
         )
+        alpha = strength * presence * fold_face * alpha_curtain
         alpha *= np.clip((height * 0.70 - y) / (height * 0.13), 0.0, 1.0)
         alpha = feather_alpha(np.asarray(np.clip(alpha, 0.0, 0.88), np.float32), padding, 48)
 
-        ray_amount = np.clip(positive / np.maximum(length, 1.0), 0.0, 1.0)
-        cyan_amount = np.clip(cyan_base + fine_threads * 0.08 + (1.0 - ray_amount) * 0.035, 0.0, 0.24)
-        violet_amount = np.clip(
-            violet_base * (0.25 + ray_amount * 0.75) * (0.45 + threads * 0.55),
-            0.0,
-            0.12,
-        )
-        green_amount = 1.0 - cyan_amount - violet_amount
+        rel_y = np.clip(positive / np.maximum(curtain_length, 1.0), 0.0, 1.0)
+        crest_zone = np.clip(1.0 - np.abs(distance) / (height * 0.035), 0.0, 1.0)
+
+        cyan_amount = np.clip(cyan_base + 0.14 * rel_y + filaments * 0.08, 0.0, 0.38)
+        violet_amount = np.clip(violet_base * (1.1 - rel_y * 0.8) + crest_zone * 0.12, 0.0, 0.30)
+        green_amount = np.maximum(0.0, 1.0 - cyan_amount - violet_amount)
+
         rgb = (
             green[None, None, :] * green_amount[..., None]
             + cyan[None, None, :] * cyan_amount[..., None]
             + violet[None, None, :] * violet_amount[..., None]
         )
-        brightness = 0.78 + striation * 0.27 + edge * 0.13
+        brightness = 0.82 + crest_glow * 0.30 + filaments * 0.18
         rgb *= brightness[..., None]
+
         # The runtime wraps this exact view-width span, so close its discrete seam.
         alpha[:, padding + period - 1] = alpha[:, padding]
         rgb[:, padding + period - 1] = rgb[:, padding]
         save_rgba(out / f"aurora_curtain_{index}.png", _rgba(rgb, alpha), True)
+
 
 
 def generate_stars_aurora_assets(out: Path) -> None:

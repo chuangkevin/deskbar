@@ -10,10 +10,16 @@ Includes:
 from __future__ import annotations
 
 import math
+from pathlib import Path
+
 import pygame
 
 from deskbar.ui.scene_common import hash_unit
+from deskbar.ui.scene_assets import SceneAssets, TintRequest
 from deskbar.ui.scene_runtime import SceneFrame
+
+
+SCENE_ASSET_DIR = Path(__file__).resolve().parent.parent / "assets" / "scenes"
 
 
 class GlassRainRenderer:
@@ -325,96 +331,42 @@ class ReverseLightningRenderer:
 
 
 class TidalAuroraRenderer:
-    """Cyan-violet tidal aurora ribbons, flowing halo, and smooth curtains renderer."""
+    """Blue-violet variant of the baked, non-uniform aurora curtains.
 
-    __slots__ = ("_closed", "_overlay")
+    The original implementation tried to approximate volumetric light with
+    runtime polygons.  Pygame's hard alpha edges made those polygons read as
+    coloured ribbons.  The approved Aurora scene already owns a purpose-baked
+    soft light field, so this variant reuses that texture and changes its
+    colour, timing and layering into a slower tidal current.
+    """
+
+    __slots__ = ("_assets",)
 
     def __init__(self) -> None:
-        self._closed = False
-        self._overlay: pygame.Surface | None = None
+        self._assets = SceneAssets(SCENE_ASSET_DIR)
 
     @property
     def decoded_bytes(self) -> int:
-        if self._closed or self._overlay is None:
-            return 0
-        return self._overlay.get_width() * self._overlay.get_height() * 4
+        return self._assets.decoded_bytes
 
     def render(self, panel: pygame.Surface, frame: SceneFrame) -> None:
-        if self._closed:
-            return
-        w, h = panel.get_size()
-        if self._overlay is None or self._overlay.get_size() != (w, h):
-            self._overlay = pygame.Surface((w, h), pygame.SRCALPHA)
-
-        # Base background (deep violet cyan space)
-        panel.fill((10, 18, 36))
-        self._overlay.fill((0, 0, 0, 0))
-
-        seed = frame.day_seed
-        t = frame.t
-
-        # 1. Twinkling background stars (30 stars)
-        for s in range(30):
-            sx = int(hash_unit(s, seed, 91) * w)
-            sy = int(hash_unit(s, seed, 93) * (h * 0.7))
-            twinkle = 0.5 + 0.5 * math.sin(t * 1.5 + s * 1.3)
-            star_alpha = int(50 + twinkle * 150)
-            pygame.draw.circle(panel, (190, 220, 210, star_alpha), (sx, sy), 1)
-
-        # 2. Ambient flowing aurora halo in upper sky (流動 halo)
-        for halo_idx in range(3):
-            halo_y = h * (0.18 + halo_idx * 0.12) + math.sin(t * 0.2 + halo_idx) * 15.0
-            halo_rx = int(w * 0.45)
-            halo_ry = int(h * 0.18)
-            halo_cx = w * 0.5 + math.sin(t * 0.15 + halo_idx * 2.0) * (w * 0.2)
-            rect = pygame.Rect(round(halo_cx - halo_rx), round(halo_y - halo_ry), halo_rx * 2, halo_ry * 2)
-            color = (140, 70, 210, 24) if halo_idx % 2 == 0 else (40, 190, 160, 28)
-            pygame.draw.ellipse(self._overlay, color, rect)
-
-        # 3. Multi-layered cyan-green & purple aurora curtains (青綠/紫色簾幕)
-        curtain_configs = [
-            (0.20, (40, 220, 170, 35), (140, 80, 230, 28), 22.0, 65),
-            (0.28, (60, 240, 190, 40), (160, 90, 245, 32), 26.0, 75),
-            (0.36, (50, 190, 220, 32), (120, 70, 200, 25), 18.0, 55),
-        ]
-
-        for base_ratio, c_mint, c_purple, wave_amp, curtain_h in curtain_configs:
-            base_y = h * base_ratio
-            t_wave = t * 0.16
-
-            # Build smooth upper and lower polygon boundary points across screen width
-            top_pts = []
-            bot_pts = []
-            for x in range(-10, w + 14, 8):
-                edge_fade = math.sin(max(0.0, min(1.0, (x + 10) / (w + 20))) * math.pi)
-                y_t = base_y + math.sin(x * 0.005 + t_wave) * wave_amp
-                y_t += math.cos(x * 0.012 - t_wave * 0.7) * (wave_amp * 0.4)
-
-                y_b = y_t + curtain_h * (0.6 + 0.4 * edge_fade)
-                top_pts.append((x, round(y_t)))
-                bot_pts.append((x, round(y_b)))
-
-            poly_pts = top_pts + list(reversed(bot_pts))
-
-            # Draw mint cyan curtain body polygon
-            if len(poly_pts) > 3:
-                pygame.draw.polygon(self._overlay, c_mint, poly_pts)
-
-            # Draw overlapping violet secondary curtain polygon slightly offset
-            v_poly = [(px, py + 12) for px, py in top_pts] + [(px, py + 12) for px, py in reversed(bot_pts)]
-            if len(v_poly) > 3:
-                pygame.draw.polygon(self._overlay, c_purple, v_poly)
-
-            # Overlay fine vertical aurora rays (柔和細絲簾幕 rays)
-            for x in range(0, w, 6):
-                edge_fade = math.sin((x / w) * math.pi)
-                alpha_ray = int((25 + math.sin(t * 0.6 + x * 0.01) * 10) * edge_fade)
-                if alpha_ray > 2:
-                    y_t = base_y + math.sin(x * 0.005 + t_wave) * wave_amp + math.cos(x * 0.012 - t_wave * 0.7) * (wave_amp * 0.4)
-                    pygame.draw.line(self._overlay, (180, 255, 235, alpha_ray), (x, round(y_t)), (x, round(y_t + curtain_h)), 1)
-
-        panel.blit(self._overlay, (0, 0))
+        panel.blit(self._assets.load("aurora_base_night"), (-(1240 - 1118) // 2, 0))
+        tile_area = pygame.Rect((1240 - 1118) // 2, 0, 1118, 472)
+        layers = (
+            ("aurora_curtain_2", (205, 82, 255), 136, 4.6, 0.13, 21.0, 0.0),
+            ("aurora_curtain_1", (92, 238, 255), 154, 6.8, 0.46, 18.0, 1.7),
+            ("aurora_curtain_0", (145, 170, 255), 124, 3.5, 0.76, 24.0, 3.4),
+        )
+        width = panel.get_width()
+        for name, tint, base_alpha, speed, start, breathe_period, phase in layers:
+            curtain = self._assets.tinted(TintRequest(name, tint, None))
+            breathe = math.sin(frame.t * math.tau / breathe_period + phase)
+            curtain.set_alpha(round(base_alpha + breathe * 10.0))
+            vertical = round(math.sin(frame.t * math.tau / (28.0 + speed) + phase) * 3.0)
+            left = -round((frame.t * speed + start * 1118) % 1118)
+            while left < width:
+                panel.blit(curtain, (left, vertical), tile_area)
+                left += 1118
 
     def close(self) -> None:
-        self._closed = True
-        self._overlay = None
+        self._assets.close()
