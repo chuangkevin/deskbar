@@ -4,7 +4,7 @@ PI ?= pi@deskbar.local
 KEY ?= ~/.ssh/id_ed25519
 DEST ?= /home/pi/deskbar
 
-.PHONY: test dev deploy bootstrap add-account
+.PHONY: test dev deploy bootstrap add-account restart-work-sessions-agent
 
 test:
 	.venv/bin/python -m pytest -q
@@ -15,6 +15,14 @@ dev:
 deploy:
 	rsync -az --delete -e "ssh -i $(KEY)" --exclude .git --exclude .venv --exclude __pycache__ --exclude .superpowers --exclude .omo --exclude docs --exclude tests ./ $(PI):$(DEST)/
 	ssh -i $(KEY) $(PI) "bash $(DEST)/deploy/install.sh --runtime-only && sudo systemctl restart deskbar"
+	$(MAKE) restart-work-sessions-agent
+
+restart-work-sessions-agent:
+	@if launchctl print "gui/$$(id -u)/com.deskbar.work-sessions" >/dev/null 2>&1; then \
+		launchctl kickstart -k "gui/$$(id -u)/com.deskbar.work-sessions"; \
+	else \
+		echo "work sessions agent not loaded; skipping restart"; \
+	fi
 
 bootstrap:
 	rsync -az --delete -e "ssh -i $(KEY)" --exclude .git --exclude .venv --exclude __pycache__ --exclude .superpowers --exclude .omo --exclude docs --exclude tests ./ $(PI):$(DEST)/
