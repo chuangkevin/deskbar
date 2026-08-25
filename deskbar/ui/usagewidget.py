@@ -93,15 +93,22 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
 def visible_sections(usage, now: datetime, enabled_sources=None):
     """純顯示決策：回傳仍應畫出的 ``(title, groups, age)`` 區塊。
 
-    每個 provider 以自己的成功抓取時間判斷。舊 payload 沒有分來源時間時退回
-    fetched_at；這讓升級前的 Mac agent 照舊可用，也避免快取重送刷新資料年齡。
+    每個 provider 以自己的成功抓取時間判斷新鮮度。Claude 在缺少
+    ``claude_fetched_at`` 時可退回全域 ``fetched_at``（兩者語意相同）。
+    Antigravity / OpenAI **不**退回 Claude／全域時間——舊快取缺分來源時間戳時
+    以中性年齡 0 處理（不顯示「N 分前」、不誤標過期），避免把 Claude 失敗
+    造成的舊 ``fetched_at`` 誤套到仍新鮮的 AG/OA 資料上。
     """
     if usage is None:
         return []
     enabled = set(DEFAULT_SOURCES if enabled_sources is None else enabled_sources)
 
-    def age_for(field):
-        fetched = getattr(usage, field, None) or usage.fetched_at
+    def age_for(field, *, fallback_to_global: bool):
+        fetched = getattr(usage, field, None)
+        if fetched is None and fallback_to_global:
+            fetched = usage.fetched_at
+        if fetched is None:
+            return 0.0
         return (now - fetched).total_seconds()
 
     claude_groups = [
@@ -114,19 +121,19 @@ def visible_sections(usage, now: datetime, enabled_sources=None):
                               WINDOW_S["fable"]))
 
     sections = []
-    claude_age = age_for("claude_fetched_at")
+    claude_age = age_for("claude_fetched_at", fallback_to_global=True)
     if "claude" in enabled and claude_age < HIDE_AFTER_S:
         sections.append(("CLAUDE CODE", claude_groups, claude_age))
 
     has_ag = (usage.ag_5h_pct is not None or usage.ag_weekly_pct is not None)
-    ag_age = age_for("ag_fetched_at")
+    ag_age = age_for("ag_fetched_at", fallback_to_global=False)
     if "antigravity" in enabled and has_ag and ag_age < HIDE_AFTER_S:
         sections.append(("ANTIGRAVITY · GEMINI", [
             ("5H", usage.ag_5h_pct, usage.ag_5h_resets_at, WINDOW_S["ag_5h"]),
             ("本週", usage.ag_weekly_pct, usage.ag_weekly_resets_at, WINDOW_S["ag_weekly"]),
         ], ag_age))
 
-    oa_age = age_for("oa_fetched_at")
+    oa_age = age_for("oa_fetched_at", fallback_to_global=False)
     if "openai" in enabled and usage.oa_weekly_pct is not None and oa_age < HIDE_AFTER_S:
         sections.append(("OPENAI", [
             ("本週", usage.oa_weekly_pct, usage.oa_weekly_resets_at, WINDOW_S["oa_weekly"]),

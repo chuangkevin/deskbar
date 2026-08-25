@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import subprocess
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone, timedelta
@@ -61,9 +62,16 @@ DEFAULT_FETCH_INTERVAL = 300.0
 DEFAULT_PUSH_INTERVAL = 60.0
 DEFAULT_AG_INTERVAL = 300.0
 DEFAULT_OA_INTERVAL = 3600.0
+DEFAULT_PREFS_INTERVAL = 60.0
 OA_MIN_INTERVAL = 300.0
 INITIAL_RATE_LIMIT_BACKOFF = 900.0
 MAX_RATE_LIMIT_BACKOFF = 3600.0
+# 與 deskbar.config.VALID_USAGE_SOURCES 對齊；publisher 刻意不 import deskbar。
+VALID_USAGE_SOURCES = ("claude", "antigravity", "openai")
+# /api/prefs 讀不到且無本機確認過的清單時，不要預設打開 Claude（避免已退訂仍打 Anthropic）。
+SAFE_BOOTSTRAP_USAGE_SOURCES = ("antigravity", "openai")
+DEFAULT_USAGE_SOURCES = SAFE_BOOTSTRAP_USAGE_SOURCES
+USAGE_SOURCES_CACHE_KEY = "usage_sources"
 
 _AG_LOCK = threading.Lock()
 _AG_FETCHING_LOCK = threading.Lock()
@@ -85,6 +93,40 @@ _OA_LATEST: dict = {
     "oa_weekly_pct": None,
     "oa_weekly_resets_at": None,
 }
+
+# 背景 AG/OA 成功刷新後喚醒 run_loop，立刻補送新時間戳（不必等 push_interval）。
+_SOURCE_REFRESH_EVENT = threading.Event()
+# 供 _loop_idle_wait 辨識 time.sleep 是否被單元測試 monkeypatch。
+_REAL_TIME_SLEEP = time.sleep
+# 本機用量快取讀／合併／寫入臨界區；避免多 writer 共用固定 .tmp 互踩。
+_CACHE_LOCK = threading.RLock()
+
+
+def _notify_source_refresh_ready() -> None:
+    """成功寫入記憶體＋磁碟後才呼叫；失敗／逾時／無效結果不得觸發。"""
+    _SOURCE_REFRESH_EVENT.set()
+
+
+def _consume_source_refresh_signal() -> bool:
+    """若有待處理的成功刷新訊號則清除並回 True（避免 busy loop）。"""
+    if not _SOURCE_REFRESH_EVENT.is_set():
+        return False
+    _SOURCE_REFRESH_EVENT.clear()
+    return True
+
+
+def _loop_idle_wait(timeout: float) -> None:
+    """等待下一輪；可被來源刷新訊號中斷。
+
+    生產路徑用 ``Event.wait``。若 ``time.sleep`` 被測試 monkeypatch，改走
+    一次 sleep，保留既有 run_loop 測試以 sleep hook 停迴圈的方式。
+    """
+    if timeout < 0:
+        timeout = 0.0
+    if time.sleep is not _REAL_TIME_SLEEP:
+        time.sleep(timeout)
+        return
+    _SOURCE_REFRESH_EVENT.wait(timeout=timeout)
 
 
 def ag_payload_fields(parsed: dict | None, now: datetime) -> dict:
@@ -117,6 +159,34 @@ def ag_payload_fields(parsed: dict | None, now: datetime) -> dict:
         "ag_weekly_pct": ag_weekly_pct,
         "ag_weekly_resets_at": ag_weekly_resets_at,
     }
+
+
+def _ag_pct_is_zero_or_missing(value) -> bool:
+    if value is None:
+        return True
+    try:
+        return float(value) == 0.0
+    except (TypeError, ValueError):
+        return True
+
+
+def is_unusable_antigravity_fields(fields: dict | None) -> bool:
+    """辨識「缺席／解析失敗」被當成成功的空結果。
+
+    無效形狀：兩個百分比皆為 0 或缺失，且兩個重置時間皆缺失。
+    真實 0% 若帶有重置時間戳則仍視為可用。
+    """
+    if not fields or not isinstance(fields, dict):
+        return True
+    pcts_empty = (
+        _ag_pct_is_zero_or_missing(fields.get("ag_5h_pct"))
+        and _ag_pct_is_zero_or_missing(fields.get("ag_weekly_pct"))
+    )
+    resets_missing = (
+        fields.get("ag_5h_resets_at") is None
+        and fields.get("ag_weekly_resets_at") is None
+    )
+    return pcts_empty and resets_missing
 
 
 def get_antigravity_fields() -> dict:
@@ -152,7 +222,12 @@ def _ag_worker() -> None:
     try:
         if fetch_usage_text is None or parse_usage_panel is None:
             return
-        text = fetch_usage_text()
+        try:
+            text = fetch_usage_text()
+        except TimeoutError as error:
+            # 逾時：不更新 ag_fetched_at、不覆寫記憶體／快取；single-flight 由 finally 釋放。
+            print(f"[Antigravity] 抓取逾時：{error}，保留上一次用量資料")
+            return
         if not text:
             print("[Antigravity] 抓取文字為空，保留上一次用量資料")
             return
@@ -162,9 +237,21 @@ def _ag_worker() -> None:
             return
         now = datetime.now().astimezone()
         fields = ag_payload_fields(parsed, now)
+        if is_unusable_antigravity_fields(fields):
+            print(
+                "[Antigravity] 抓取結果無效（全 0% 且無重置時間），"
+                "保留上一次用量資料"
+            )
+            return
         fields["ag_fetched_at"] = now.isoformat()
         with _AG_LOCK:
             _AG_LATEST.update(fields)
+        try:
+            merge_source_fields_into_cache(fields)
+        except Exception as error:
+            print(f"[Antigravity] 快取寫入失敗：{error}")
+        else:
+            _notify_source_refresh_ready()
     except Exception as error:
         print(f"[Antigravity] 抓取時發生例外：{error}")
     finally:
@@ -258,6 +345,12 @@ def _oa_worker() -> None:
         fields["oa_fetched_at"] = now.isoformat()
         with _OA_LOCK:
             _OA_LATEST.update(fields)
+        try:
+            merge_source_fields_into_cache(fields)
+        except Exception as error:
+            print(f"[OpenAI] 快取寫入失敗：{error}")
+        else:
+            _notify_source_refresh_ready()
     except Exception as error:
         print(f"[OpenAI] 抓取時發生例外：{error}")
     finally:
@@ -452,22 +545,98 @@ def build_payload(usage: dict, enable_antigravity: bool = True,
     return payload
 
 
-def load_cache(path: Path = CACHE_PATH) -> dict | None:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+def load_cache(path: Path | None = None) -> dict | None:
+    path = CACHE_PATH if path is None else path
+    with _CACHE_LOCK:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
+
+def save_cache(payload: dict, path: Path | None = None) -> dict:
+    """落地用量快取；若 payload 未帶 usage_sources，保留磁碟上既有的確認清單。
+
+    持 ``_CACHE_LOCK`` 並以唯一暫存檔原子 replace，避免 AG/OA/主迴圈
+    並行寫入時互踩固定 ``usage_cache.tmp``。
+    """
+    path = CACHE_PATH if path is None else path
+    with _CACHE_LOCK:
+        to_write = dict(payload)
+        if USAGE_SOURCES_CACHE_KEY not in to_write:
+            existing = load_cache(path)
+            if existing and USAGE_SOURCES_CACHE_KEY in existing:
+                to_write[USAGE_SOURCES_CACHE_KEY] = existing[USAGE_SOURCES_CACHE_KEY]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(path.parent),
+            prefix=f"{path.stem}.",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(to_write, ensure_ascii=False, sort_keys=True) + "\n"
+                )
+            os.replace(tmp_name, path)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
+        return to_write
+
+
+def cached_usage_sources(cached: dict | None) -> tuple[str, ...] | None:
+    """從本機快取讀出上次成功確認的 usage_sources；無效則 None。"""
+    if not cached or not isinstance(cached, dict):
         return None
-    return value if isinstance(value, dict) else None
+    return normalize_remote_usage_sources(cached.get(USAGE_SOURCES_CACHE_KEY))
 
 
-def save_cache(payload: dict, path: Path = CACHE_PATH) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+def bootstrap_usage_sources(cached: dict | None) -> tuple[str, ...]:
+    """prefs 失敗時的啟動來源：已確認快取優先，否則安全預設（不含 Claude）。"""
+    return cached_usage_sources(cached) or SAFE_BOOTSTRAP_USAGE_SOURCES
+
+
+def persist_usage_sources(
+    sources: tuple[str, ...], path: Path | None = None
+) -> dict:
+    """把正規化後的 usage_sources 寫進本機快取，不覆寫各 provider 百分比／時間戳。"""
+    path = CACHE_PATH if path is None else path
+    with _CACHE_LOCK:
+        cached = load_cache(path)
+        if cached is None:
+            cached = {}
+        else:
+            cached = dict(cached)
+        cached[USAGE_SOURCES_CACHE_KEY] = list(sources)
+        return save_cache(cached, path)
+
+
+def merge_source_fields_into_cache(
+    fields: dict, path: Path | None = None
+) -> dict | None:
+    """把單一來源成功抓到的欄位合併進本機快取並落地。
+
+    Claude 403/429 時只會走快取補送；若 AG/OA 剛刷新卻沒寫回 cache，
+    重啟或後續 replay 會丟掉 ``ag_fetched_at`` / ``oa_fetched_at``。
+    沒有既有快取（從未成功抓過 Claude）時不新建——補送路徑本來就需要它。
+    整段 load／merge／write 在 ``_CACHE_LOCK`` 內，避免並行來源互相覆寫。
+    """
+    path = CACHE_PATH if path is None else path
+    if not fields or not isinstance(fields, dict):
+        return load_cache(path)
+    with _CACHE_LOCK:
+        cached = load_cache(path)
+        if cached is None:
+            return None
+        cached = dict(cached)
+        cached.update(fields)
+        save_cache(cached, path)
+        return cached
 
 
 def push(payload: dict, url: str, token: str | None) -> None:
@@ -480,6 +649,133 @@ def push(payload: dict, url: str, token: str | None) -> None:
         raise SystemExit(
             f"deskbar 回應非預期：HTTP {response.status_code} {response.text[:200]}"
         )
+
+
+def prefs_url_from_usage_url(usage_url: str) -> str:
+    """由 ``--url`` 的 /api/usage 推導 GET /api/prefs（讀 usage_sources）。"""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(usage_url)
+    path = parts.path.rstrip("/") or ""
+    if path.endswith("/api/usage"):
+        new_path = f"{path[:-len('/api/usage')]}/api/prefs"
+    elif path.endswith("/usage"):
+        new_path = f"{path[:-len('/usage')]}/prefs"
+    else:
+        new_path = f"{path}/api/prefs" if path else "/api/prefs"
+    if not new_path.startswith("/"):
+        new_path = "/" + new_path
+    return urlunsplit((parts.scheme, parts.netloc, new_path, "", ""))
+
+
+def normalize_remote_usage_sources(value) -> tuple[str, ...] | None:
+    """正規化 deskbar prefs 的 usage_sources；無法辨識時回 None。"""
+    if not isinstance(value, (list, tuple)) or not all(isinstance(x, str) for x in value):
+        return None
+    if any(x not in VALID_USAGE_SOURCES for x in value):
+        return None
+    return tuple(key for key in VALID_USAGE_SOURCES if key in value)
+
+
+def fetch_usage_sources(prefs_url: str, token: str | None = None) -> tuple[str, ...] | None:
+    """GET /api/prefs，回傳正規化後的 usage_sources；失敗回 None（呼叫端沿用上次／預設）。"""
+    headers = {"X-Deskbar-Token": token} if token else {}
+    try:
+        response = requests.get(prefs_url, headers=headers, timeout=5)
+    except requests.RequestException as error:
+        print(f"讀取 usage_sources 失敗：{error}")
+        return None
+    if response.status_code != 200:
+        print(
+            f"讀取 usage_sources 失敗：HTTP {response.status_code} "
+            f"{response.text[:200]}"
+        )
+        return None
+    try:
+        data = response.json()
+    except ValueError as error:
+        print(f"讀取 usage_sources 失敗：回應不是合法 JSON：{error}")
+        return None
+    if not isinstance(data, dict):
+        return None
+    return normalize_remote_usage_sources(data.get("usage_sources"))
+
+
+def resolve_enabled_sources(
+    sources: tuple[str, ...],
+    *,
+    want_antigravity: bool = True,
+    want_openai: bool = True,
+) -> tuple[bool, bool, bool]:
+    """回傳 (enable_claude, enable_antigravity, enable_openai)。
+
+    CLI ``--no-*`` 只能再關、不能覆寫 prefs 把已關閉來源強制打開。
+    """
+    enable_claude = "claude" in sources
+    enable_ag = want_antigravity and "antigravity" in sources
+    enable_oa = want_openai and "openai" in sources and fetch_openai_usage is not None
+    return enable_claude, enable_ag, enable_oa
+
+
+def null_claude_payload() -> dict:
+    """Claude 停用時的推送殼：不帶 stale fetched_at，避免擋 AG/OA 補送。"""
+    return {
+        "session_pct": None,
+        "session_resets_at": None,
+        "weekly_pct": None,
+        "weekly_resets_at": None,
+        "fable_pct": None,
+        "fable_resets_at": None,
+    }
+
+
+def compose_publish_payload(
+    cached: dict | None,
+    *,
+    enable_claude: bool,
+    enable_antigravity: bool,
+    enable_openai: bool,
+) -> dict | None:
+    """組出這一輪要推的 payload。
+
+    Claude 停用時即使沒有本機 Claude 快取，只要 AG/OA 有資料仍可推送；
+    也不會用舊的全域 ``fetched_at`` 當閘門。
+    """
+    used_null_shell = False
+    if cached is not None:
+        payload = dict(cached)
+        # 本機 prefs 中繼資料不得進 POST /api/usage。
+        payload.pop(USAGE_SOURCES_CACHE_KEY, None)
+    else:
+        payload = {}
+
+    if not payload:
+        if not enable_claude and (enable_antigravity or enable_openai):
+            payload = null_claude_payload()
+            used_null_shell = True
+        else:
+            return None
+
+    if not enable_claude:
+        # 停用時不要讓舊 Claude 時間戳冒充「整包新鮮度」；分來源戳留給 AG/OA。
+        payload.pop("fetched_at", None)
+        payload.pop("claude_fetched_at", None)
+        for key, value in null_claude_payload().items():
+            payload[key] = value
+    if enable_antigravity:
+        payload.update(get_antigravity_fields())
+    if enable_openai:
+        payload.update(get_openai_fields())
+    if used_null_shell:
+        # 啟動當下 AG/OA 尚未抓到前，不要用全 None payload 洗掉 deskbar 既有畫面。
+        interesting = []
+        if enable_antigravity:
+            interesting.extend(get_antigravity_fields().values())
+        if enable_openai:
+            interesting.extend(get_openai_fields().values())
+        if not any(v is not None for v in interesting):
+            return None
+    return payload
 
 
 def _summary(payload: dict) -> str:
@@ -506,10 +802,10 @@ def one_cycle(
         enable_antigravity=enable_antigravity,
         enable_openai=enable_openai,
     )
-    save_cache(payload)
+    cached = save_cache(payload)
     push(payload, url, token)
     print(f"已抓取並推送：{_summary(payload)}")
-    return payload
+    return cached
 
 
 def run_loop(
@@ -521,10 +817,28 @@ def run_loop(
     oa_interval: float = DEFAULT_OA_INTERVAL,
     enable_antigravity: bool = True,
     enable_openai: bool = True,
+    prefs_interval: float = DEFAULT_PREFS_INTERVAL,
 ) -> None:
+    prefs_url = prefs_url_from_usage_url(url)
     cached = load_cache()
-    openai_available = enable_openai and fetch_openai_usage is not None
-    if enable_antigravity:
+    remote_sources = fetch_usage_sources(prefs_url, token)
+    if remote_sources is None:
+        remote_sources = bootstrap_usage_sources(cached)
+        print(
+            "usage_sources 讀取失敗，暫用 "
+            f"{list(remote_sources)}；之後每 {prefs_interval:g} 秒重試"
+        )
+    else:
+        print(f"deskbar usage_sources={list(remote_sources)}")
+        cached = persist_usage_sources(remote_sources)
+
+    enable_claude, enable_ag, openai_available = resolve_enabled_sources(
+        remote_sources,
+        want_antigravity=enable_antigravity,
+        want_openai=enable_openai,
+    )
+
+    if enable_ag:
         warm_ag_from_cache(cached)
     if openai_available:
         warm_openai_from_cache(cached)
@@ -532,10 +846,14 @@ def run_loop(
     next_push = 0.0
     next_ag = 0.0
     next_oa = 0.0
+    next_prefs = time.monotonic() + prefs_interval
     rate_limit_backoff = INITIAL_RATE_LIMIT_BACKOFF
+    claude_status = (
+        f"Anthropic {fetch_interval:g} 秒" if enable_claude else "Claude 已關閉"
+    )
     ag_status = (
         f"Antigravity {ag_interval:g} 秒"
-        if (enable_antigravity and fetch_usage_text is not None)
+        if (enable_ag and fetch_usage_text is not None)
         else "Antigravity 已關閉"
     )
     oa_status = (
@@ -544,12 +862,35 @@ def run_loop(
         else "OpenAI 已關閉"
     )
     print(
-        f"常駐模式啟動（Anthropic {fetch_interval:g} 秒、deskbar {push_interval:g} 秒、{ag_status}、{oa_status}）"
+        f"常駐模式啟動（{claude_status}、deskbar {push_interval:g} 秒、"
+        f"{ag_status}、{oa_status}、prefs {prefs_interval:g} 秒）"
     )
     while True:
         now = time.monotonic()
 
-        if enable_antigravity and now >= next_ag:
+        if now >= next_prefs:
+            refreshed = fetch_usage_sources(prefs_url, token)
+            if refreshed is not None:
+                cached = persist_usage_sources(refreshed)
+                if refreshed != remote_sources:
+                    was_claude = enable_claude
+                    remote_sources = refreshed
+                    enable_claude, enable_ag, openai_available = resolve_enabled_sources(
+                        remote_sources,
+                        want_antigravity=enable_antigravity,
+                        want_openai=enable_openai,
+                    )
+                    print(f"usage_sources 已更新為 {list(remote_sources)}")
+                    if enable_claude and not was_claude:
+                        next_fetch = 0.0
+                        rate_limit_backoff = INITIAL_RATE_LIMIT_BACKOFF
+                    if enable_ag:
+                        warm_ag_from_cache(cached)
+                    if openai_available:
+                        warm_openai_from_cache(cached)
+            next_prefs = now + prefs_interval
+
+        if enable_ag and now >= next_ag:
             refresh_antigravity_async()
             next_ag = now + ag_interval
 
@@ -567,23 +908,33 @@ def run_loop(
                     next_oa = now + min(OA_MIN_INTERVAL, oa_interval)
 
         now = time.monotonic()
-        if cached is not None and now >= next_push:
-            if enable_antigravity:
-                cached.update(get_antigravity_fields())
-            if openai_available:
-                cached.update(get_openai_fields())
-            try:
-                push(cached, url, token)
-                print(f"已補送快取：{_summary(cached)}")
-            except SystemExit as error:
-                print(f"快取推送失敗：{error}")
-            next_push = now + push_interval
+        # 背景 AG/OA 成功刷新：立刻排程補送，不必等到原本的 push_interval。
+        if _consume_source_refresh_signal():
+            next_push = now
+
+        if now >= next_push:
+            payload = compose_publish_payload(
+                cached,
+                enable_claude=enable_claude,
+                enable_antigravity=enable_ag,
+                enable_openai=openai_available,
+            )
+            if payload is not None:
+                # Claude 失敗或停用期間仍要把剛刷新的 AG/OA 時間戳寫回磁碟，
+                # 讓後續 cache-replay / 重啟暖機帶得分來源新鮮度。
+                cached = save_cache(payload)
+                try:
+                    push(payload, url, token)
+                    print(f"已補送快取：{_summary(payload)}")
+                except SystemExit as error:
+                    print(f"快取推送失敗：{error}")
+                next_push = now + push_interval
 
         now = time.monotonic()
-        if now >= next_fetch:
+        if enable_claude and now >= next_fetch:
             try:
                 cached = one_cycle(
-                    url, token, enable_antigravity=enable_antigravity,
+                    url, token, enable_antigravity=enable_ag,
                     enable_openai=openai_available,
                 )
                 next_fetch = now + fetch_interval
@@ -603,13 +954,16 @@ def run_loop(
                 print(f"抓取失敗：{error}；期間補送本機快取")
 
         now = time.monotonic()
-        events = [next_fetch, next_push if cached is not None else next_fetch]
-        if enable_antigravity:
+        events = [next_prefs, next_push]
+        if enable_claude:
+            events.append(next_fetch)
+        if enable_ag:
             events.append(next_ag)
         if openai_available:
             events.append(next_oa)
         next_event = min(events)
-        time.sleep(max(1.0, min(5.0, next_event - now)))
+        # 可被 AG/OA 成功刷新訊號中斷，讓新鮮時間戳在下一輪立刻推送。
+        _loop_idle_wait(max(1.0, min(5.0, next_event - now)))
 
 
 def main() -> None:
@@ -623,6 +977,9 @@ def main() -> None:
                         default=DEFAULT_PUSH_INTERVAL)
     parser.add_argument("--ag-interval", type=float,
                         default=DEFAULT_AG_INTERVAL)
+    parser.add_argument("--prefs-interval", type=float,
+                        default=DEFAULT_PREFS_INTERVAL,
+                        help="多久重讀一次 deskbar /api/prefs 的 usage_sources")
     parser.add_argument("--no-antigravity", action="store_true",
                         help="停用 Antigravity 用量抓取")
     parser.add_argument("--no-openai", action="store_true",
@@ -641,6 +998,7 @@ def main() -> None:
             ag_interval=args.ag_interval,
             enable_antigravity=enable_ag,
             enable_openai=enable_oa,
+            prefs_interval=args.prefs_interval,
         )
     else:
         one_cycle(args.url, args.token, enable_antigravity=enable_ag,

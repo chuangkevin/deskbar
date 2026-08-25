@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pygame
+import pytest
 
 from deskbar.claudeusage import UsageInfo
 from deskbar.ui import theme, usagewidget
@@ -296,6 +297,72 @@ def test_per_source_selection_and_24h_expiry(monkeypatch):
     assert usagewidget.visible_sections(usage, NOW, ["claude"]) == []
     texts, _ = _rendered_texts(monkeypatch, usage)
     assert "OPENAI" in texts and "CLAUDE CODE" not in texts
+
+
+def test_ag_oa_do_not_inherit_claude_global_freshness(monkeypatch):
+    """缺 ag/oa_fetched_at 時不可拿 Claude/全域 fetched_at 當年齡（會誤標 544 分前）。"""
+    stale_claude = NOW - timedelta(minutes=544)
+    usage = UsageInfo(
+        session_pct=42.0, session_resets_at=NOW + timedelta(hours=2),
+        weekly_pct=61.0, weekly_resets_at=NOW + timedelta(days=1),
+        fable_pct=None, fable_resets_at=None,
+        fetched_at=stale_claude,
+        claude_fetched_at=stale_claude,
+        ag_5h_pct=20.0, ag_5h_resets_at=NOW + timedelta(hours=3),
+        ag_weekly_pct=30.0, ag_weekly_resets_at=NOW + timedelta(days=5),
+        oa_weekly_pct=5.0, oa_weekly_resets_at=NOW + timedelta(days=7),
+        ag_fetched_at=None,
+        oa_fetched_at=None,
+    )
+    sections = {title: age for title, _groups, age in usagewidget.visible_sections(usage, NOW)}
+    assert sections["CLAUDE CODE"] == pytest.approx(544 * 60)
+    assert sections["ANTIGRAVITY · GEMINI"] == 0.0
+    assert sections["OPENAI"] == 0.0
+
+    ages = []
+    original_text = usagewidget._text
+
+    def text_spy(surface, s, size, color, x, y, anchor="topleft", bold=False):
+        if s.startswith("(") and "分前" in s:
+            ages.append(s)
+        return original_text(surface, s, size, color, x, y, anchor=anchor, bold=bold)
+
+    monkeypatch.setattr(usagewidget, "_text", text_spy)
+    usagewidget.render(_surf(), usage, NOW, 1540, 360)
+    assert ages == ["(544 分前)"], "只有 Claude 該顯示全域過期註記，AG/OA 不可跟風"
+
+
+def test_per_source_age_label_uses_own_timestamp(monkeypatch):
+    """有分來源時間戳時，AG/OA 各自顯示自己的「N 分前」。"""
+    usage = UsageInfo(
+        session_pct=42.0, session_resets_at=NOW + timedelta(hours=2),
+        weekly_pct=61.0, weekly_resets_at=NOW + timedelta(days=1),
+        fable_pct=None, fable_resets_at=None,
+        fetched_at=NOW - timedelta(hours=2),
+        claude_fetched_at=NOW - timedelta(hours=2),
+        ag_5h_pct=20.0, ag_5h_resets_at=NOW + timedelta(hours=3),
+        ag_weekly_pct=30.0, ag_weekly_resets_at=NOW + timedelta(days=5),
+        oa_weekly_pct=5.0, oa_weekly_resets_at=NOW + timedelta(days=7),
+        ag_fetched_at=NOW - timedelta(minutes=12),
+        oa_fetched_at=NOW - timedelta(seconds=30),
+    )
+    sections = {title: age for title, _groups, age in usagewidget.visible_sections(usage, NOW)}
+    assert sections["ANTIGRAVITY · GEMINI"] == pytest.approx(12 * 60)
+    assert sections["OPENAI"] == pytest.approx(30)
+
+    notes = []
+    original_text = usagewidget._text
+
+    def text_spy(surface, s, size, color, x, y, anchor="topleft", bold=False):
+        if s.startswith("(") and "分前" in s:
+            notes.append(s)
+        return original_text(surface, s, size, color, x, y, anchor=anchor, bold=bold)
+
+    monkeypatch.setattr(usagewidget, "_text", text_spy)
+    usagewidget.render(_surf(), usage, NOW, 1540, 360)
+    assert "(120 分前)" in notes  # Claude
+    assert "(12 分前)" in notes    # Antigravity
+    assert not any(s == "(0 分前)" for s in notes)
 
 
 # ---------------------------------------------------------------- 不越界

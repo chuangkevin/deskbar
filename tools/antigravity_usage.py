@@ -7,8 +7,9 @@ Antigravity 額度 REST 端點 retrieveUserQuotaSummary 一律回傳 403 PERMISS
 
 執行方式與節奏：
 透過 pty.fork() 執行 agy /usage 命令，此過程不消耗任何模型 token（純本地 TUI
-與後端 RPC 查詢），但單次執行耗時約 45 秒。因此呼叫端排程節奏應為 5 分鐘一次
-（300 秒），而非 60 秒。
+與後端 RPC 查詢）。整次抓取有明確上界（預設 60 秒：高於 agy /usage 常見約 45
+秒的執行時間，同時仍為有界預算）；逾時回失敗／空結果，不合成 0% payload。
+呼叫端排程仍建議 5 分鐘一次（300 秒），而非 60 秒。
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import os
 import pty
 import re
 import select
+import signal
 import struct
 import termios
 import time
@@ -25,6 +27,9 @@ from datetime import datetime, timedelta
 import requests
 
 AGY_BIN = os.environ.get("DESKBAR_AGY_BIN", "/Users/kevin/.local/bin/agy")
+# 整次 pty 抓取的牆鐘上界；逾時必須失敗離開，不可無限佔住 publisher single-flight。
+# 60s 高於 agy /usage 文件所述常見約 45s 執行時間，同時保持有界、不阻塞 Deskbar 主迴圈。
+DEFAULT_FETCH_TIMEOUT_S = 60.0
 
 
 def strip_ansi(text: str) -> str:
@@ -119,15 +124,47 @@ def parse_usage_panel(text: str) -> dict[str, float | int | None]:
     return res
 
 
-def fetch_usage_text(timeout_s: int = 60) -> str | None:
+def _terminate_pty_child(pid: int, fd: int) -> None:
+    """關閉 pty 並強制結束子行程，避免 waitpid 永久阻塞。"""
+    if fd >= 0:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    if pid > 0:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        wait_deadline = time.monotonic() + 1.0
+        while time.monotonic() < wait_deadline:
+            try:
+                waited, _ = os.waitpid(pid, os.WNOHANG)
+            except OSError:
+                break
+            if waited != 0:
+                break
+            time.sleep(0.05)
+
+
+def fetch_usage_text(timeout_s: float = DEFAULT_FETCH_TIMEOUT_S) -> str | None:
     """使用 pty.fork() 執行 agy 並發送 /usage 命令，取得純文字輸出。
-    任何例外均回傳 None，不拋出例外。
+
+    整次操作受 ``timeout_s``（預設 ``DEFAULT_FETCH_TIMEOUT_S``＝60 秒）牆鐘上限
+    約束。逾時拋出 ``TimeoutError``（呼叫端應視為失敗／空結果，不可合成 0%）。
+    其他例外回傳 None，不向外拋出。測試可傳入較小的 ``timeout_s``。
     """
     if not os.path.exists(AGY_BIN):
         return None
+    budget = float(timeout_s)
+    if budget <= 0:
+        raise TimeoutError(
+            f"Antigravity fetch timed out after {timeout_s:g}s"
+        )
     pid = -1
     fd = -1
     output = bytearray()
+    deadline = time.monotonic() + budget
     try:
         pid, fd = pty.fork()
         if pid == 0:
@@ -135,15 +172,29 @@ def fetch_usage_text(timeout_s: int = 60) -> str | None:
     except Exception:
         return None
 
+    def _remaining() -> float:
+        return deadline - time.monotonic()
+
+    def _ensure_time() -> None:
+        if _remaining() <= 0:
+            raise TimeoutError(
+                f"Antigravity fetch timed out after {timeout_s:g}s"
+            )
+
     try:
         # 必須設定 terminal winsize，否則 agy TUI 不會進行渲染
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
 
-        start_time = time.monotonic()
-        # 等約 25 秒開機
-        while time.monotonic() - start_time < 25:
-            r, _, _ = select.select([fd], [], [], 0.5)
-            if r:
+        # 開機等待：最多佔預算 40%，且至少留 1 秒給 /usage 收發
+        boot_budget = min(budget * 0.4, max(0.0, budget - 1.0))
+        boot_start = time.monotonic()
+        while time.monotonic() - boot_start < boot_budget:
+            _ensure_time()
+            wait = min(0.5, _remaining())
+            if wait <= 0:
+                break
+            ready, _, _ = select.select([fd], [], [], wait)
+            if ready:
                 try:
                     chunk = os.read(fd, 4096)
                     if not chunk:
@@ -152,16 +203,20 @@ def fetch_usage_text(timeout_s: int = 60) -> str | None:
                 except OSError:
                     break
 
-        # 寫入 /usage
+        _ensure_time()
         os.write(fd, b"/usage")
-        time.sleep(1.5)
+        settle = min(0.5, max(0.0, _remaining() - 0.05))
+        if settle > 0:
+            time.sleep(settle)
+        _ensure_time()
         os.write(fd, b"\r")
 
-        # 再收 20 秒
-        recv_start = time.monotonic()
-        while time.monotonic() - recv_start < 20:
-            r, _, _ = select.select([fd], [], [], 0.5)
-            if r:
+        while _remaining() > 0:
+            wait = min(0.5, _remaining())
+            if wait <= 0:
+                break
+            ready, _, _ = select.select([fd], [], [], wait)
+            if ready:
                 try:
                     chunk = os.read(fd, 4096)
                     if not chunk:
@@ -169,25 +224,29 @@ def fetch_usage_text(timeout_s: int = 60) -> str | None:
                     output.extend(chunk)
                 except OSError:
                     break
+            # 已收到 usage panel 關鍵片段即可結束，避免空等到 deadline 後誤判逾時
+            if b"GEMINI MODELS" in output and b"Refreshes" in output:
+                break
+
+        # 牆鐘用盡且未湊齊 panel → 失敗／空結果（不回傳半套、不合成 0%）
+        if _remaining() <= 0 and not (
+            b"GEMINI MODELS" in output and b"Refreshes" in output
+        ):
+            raise TimeoutError(
+                f"Antigravity fetch timed out after {timeout_s:g}s"
+            )
 
         try:
             os.write(fd, b"\x03")
         except OSError:
             pass
 
+    except TimeoutError:
+        raise
     except Exception:
-        pass
+        return None
     finally:
-        if fd >= 0:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        if pid > 0:
-            try:
-                os.waitpid(pid, 0)
-            except OSError:
-                pass
+        _terminate_pty_child(pid, fd)
 
     if not output:
         return None
@@ -201,7 +260,11 @@ def push_antigravity_usage(deskbar_url: str = "http://localhost:8080/api/usage",
     """抓取 Antigravity usage、換算為用量百分比與 ISO8601 重置時間後 POST 推送到 deskbar。
     推送失敗只印出一行警告，不拋出例外。
     """
-    text = fetch_usage_text()
+    try:
+        text = fetch_usage_text()
+    except TimeoutError as error:
+        print(f"[antigravity_usage] 抓取逾時：{error}（忽略，下一輪再試）")
+        return
     if not text:
         print("[antigravity_usage] 抓取 Antigravity usage 文字失敗（忽略，下一輪再試）")
         return
