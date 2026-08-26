@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import subprocess
@@ -57,6 +58,12 @@ OA_ACTIVITY_PATHS = (
     "~/.codex/auth.json",
     "~/.codex/history.jsonl",
     "~/.local/share/opencode/opencode.db",
+)
+OA_ACTIVITY_GLOB_PATTERNS = (
+    "~/.codex/logs_*.sqlite-wal",
+    "~/.codex/thread_history_*.sqlite-wal",
+    "~/.codex/queue_*.sqlite-wal",
+    "~/.codex/state_*.sqlite-wal",
 )
 DEFAULT_FETCH_INTERVAL = 300.0
 DEFAULT_PUSH_INTERVAL = 60.0
@@ -377,21 +384,52 @@ def refresh_openai_async(min_interval: float = OA_MIN_INTERVAL) -> threading.Thr
     return thread
 
 
-def _latest_oa_activity_mtime(paths=OA_ACTIVITY_PATHS) -> float | None:
+_DEFAULT_OA_ACTIVITY_GLOBS = object()
+
+
+def _iter_oa_activity_paths(
+    paths=OA_ACTIVITY_PATHS,
+    glob_patterns=_DEFAULT_OA_ACTIVITY_GLOBS,
+):
+    """Yield explicit legacy paths plus dynamic Codex WAL artifacts."""
+    for path in paths:
+        yield Path(path).expanduser()
+
+    if glob_patterns is _DEFAULT_OA_ACTIVITY_GLOBS:
+        glob_patterns = OA_ACTIVITY_GLOB_PATTERNS
+
+    for pattern in glob_patterns:
+        try:
+            matches = glob.iglob(os.path.expanduser(str(pattern)))
+            for match in matches:
+                yield Path(match)
+        except OSError:
+            continue
+
+
+def _latest_oa_activity_mtime(
+    paths=OA_ACTIVITY_PATHS,
+    glob_patterns=_DEFAULT_OA_ACTIVITY_GLOBS,
+) -> float | None:
     """回傳存在活動檔的最新 mtime；缺檔不該中斷常駐推送。"""
     mtimes = []
-    for path in paths:
+    for path in _iter_oa_activity_paths(paths, glob_patterns):
         try:
-            mtimes.append(Path(path).expanduser().stat().st_mtime)
+            if not path.is_file():
+                continue
+            mtimes.append(path.stat().st_mtime)
         except OSError:
             continue
     return max(mtimes) if mtimes else None
 
 
-def _oa_activity_mtime_changed(paths=OA_ACTIVITY_PATHS) -> bool:
+def _oa_activity_mtime_changed(
+    paths=OA_ACTIVITY_PATHS,
+    glob_patterns=_DEFAULT_OA_ACTIVITY_GLOBS,
+) -> bool:
     """只有最新活動時間比已記錄值新時才推測剛消耗過 OpenAI 額度。"""
     global _OA_LAST_ACTIVITY_MTIME, _OA_ACTIVITY_MTIME_READY
-    current = _latest_oa_activity_mtime(paths)
+    current = _latest_oa_activity_mtime(paths, glob_patterns)
 
     if not _OA_ACTIVITY_MTIME_READY:
         _OA_LAST_ACTIVITY_MTIME = current

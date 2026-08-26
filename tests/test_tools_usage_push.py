@@ -397,13 +397,19 @@ def test_latest_oa_activity_mtime_uses_newest_existing_path(tmp_path):
     os.utime(older, (older_mtime, older_mtime))
     os.utime(newer, (newer_mtime, newer_mtime))
 
-    assert demo._latest_oa_activity_mtime((older, newer, tmp_path / "missing")) == newer_mtime
+    assert demo._latest_oa_activity_mtime(
+        (older, newer, tmp_path / "missing"),
+        glob_patterns=(),
+    ) == newer_mtime
 
 
 def test_latest_oa_activity_mtime_skips_missing_paths(tmp_path):
     demo = _load_demo_module()
 
-    assert demo._latest_oa_activity_mtime((tmp_path / "missing-a", tmp_path / "missing-b")) is None
+    assert demo._latest_oa_activity_mtime(
+        (tmp_path / "missing-a", tmp_path / "missing-b"),
+        glob_patterns=(),
+    ) is None
 
 
 @pytest.fixture(autouse=True)
