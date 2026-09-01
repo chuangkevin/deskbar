@@ -70,6 +70,7 @@ DEFAULT_PUSH_INTERVAL = 60.0
 DEFAULT_AG_INTERVAL = 300.0
 DEFAULT_OA_INTERVAL = 3600.0
 DEFAULT_PREFS_INTERVAL = 60.0
+DEFAULT_DESKBAR_USAGE_URL = "https://desk.sisihome.org/api/usage"
 OA_MIN_INTERVAL = 300.0
 INITIAL_RATE_LIMIT_BACKOFF = 900.0
 MAX_RATE_LIMIT_BACKOFF = 3600.0
@@ -1004,9 +1005,13 @@ def run_loop(
         _loop_idle_wait(max(1.0, min(5.0, next_event - now)))
 
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", required=True, help="deskbar /api/usage 完整網址")
+    parser.add_argument(
+        "--url",
+        default=DEFAULT_DESKBAR_USAGE_URL,
+        help="deskbar /api/usage 完整網址",
+    )
     parser.add_argument("--token", default=None, help="選填 X-Deskbar-Token")
     parser.add_argument("--loop", action="store_true", help="常駐可靠推送模式")
     parser.add_argument("--fetch-interval", type=float,
@@ -1022,6 +1027,11 @@ def main() -> None:
                         help="停用 Antigravity 用量抓取")
     parser.add_argument("--no-openai", action="store_true",
                         help="停用 OpenAI 用量抓取")
+    return parser
+
+
+def main() -> None:
+    parser = build_arg_parser()
     args = parser.parse_args()
 
     enable_ag = not args.no_antigravity

@@ -136,6 +136,21 @@ make test    # .venv/bin/python -m pytest -q
 | 觸控方向跟畫面對不起來 / 點哪都不準 | 先確認設定頁「旋轉螢幕」是否切到正確的 90°/270°；`deskbar/transform.py` 的觸控反解矩陣跟目前旋轉角度綁定，兩者要一致 |
 | Claude usage 油表一直顯示「usage 未推送」 | deskbar 本身不抓取 usage，要靠 Mac 上的 agent 主動 POST `/api/usage`（見 `tools/usage_push_snippet.py`／`tools/usage_push_demo.py`）；確認該 agent 有在跑、網路能連到 Pi，若 Pi 上設了 `DESKBAR_PUSH_TOKEN` 環境變數，推送端也要帶同樣的 `X-Deskbar-Token` header 否則會被 401 拒絕 |
 
+## Mac usage publisher LaunchAgent
+
+Mac 端 Claude / Antigravity / OpenAI combined usage publisher 的 source of truth 是 [`deploy/com.deskbar.usagepush.plist`](deploy/com.deskbar.usagepush.plist)。`tools/usage_push_demo.py` 的預設推送端點是 `https://desk.sisihome.org/api/usage`；CLI 需要改送其他 Deskbar 時，明確傳入 `--url <完整 /api/usage 網址>`，該值會被原樣使用，不會被自動改回預設值。plist 仍在 `ProgramArguments` 明寫 `--url https://desk.sisihome.org/api/usage --loop`，方便稽核已安裝服務的實際目標。
+
+操作時先 lint source plist，再在目前 macOS user domain 重新載入；下列是操作步驟，不代表本次實作已執行：
+
+```bash
+plutil -lint /Users/kevin/Documents/Projects/deskbar/deploy/com.deskbar.usagepush.plist
+launchctl bootout gui/$(id -u) /Users/kevin/Documents/Projects/deskbar/deploy/com.deskbar.usagepush.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) /Users/kevin/Documents/Projects/deskbar/deploy/com.deskbar.usagepush.plist
+launchctl kickstart -k gui/$(id -u)/com.deskbar.usagepush
+```
+
+若 stable domain 發生事件，回滾方式是改用 CLI 的明確 `--url` override 或調整 source plist 的 `--url` 值後重新 lint/bootstrap；不需要 SQL、migration、ETL 或 Deskbar server 資料修復。
+
 ## 工作中 sessions（Codex／Claude 工作台）
 
 Deskbar 的「工作中 sessions」只顯示最近活動**少於 30 分鐘**的 session，最多保留最新 **6 筆**。依使用者授權顯示本機 Codex／Claude session 的短標題（`label`：Claude App `title` 優先，其次 Claude project JSONL `customTitle`；Codex 優先使用桌面 App 的本機 thread `title`，再退回 session metadata title；仍沒有 title 才用 cwd basename，最後才是「未命名 Session」）與專案 basename（`project_label`）。這是唯一放寬：對話 Prompt/Response 內文、Summary、Tool 輸入/輸出、完整 cwd 路徑與 Native Session ID 不會作為顯示或出站資料。Mac collector 相容 Codex 新版 wrapper `{type:"session_meta", payload:{session_id, cwd}}` 與舊格式，於 128KB 限制 tail 中僅檢視 `type`、`payload.type`、`payload.role` 等安全 schema 欄位匯出安全 `activity_state`（`result` / `working` / `waiting` / `unknown`）。
