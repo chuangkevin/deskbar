@@ -8,7 +8,7 @@ html{scroll-behavior:smooth;scroll-padding-top:60px}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 *:focus-visible{outline:2px solid #78beff;outline-offset:2px}
 body{font-family:system-ui,-apple-system,"PingFang TC",sans-serif;background:#111;color:#eee;
- max-width:480px;margin:0 auto;padding:20px;width:100%}
+ max-width:1040px;margin:0 auto;padding:20px;width:100%}
 h1{font-size:20px;font-weight:600}
 .sticky-nav{position:sticky;top:0;z-index:100;background:rgba(17,17,17,0.85);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;gap:8px;align-items:center;overflow-x:auto;padding:8px 0;margin:10px 0 16px;max-width:100%}
 .nav-pill{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 16px;border-radius:22px;background:#2a2a2a;color:#eee;text-decoration:none;font-size:14px;font-weight:500;border:1px solid #444;flex:0 0 auto;white-space:nowrap}
@@ -22,10 +22,13 @@ h1{font-size:20px;font-weight:600}
 .time{font-size:28px;font-variant-numeric:tabular-nums}
 .days,.label{color:#9a9a9a;font-size:13px}
 button{background:#2a2a2a;color:#eee;border:1px solid #444;border-radius:8px;padding:8px 14px;min-height:44px}
+button:disabled{opacity:.55;cursor:progress}
 button.del{color:#f09595}
 input,label.d{font-size:16px}
 input[type=time]{background:#2a2a2a;color:#eee;border:1px solid #444;border-radius:8px;padding:6px}
-input[type=text]{background:#2a2a2a;color:#eee;border:1px solid #444;border-radius:8px;padding:8px;width:100%;box-sizing:border-box}
+input[type=text],input[type=password],input[type=number],textarea,select{background:#2a2a2a;color:#eee;border:1px solid #444;border-radius:8px;padding:8px;min-height:44px;max-width:100%;min-width:0}
+input[type=text],input[type=password],textarea{width:100%;box-sizing:border-box}
+textarea{resize:vertical;line-height:1.4}
 .wk{display:flex;gap:6px;margin:10px 0;flex-wrap:wrap}
 .wk label{background:#2a2a2a;border:1px solid #444;border-radius:8px;padding:6px 10px;font-size:14px}
 .wk input{margin-right:4px}
@@ -45,6 +48,56 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
 .usage-source-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .usage-source-list label{display:flex;align-items:center;gap:7px;min-height:44px;padding:8px 10px;border:1px solid #444;border-radius:8px;cursor:pointer}
 .usage-source-list input{width:20px;height:20px;margin:0}
+.legacy-usage-wrapper{margin-top:14px;min-width:0}
+.legacy-usage-wrapper summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:#bbb}
+.usage-manager{border-top:1px solid #2a2a2a;margin-top:14px;padding-top:14px;min-width:0}
+.usage-manager-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.usage-manager-title{font-weight:700;font-size:16px}
+.usage-actions,.usage-card-actions,.usage-form-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.usage-source-status{font-size:13px;color:#9ecfff;min-height:20px;margin:6px 0;overflow-wrap:anywhere}
+.usage-source-status.error,.usage-form-msg.error{color:#f09595}
+.usage-auth-panel,.usage-add-panel{border:1px solid #3d4c5b;background:#171f26;border-radius:8px;padding:10px;margin:10px 0;min-width:0}
+.usage-auth-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.usage-auth-row input{flex:1 1 220px}
+.usage-grid{display:grid;grid-template-columns:1fr;gap:10px;min-width:0}
+.usage-card{background:#181818;border:1px solid #333;border-left:5px solid #777;border-radius:8px;padding:12px;min-width:0;overflow-wrap:anywhere}
+.usage-provider-openai{border-left-color:#67c8ff}
+.usage-provider-claude{border-left-color:#f5a76c}
+.usage-provider-antigravity{border-left-color:#a2d86f}
+.usage-provider-custom{border-left-color:#c8aaff}
+.usage-card-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start}
+.usage-card-identity{display:flex;flex-direction:column;gap:4px;min-width:0}
+.usage-name{font-weight:700;font-size:16px;overflow-wrap:anywhere}
+.usage-sub{color:#aaa;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.usage-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+.status-pill{display:inline-flex;align-items:center;min-height:28px;border-radius:14px;padding:2px 10px;border:1px solid #555;font-size:12px}
+.status-ok{color:#b7f3c5;border-color:#3e7f50;background:#162219}
+.status-stale{color:#ffd299;border-color:#7b5b2e;background:#241c12}
+.status-pending{color:#9ecfff;border-color:#436c91;background:#13202a}
+.status-disabled{color:#ccc;border-color:#555;background:#222}
+.usage-flag{color:#bbb;font-size:12px;border:1px solid #444;border-radius:14px;padding:3px 9px}
+.metric-rows{display:flex;flex-direction:column;gap:8px;margin-top:10px;min-width:0}
+.metric-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;border-top:1px solid #292929;padding-top:8px;min-width:0}
+.metric-value{font-variant-numeric:tabular-nums;font-weight:700}
+.usage-form-grid{display:grid;grid-template-columns:1fr;gap:10px;margin-top:10px}
+.usage-field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.usage-field span,.usage-check span{font-size:13px;color:#ccc}
+.usage-check{display:flex;align-items:center;gap:8px;min-height:44px;min-width:0}
+.usage-check input{width:20px;height:20px;flex:0 0 auto}
+.usage-metric-choices{display:flex;flex-wrap:wrap;gap:8px;min-width:0}
+.usage-metric-choices label{display:inline-flex;align-items:center;gap:6px;min-height:44px;border:1px solid #444;border-radius:8px;padding:7px 10px;min-width:0}
+.usage-form-msg{font-size:13px;min-height:18px;color:#9ecfff;overflow-wrap:anywhere}
+.usage-empty{border:1px dashed #444;border-radius:8px;padding:12px;color:#bbb;line-height:1.5;min-width:0}
+.source-snippet{display:block;overflow-x:auto;max-width:100%;white-space:pre;background:#101820;border:1px solid #344454;border-radius:8px;padding:10px;color:#dbefff;font-size:12px;line-height:1.45}
+.usage-token-secret{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid #4d6545;background:#142016;border-radius:8px;padding:10px;margin-top:8px;min-width:0}
+.usage-token-secret code{overflow-wrap:anywhere;word-break:break-all}
+.usage-source-details{margin-top:10px;min-width:0}
+.usage-source-details summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:#bbb}
+.usage-source-detail-list{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 10px;margin:8px 0 0;font-size:12px;color:#aaa;min-width:0}
+.usage-source-detail-list dt{color:#888}
+.usage-source-detail-list dd{margin:0;overflow-wrap:anywhere;word-break:break-word}
+.usage-archived{margin-top:12px}
+.usage-archived summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:#bbb}
 
 .note-card{display:flex;flex-direction:column;gap:8px;min-width:0;overflow-wrap:anywhere}
 .note-card-main{display:flex;flex-direction:column;gap:8px;width:100%}
@@ -67,8 +120,15 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
  .note-body{flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap}
  .note-actions{flex:0 0 auto}
  .note-colors{margin-top:8px}
+ .usage-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .usage-form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
+@media(min-width:1200px){.usage-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(min-width:820px){.usage-manager{scroll-margin-top:72px}}
+@media(min-width:1440px){body{max-width:1120px}}
+@media(max-width:767px){body{max-width:480px;padding:16px}.usage-card-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;align-items:stretch}.usage-card-actions button{width:100%;min-height:44px;white-space:normal;line-height:1.2;padding-inline:8px}.usage-form-actions button{flex:1 1 130px}.usage-manager-head{align-items:stretch}.usage-actions{width:100%}.usage-actions button{flex:1 1 140px}}
+@media(max-width:390px){body{padding:12px}.usage-card{padding:10px}.usage-auth-row button{flex:1 1 120px}}
 @media(max-width:374px){body{padding:12px}.row{align-items:stretch;flex-wrap:wrap}.row input[type=text]{min-width:0;flex:1 1 180px}.cal-row select,.cal-row input[type=text]{max-width:100%}}
 @media(max-width:479px){.alarm-row{flex-direction:column}.alarm-actions{width:100%;justify-content:flex-start}.alarm-actions button{flex:1 1 132px;padding-inline:8px}}
 </style></head><body>
@@ -228,27 +288,676 @@ async function loadPrefs(){
     <input type="checkbox" class="p_sc" value="${k}"
      ${(p.scenes_enabled||[]).includes(k)?"checked":""}> ${n}</label>`).join("")}
   </div>
-  <fieldset class="usage-sources">
-   <legend>AI 用量顯示</legend>
-   <div class="usage-source-list">
-    ${[["claude","Claude Code"],["antigravity","Antigravity / Gemini"],["openai","OpenAI"]].map(([key,label])=>`<label>
-     <input type="checkbox" class="p_us" value="${key}" ${(p.usage_sources||[]).includes(key)?"checked":""}>${label}</label>`).join("")}
+  <section class="usage-manager" id="usage-source-manager" aria-labelledby="usage-source-title">
+   <div class="usage-manager-head">
+    <div>
+     <div class="usage-manager-title" id="usage-source-title">AI 用量來源</div>
+     <div class="hint">各帳號分開顯示，不合併百分比；時間只看收集器回報的用量更新時間。</div>
+    </div>
+    <div class="usage-actions">
+     <button type="button" id="usage-source-add">新增來源</button>
+     <button type="button" id="usage-source-refresh">重新整理</button>
+    </div>
    </div>
-   <div class="hint">超過 24 小時未更新會自動隱藏</div>
-  </fieldset>
+   <div id="usage-source-status" class="usage-source-status" aria-live="polite"></div>
+   <div class="usage-auth-panel" id="usage-auth-panel" hidden>
+    <div class="usage-field">
+     <span>管理金鑰</span>
+     <div class="usage-auth-row">
+      <input type="password" id="usage-management-token" autocomplete="off" placeholder="管理金鑰">
+      <button type="button" id="usage-token-retry">帶金鑰重試</button>
+     </div>
+     <div class="hint">只保留到關閉或重新整理這個頁面。伺服器沒有要求時不需要填。</div>
+    </div>
+   </div>
+   <form class="usage-add-panel" id="usage-add-form" hidden>
+    <div class="usage-form-grid">
+     <label class="usage-field"><span>來源類型</span>
+      <select id="usage-add-provider">
+       <option value="openai">Codex / OpenAI</option>
+       <option value="claude">Claude</option>
+       <option value="antigravity">Antigravity</option>
+       <option value="custom">Custom</option>
+      </select>
+     </label>
+     <label class="usage-field"><span>顯示名稱</span>
+      <input type="text" id="usage-add-name" maxlength="80" placeholder="例如：Work Codex">
+     </label>
+     <label class="usage-field"><span>帳號 ID</span>
+      <input type="text" id="usage-add-account" maxlength="160" placeholder="穩定帳號 ID">
+     </label>
+    </div>
+    <div id="usage-add-help" class="hint"></div>
+    <div id="usage-add-msg" class="usage-form-msg" aria-live="polite"></div>
+    <div class="usage-form-actions">
+     <button type="button" id="usage-add-save">儲存來源</button>
+     <button type="button" id="usage-add-cancel">取消</button>
+    </div>
+   </form>
+   <div id="usage-source-list" class="usage-grid"></div>
+   <details class="usage-archived" id="usage-archived-section">
+    <summary>已移除來源</summary>
+    <div id="usage-archived-list" class="usage-grid"></div>
+   </details>
+  </section>
+  <details class="legacy-usage-wrapper">
+   <summary>舊版來源</summary>
+   <fieldset class="usage-sources">
+    <legend>舊版來源</legend>
+    <div class="usage-source-list">
+     ${[["claude","Claude Code"],["antigravity","Antigravity / Gemini"],["openai","OpenAI"]].map(([key,label])=>`<label>
+      <input type="checkbox" class="p_us" value="${key}" ${(p.usage_sources||[]).includes(key)?"checked":""}>${label}</label>`).join("")}
+    </div>
+    <div class="hint">保留給舊版收集器；超過 24 小時未更新會自動隱藏。</div>
+   </fieldset>
+  </details>
   <div class="cal-row">Linear Key（${p.linear_key_set?"已設定":"未設定"}）
    <input type="password" id="p_lk" placeholder="lin_api_… 貼上後按存">
    <button onclick="saveKey()">存 Key</button></div>
   <button onclick="savePrefs()">儲存設定</button><span id="p_msg"></span>
-  <div class="cal-row" style="margin-top:8px"><a href="/api/backup" download>下載設定備份</a>
+ <div class="cal-row" style="margin-top:8px"><a href="/api/backup" download>下載設定備份</a>
    （含鬧鐘與便條；SD 卡故障時可對照重建）</div>
  </div>`;
+ initUsageSourcesPanel();
 }
 const SCENE_NAMES=[["flow","流場墨線"],["stars","星河流星"],["ridges","呼吸山稜"],
  ["fireflies","螢火蟲"],["fish","水墨游魚"],["aurora","極光"],
  ["train","電車窗景"],["runner","像素冒險者"],["ink","墨滴暈染"],
  ["planet_horizon","行星地平線"],["glass_rain","玻璃雨"],
  ["magnetic_fog","磁霧"],["reverse_lightning","逆閃電"],["tidal_aurora","潮汐極光"]];
+const USAGE_PROVIDER_META={
+ openai:{label:"Codex / OpenAI",color:"#67c8ff"},
+ claude:{label:"Claude",color:"#f5a76c"},
+ antigravity:{label:"Antigravity",color:"#a2d86f"},
+ custom:{label:"Custom",color:"#c8aaff"}
+};
+const USAGE_METRIC_RE=/^[A-Za-z0-9_-]{1,32}$/;
+let usageSourcesState={sources:[],loaded:false,loading:false,editingId:null,pollTimer:null,
+ managementToken:"",pendingRetry:null,tokenSecrets:{},orderPending:false};
+function usageEl(tag,attrs={},children=[]){
+ const node=document.createElement(tag);
+ for(const [k,v] of Object.entries(attrs)){
+  if(v===undefined||v===null)continue;
+  if(k==="class")node.className=v;
+  else if(k==="text")node.textContent=String(v);
+  else if(k==="checked")node.checked=!!v;
+  else if(k==="disabled")node.disabled=!!v;
+  else if(k==="hidden")node.hidden=!!v;
+  else if(k==="value")node.value=String(v);
+  else if(k.startsWith("on")&&typeof v==="function")node.addEventListener(k.slice(2),v);
+  else node.setAttribute(k,String(v));
+ }
+ for(const child of children){
+  if(child===undefined||child===null)continue;
+  node.appendChild(typeof child==="string"?document.createTextNode(child):child);
+ }
+ return node;
+}
+function usageClear(node){while(node&&node.firstChild)node.removeChild(node.firstChild)}
+function usageProviderLabel(source){
+ const meta=USAGE_PROVIDER_META[source.provider]||USAGE_PROVIDER_META.custom;
+ return meta.label;
+}
+function usageMetricLabel(name){
+ const labels={weekly:"本週",session:"5小時","5h":"5小時",daily:"本日"};
+ const key=String(name);
+ return labels[key]||key;
+}
+function usageStatusBox(msg,isError=false){
+ const el=document.getElementById("usage-source-status");
+ if(!el)return;
+ el.textContent=msg||"";
+ el.classList.toggle("error",!!isError);
+}
+function usageFormMsg(form,msg,isError=false){
+ const el=form?form.querySelector(".usage-form-msg"):null;
+ if(!el)return;
+ el.textContent=msg||"";
+ el.classList.toggle("error",!!isError);
+}
+function initUsageSourcesPanel(){
+ const panel=document.getElementById("usage-source-manager");
+ if(!panel)return;
+ document.getElementById("usage-source-add").onclick=showAddUsageSourceForm;
+ document.getElementById("usage-source-refresh").onclick=()=>loadUsageSources({silent:false});
+ document.getElementById("usage-add-provider").onchange=updateUsageAddHelp;
+ document.getElementById("usage-add-cancel").onclick=hideAddUsageSourceForm;
+ document.getElementById("usage-add-save").onclick=e=>saveNewUsageSource(e.currentTarget);
+ document.getElementById("usage-token-retry").onclick=retryUsageManagementRequest;
+ const tokenInput=document.getElementById("usage-management-token");
+ tokenInput.value=usageSourcesState.managementToken;
+ tokenInput.oninput=()=>{usageSourcesState.managementToken=tokenInput.value.trim()};
+ tokenInput.onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();retryUsageManagementRequest()}};
+ updateUsageAddHelp();
+ loadUsageSources({silent:false});
+ startUsageSourcePolling();
+}
+function startUsageSourcePolling(){
+ if(usageSourcesState.pollTimer)clearInterval(usageSourcesState.pollTimer);
+ usageSourcesState.pollTimer=setInterval(()=>{
+  if(isPrefsSectionVisible())loadUsageSources({silent:true});
+ },15000);
+}
+function isPrefsSectionVisible(){
+ if(document.hidden)return false;
+ const sec=document.getElementById("sec-prefs");
+ if(!sec)return false;
+ const rect=sec.getBoundingClientRect();
+ const h=window.innerHeight||document.documentElement.clientHeight||0;
+ return rect.top<h+120&&rect.bottom>-120;
+}
+async function loadUsageSources({silent=false}={}){
+ if(usageSourcesState.loading)return;
+ const list=document.getElementById("usage-source-list");
+ if(!list)return;
+ usageSourcesState.loading=true;
+ if(!silent)usageStatusBox("讀取用量來源中…");
+ try{
+  const r=await fetch("/api/usage-sources?include_archived=1",{headers:{"Accept":"application/json"}});
+  const data=await usageReadJson(r);
+  if(!r.ok){
+   const msg=r.status===503?"用量來源儲存目前無法讀取，請檢查裝置 log 後再重試。":
+    "讀取用量來源失敗"+usageErrorSuffix(r,data);
+   usageStatusBox(msg,true);
+   if(!usageSourcesState.loaded)renderUsageSourcesError(msg);
+   return;
+  }
+  usageSourcesState.loaded=true;
+  usageSourcesState.sources=Array.isArray(data.sources)?data.sources:[];
+  renderUsageSources();
+  if(!silent)usageStatusBox("用量來源已更新");
+  else usageStatusBox("");
+ }catch(err){
+  const msg="讀取用量來源失敗："+String(err&&err.message?err.message:err);
+  usageStatusBox(msg,true);
+  if(!usageSourcesState.loaded)renderUsageSourcesError(msg);
+ }finally{
+  usageSourcesState.loading=false;
+ }
+}
+async function usageReadJson(response){
+ try{return await response.json()}catch(_){return {}}
+}
+function usageErrorSuffix(response,data){
+ const err=data&&data.error?String(data.error):"";
+ return "（HTTP "+response.status+(err?"："+err:"")+"）";
+}
+function renderUsageSourcesError(msg){
+ const list=document.getElementById("usage-source-list");
+ const archived=document.getElementById("usage-archived-list");
+ if(list){usageClear(list);list.appendChild(usageEl("div",{class:"usage-empty",text:msg}))}
+ if(archived)usageClear(archived);
+}
+function renderUsageSources(){
+ const all=[...usageSourcesState.sources].sort((a,b)=>
+  (Number(a.order)||0)-(Number(b.order)||0)||String(a.created_at||"").localeCompare(String(b.created_at||"")));
+ renderUsageSourceCollection(document.getElementById("usage-source-list"),all.filter(s=>!s.archived),false);
+ renderUsageSourceCollection(document.getElementById("usage-archived-list"),all.filter(s=>s.archived),true);
+ const archivedSection=document.getElementById("usage-archived-section");
+ if(archivedSection)archivedSection.hidden=!all.some(s=>s.archived);
+}
+function renderUsageSourceCollection(container,sources,archived){
+ if(!container)return;
+ const cards=[...container.children].filter(el=>el.classList&&el.classList.contains("usage-card"));
+ const existing=new Map();
+ for(const card of cards){
+  const id=card.dataset.sourceId;
+  if(!id||existing.has(id)){card.remove();continue}
+  existing.set(id,card);
+ }
+ const wanted=new Set();
+ if(!sources.length){
+  if(container.children.length===1&&container.firstElementChild.classList.contains("usage-empty"))return;
+  usageClear(container);
+  const empty=usageEl("div",{class:"usage-empty"});
+  empty.appendChild(usageEl("div",{text:archived?"沒有已移除來源":"等待收集器回報。"}));
+  if(!archived){
+   empty.appendChild(usageEl("div",{class:"hint",text:"既有 publisher 首次回報後，新的帳號會在重新載入或自動刷新時出現。"}));
+   empty.appendChild(usageEl("button",{type:"button",text:"新增來源",onclick:showAddUsageSourceForm}));
+  }
+  container.appendChild(empty);
+  return;
+ }
+ for(const child of [...container.children]){
+  if(child.classList&&child.classList.contains("usage-empty"))child.remove();
+ }
+ for(const source of sources){
+  const id=String(source.source_id||"");
+  if(!id)continue;
+  wanted.add(id);
+  const hash=usageSourceHash(source,archived);
+  const mode=usageSourceMode(source,archived);
+  let card=existing.get(id);
+  const activeInside=card&&card.contains(document.activeElement);
+  const focusedOrEditing=usageSourcesState.editingId===id||activeInside;
+  const keepDraft=card&&card.dataset.mode==="editor"&&mode==="editor";
+  const sourceChanged=card&&card.dataset.hash!==hash;
+  const modeChanged=card&&card.dataset.mode!==mode;
+  if(!card||modeChanged||(!keepDraft&&sourceChanged)){
+   const nextCard=renderUsageSourceCard(source,archived,hash,mode);
+   if(card){
+    if(card.parentNode===container)card.replaceWith(nextCard);
+    else card.remove();
+   }
+   card=nextCard;
+   existing.set(id,card);
+  }else{
+   card.dataset.hash=hash;
+   card.dataset.mode=mode;
+   if(focusedOrEditing)updateUsageSourceCardControls(card,source,archived);
+  }
+  container.appendChild(card);
+  removeDuplicateUsageSourceCards(container,id,card);
+  updateUsageSourceCardControls(card,source,archived);
+  }
+ for(const card of [...container.children]){
+   if(card.classList&&card.classList.contains("usage-card")&&!wanted.has(card.dataset.sourceId))card.remove();
+  }
+}
+function removeDuplicateUsageSourceCards(container,id,keep){
+ for(const child of [...container.children]){
+  if(child!==keep&&child.classList&&child.classList.contains("usage-card")&&child.dataset.sourceId===id)child.remove();
+ }
+}
+function usageSourceMode(source,archived){
+ if(archived)return "archived";
+ return usageSourcesState.editingId===String(source.source_id||"")?"editor":"view";
+}
+function usageSourceHash(source,archived){
+ const displaySource={...source};
+ delete displaySource.order;
+ delete displaySource.created_at;
+ delete displaySource.updated_at;
+ return JSON.stringify({archived,source:displaySource});
+}
+function renderUsageSourceCard(source,archived,hash,mode){
+ const provider=String(source.provider||"custom");
+ const card=usageEl("article",{class:"usage-card usage-provider-"+provider});
+ card.dataset.sourceId=String(source.source_id||"");
+ card.dataset.hash=hash;
+ card.dataset.mode=mode||usageSourceMode(source,archived);
+ if(card.dataset.mode==="editor")renderUsageSourceEditor(card,source);
+ else renderUsageSourceView(card,source,archived);
+ return card;
+}
+function updateUsageSourceCardControls(card,source,archived){
+ if(!card||card.dataset.mode!=="view"||archived)return;
+ for(const button of card.querySelectorAll("[data-usage-move]")){
+  button.disabled=usageMoveDisabled(source,Number(button.dataset.usageMove)||0);
+ }
+}
+function renderUsageSourceView(card,source,archived){
+ usageClear(card);
+ const head=usageEl("div",{class:"usage-card-head"});
+ const identity=usageEl("div",{class:"usage-card-identity"});
+ identity.appendChild(usageEl("div",{class:"usage-name",text:source.display_name||"未命名來源"}));
+ identity.appendChild(usageEl("div",{class:"usage-sub",text:usageProviderLabel(source)}));
+ const meta=usageEl("div",{class:"usage-meta"});
+ const status=statusForUsageSource(source);
+ meta.appendChild(usageEl("span",{class:"status-pill "+status.className,text:status.label}));
+ if(!source.visible)meta.appendChild(usageEl("span",{class:"usage-flag",text:"主畫面隱藏"}));
+ if(source.hide_when_stale)meta.appendChild(usageEl("span",{class:"usage-flag",text:"過期後隱藏"}));
+ identity.appendChild(meta);
+ head.appendChild(identity);card.appendChild(head);
+ card.appendChild(usageEl("div",{class:"usage-sub",text:usageObservationText(source)}));
+ const selected=Array.isArray(source.selected_metrics)?source.selected_metrics:[];
+ card.appendChild(usageEl("div",{class:"usage-sub",text:"指標："+(selected.length?selected.map(usageMetricLabel).join(", "):"收到的所有指標")}));
+ card.appendChild(renderUsageMetricRows(source));
+ const actions=usageEl("div",{class:"usage-card-actions"});
+ if(archived){
+ actions.appendChild(usageEl("button",{type:"button",text:"還原",onclick:e=>restoreUsageSource(source.source_id,e.currentTarget)}));
+ }else{
+  actions.appendChild(usageEl("button",{type:"button",text:"編輯",onclick:()=>openUsageSourceEditor(source.source_id)}));
+  actions.appendChild(usageEl("button",{type:"button",text:"上移","data-usage-move":"-1",disabled:usageMoveDisabled(source,-1),onclick:e=>moveUsageSource(source.source_id,-1,e.currentTarget)}));
+  actions.appendChild(usageEl("button",{type:"button",text:"下移","data-usage-move":"1",disabled:usageMoveDisabled(source,1),onclick:e=>moveUsageSource(source.source_id,1,e.currentTarget)}));
+  actions.appendChild(usageEl("button",{type:"button",class:"del",text:"移除",onclick:e=>archiveUsageSource(source.source_id,e.currentTarget)}));
+ }
+ card.appendChild(actions);
+ card.appendChild(renderUsageSourceDetails(source));
+}
+function renderUsageSourceDetails(source){
+ const details=usageEl("details",{class:"usage-source-details"});
+ details.appendChild(usageEl("summary",{text:"來源資訊"}));
+ const rows=[
+  ["來源 ID",source.source_id||"未指定"],
+  ["來源類型",usageProviderLabel(source)],
+  ["帳號 ID",source.provider_account_id||"未指定"]
+ ];
+ const list=usageEl("dl",{class:"usage-source-detail-list"});
+ for(const [label,value] of rows){
+  list.appendChild(usageEl("dt",{text:label}));
+  list.appendChild(usageEl("dd",{text:value}));
+ }
+ details.appendChild(list);
+ return details;
+}
+function statusForUsageSource(source){
+ if(!source.enabled||source.status==="disabled")return {label:"暫停收集",className:"status-disabled"};
+ if(source.status==="pending_observation")return {label:"等待回報",className:"status-pending"};
+ if(source.status==="stale")return {label:"已過期",className:"status-stale"};
+ return {label:"正常",className:"status-ok"};
+}
+function usageObservationText(source){
+ const obs=source.observation;
+ if(!obs||!obs.observed_at)return "尚未收到觀測資料";
+ return "用量更新時間："+formatUsageTime(obs.observed_at)+"（"+usageAge(obs.observed_at)+"）";
+}
+function formatUsageTime(value){
+ const d=new Date(value);
+ if(Number.isNaN(d.getTime()))return "時間格式錯誤";
+ return d.toLocaleString("zh-TW",{hour12:false});
+}
+function usageAge(value){
+ const d=new Date(value);
+ if(Number.isNaN(d.getTime()))return "無法計算";
+ const sec=Math.max(0,Math.floor((Date.now()-d.getTime())/1000));
+ if(sec<60)return "剛剛";
+ const min=Math.floor(sec/60);
+ if(min<60)return min+" 分鐘前";
+ const hr=Math.floor(min/60);
+ if(hr<48)return hr+" 小時前";
+ return Math.floor(hr/24)+" 天前";
+}
+function renderUsageMetricRows(source){
+ const box=usageEl("div",{class:"metric-rows"});
+ const obs=source.observation;
+ const metrics=obs&&obs.metrics&&typeof obs.metrics==="object"?obs.metrics:{};
+ const observed=Object.keys(metrics);
+ const selected=Array.isArray(source.selected_metrics)&&source.selected_metrics.length?source.selected_metrics:observed;
+ if(!selected.length){
+  box.appendChild(usageEl("div",{class:"usage-empty",text:"等待收集器回報指標"}));
+  return box;
+ }
+ for(const name of selected){
+  const metric=metrics[name];
+ const row=usageEl("div",{class:"metric-row"});
+ const left=usageEl("div");
+ left.appendChild(usageEl("div",{text:usageMetricLabel(name)}));
+  if(metric&&metric.resets_at)left.appendChild(usageEl("div",{class:"usage-sub",text:"重置："+formatUsageTime(metric.resets_at)}));
+  const value=metric&&Number.isFinite(Number(metric.used_pct))?Number(metric.used_pct).toFixed(1).replace(/\.0$/,"")+"%":"尚未回報";
+  row.appendChild(left);
+  row.appendChild(usageEl("div",{class:"metric-value",text:value}));
+  box.appendChild(row);
+ }
+ return box;
+}
+function usageMoveDisabled(source,dir){
+ if(usageSourcesState.orderPending)return true;
+ const active=[...usageSourcesState.sources].filter(s=>!s.archived).sort((a,b)=>
+  (Number(a.order)||0)-(Number(b.order)||0)||String(a.created_at||"").localeCompare(String(b.created_at||"")));
+ const idx=active.findIndex(s=>s.source_id===source.source_id);
+ return dir<0?idx<=0:idx<0||idx>=active.length-1;
+}
+function openUsageSourceEditor(sourceId){
+ usageSourcesState.editingId=sourceId;
+ renderUsageSources();
+ const card=usageCardFor(sourceId);
+ const input=card?card.querySelector('[name="display_name"]'):null;
+ if(input)input.focus();
+}
+function usageCardFor(sourceId){
+ return [...document.querySelectorAll(".usage-card")].find(el=>el.dataset.sourceId===sourceId);
+}
+function renderUsageSourceEditor(card,source){
+ usageClear(card);
+ const title=usageEl("div",{class:"usage-name",text:"編輯 "+(source.display_name||"未命名來源")});
+ const form=usageEl("form",{"data-usage-edit":source.source_id});
+ form.onsubmit=e=>{e.preventDefault();saveUsageSourceEdit(source.source_id,form.querySelector('[data-action="save"]'))};
+ const grid=usageEl("div",{class:"usage-form-grid"});
+ grid.appendChild(usageField("顯示名稱",usageEl("input",{type:"text",name:"display_name",maxlength:"80",value:source.display_name||""})));
+ grid.appendChild(usageField("過期判定（小時）",usageEl("input",{type:"number",name:"stale_after_hours",min:"1",max:"720",step:"1",value:source.stale_after_hours||24})));
+ grid.appendChild(usageCheck("暫停收集",!source.enabled,"pause"));
+ grid.appendChild(usageCheck("顯示在主畫面",!!source.visible,"visible"));
+ grid.appendChild(usageCheck("過期後隱藏",!!source.hide_when_stale,"hide_when_stale"));
+ form.appendChild(title);form.appendChild(grid);
+ form.appendChild(renderUsageMetricEditor(source));
+ form.appendChild(usageEl("div",{class:"usage-form-msg",role:"status","aria-live":"polite"}));
+ const actions=usageEl("div",{class:"usage-form-actions"});
+ actions.appendChild(usageEl("button",{type:"submit","data-action":"save",text:"儲存"}));
+ actions.appendChild(usageEl("button",{type:"button",text:"取消",onclick:()=>{usageSourcesState.editingId=null;renderUsageSources()}}));
+ form.appendChild(actions);
+ if(source.provider==="custom")form.appendChild(renderCustomTokenPanel(source));
+ card.appendChild(form);
+}
+function usageField(label,control){
+ return usageEl("label",{class:"usage-field"},[usageEl("span",{text:label}),control]);
+}
+function usageCheck(label,checked,name){
+ return usageEl("label",{class:"usage-check"},[
+  usageEl("input",{type:"checkbox",name,checked}),
+  usageEl("span",{text:label})
+ ]);
+}
+function renderUsageMetricEditor(source){
+ const wrap=usageEl("div",{class:"usage-field"});
+ wrap.appendChild(usageEl("span",{text:"顯示指標"}));
+ const obs=source.observation;
+ const metrics=obs&&obs.metrics&&typeof obs.metrics==="object"?Object.keys(obs.metrics):[];
+ const selected=new Set(Array.isArray(source.selected_metrics)?source.selected_metrics:[]);
+ const choices=usageEl("div",{class:"usage-metric-choices"});
+ for(const metric of metrics){
+  choices.appendChild(usageEl("label",{},[
+   usageEl("input",{type:"checkbox",name:"metric_choice",value:metric,checked:selected.has(metric)}),
+   usageEl("span",{text:usageMetricLabel(metric)})
+  ]));
+ }
+ wrap.appendChild(choices);
+ const extra=[...selected].filter(x=>!metrics.includes(x)).join(", ");
+ wrap.appendChild(usageEl("input",{type:"text",name:"metric_list",value:extra,placeholder:"或輸入逗號分隔的指標名稱"}));
+ wrap.appendChild(usageEl("div",{class:"hint",text:"留空且不勾選時，顯示收到的所有指標。名稱限英數、底線或連字號，最多 12 個。"}));
+ return wrap;
+}
+function parseMetricSelection(form){
+ const selected=[...form.querySelectorAll('[name="metric_choice"]:checked')].map(x=>x.value);
+ const raw=form.querySelector('[name="metric_list"]').value.split(",").map(x=>x.trim()).filter(Boolean);
+ const result=[];
+ for(const name of selected.concat(raw)){
+  if(!USAGE_METRIC_RE.test(name))throw new Error("指標名稱格式不正確："+name);
+  if(!result.includes(name))result.push(name);
+ }
+ if(result.length>12)throw new Error("指標最多 12 個");
+ return result;
+}
+async function saveUsageSourceEdit(sourceId,button){
+ const card=usageCardFor(sourceId);
+ const form=card?card.querySelector("form"):null;
+ if(!form)return;
+ let selectedMetrics=[];
+ try{selectedMetrics=parseMetricSelection(form)}catch(err){usageFormMsg(form,err.message,true);return}
+ const stale=Number(form.querySelector('[name="stale_after_hours"]').value);
+ const displayName=form.querySelector('[name="display_name"]').value.trim();
+ if(!displayName){usageFormMsg(form,"顯示名稱不可空白",true);return}
+ if(!Number.isInteger(stale)||stale<1||stale>720){usageFormMsg(form,"過期判定需為 1..720 小時",true);return}
+ const body={
+  display_name:displayName,
+  enabled:!form.querySelector('[name="pause"]').checked,
+  visible:form.querySelector('[name="visible"]').checked,
+  stale_after_hours:stale,
+  hide_when_stale:form.querySelector('[name="hide_when_stale"]').checked,
+  selected_metrics:selectedMetrics
+ };
+ usageFormMsg(form,"儲存中…");
+ const ok=await usagePatch(sourceId,body,()=>saveUsageSourceEdit(sourceId,button),button);
+ if(ok){usageSourcesState.editingId=null;renderUsageSources();usageStatusBox("來源已儲存")}
+}
+function renderCustomTokenPanel(source){
+ const panel=usageEl("div",{class:"usage-field"});
+ panel.appendChild(usageEl("span",{text:"自訂來源回報金鑰"}));
+ panel.appendChild(usageEl("div",{class:"hint",text:"只在明確按下按鈕時產生或輪換回報金鑰；明文只顯示一次，關掉或清除後不再顯示。"}));
+ const actions=usageEl("div",{class:"usage-form-actions"});
+ actions.appendChild(usageEl("button",{type:"button",text:source.token_set?"輪換回報金鑰":"產生回報金鑰",onclick:e=>rotateUsageSourceToken(source.source_id,e.currentTarget)}));
+ panel.appendChild(actions);
+ const output=usageEl("div",{class:"usage-token-output","data-token-output":source.source_id});
+ panel.appendChild(output);
+ if(usageSourcesState.tokenSecrets[source.source_id])renderUsageTokenSecret(output,source.source_id,usageSourcesState.tokenSecrets[source.source_id]);
+ const snippet=usageEl("code",{class:"source-snippet"});
+ snippet.textContent="POST /api/usage-sources/"+source.source_id+"/observations\n"+
+  "X-Deskbar-Source-Token: <回報金鑰>\n\n"+
+  "{\n  \"observed_at\": \"2026-09-08T12:00:00+08:00\",\n  \"metrics\": {\n    \"weekly\": {\"used_pct\": 42}\n  }\n}";
+ panel.appendChild(snippet);
+ return panel;
+}
+function renderUsageTokenSecret(container,sourceId,token){
+ usageClear(container);
+ const box=usageEl("div",{class:"usage-token-secret","data-test-exclude":"token-secret"});
+ box.appendChild(usageEl("span",{text:"一次性回報金鑰："}));
+ box.appendChild(usageEl("code",{text:token}));
+ box.appendChild(usageEl("button",{type:"button",text:"複製",onclick:async e=>{
+  try{await navigator.clipboard.writeText(token);e.currentTarget.textContent="已複製"}catch(_){e.currentTarget.textContent="複製失敗"}
+ }}));
+ box.appendChild(usageEl("button",{type:"button",text:"清除",onclick:()=>{delete usageSourcesState.tokenSecrets[sourceId];usageClear(container)}}));
+ container.appendChild(box);
+}
+async function rotateUsageSourceToken(sourceId,button){
+ return usageRequest("POST","/api/usage-sources/"+encodeURIComponent(sourceId)+"/token",null,
+  ()=>rotateUsageSourceToken(sourceId,button),button,async data=>{
+   if(!data.token){usageStatusBox("回報金鑰產生失敗：回應缺少回報金鑰",true);return}
+   usageSourcesState.tokenSecrets[sourceId]=String(data.token);
+   const source=usageSourcesState.sources.find(s=>s.source_id===sourceId);
+   if(source)source.token_set=true;
+   const output=usageCardFor(sourceId)?.querySelector("[data-token-output]");
+   if(output)renderUsageTokenSecret(output,sourceId,String(data.token));
+   usageStatusBox("回報金鑰已產生，請現在保存；離開或清除後不再顯示。");
+  });
+}
+async function usagePatch(sourceId,body,retry,button){
+ return usageRequest("PATCH","/api/usage-sources/"+encodeURIComponent(sourceId),body,retry,button,async data=>{
+  const updated=data&&data.source;
+  if(updated){
+   const idx=usageSourcesState.sources.findIndex(s=>s.source_id===updated.source_id);
+   if(idx>=0)usageSourcesState.sources[idx]=updated;
+  }
+ });
+}
+async function usageRequest(method,url,body,retry,button,onOk){
+ if(button)button.disabled=true;
+ const headers={"Accept":"application/json"};
+ if(body!==null)headers["Content-Type"]="application/json";
+ if(usageSourcesState.managementToken)headers["X-Deskbar-Token"]=usageSourcesState.managementToken;
+ try{
+  const r=await fetch(url,{method,headers,body:body===null?undefined:JSON.stringify(body)});
+  const data=await usageReadJson(r);
+  if(r.status===401){
+   usageSourcesState.pendingRetry=retry;
+   showUsageAuth("這個動作需要管理金鑰。請輸入管理金鑰後按「帶金鑰重試」。");
+   return false;
+  }
+  if(!r.ok){
+   usageStatusBox("用量來源更新失敗"+usageErrorSuffix(r,data),true);
+   usageFormMsg(button?button.closest("form"):null,"更新失敗"+usageErrorSuffix(r,data),true);
+   return false;
+  }
+  hideUsageAuth();
+  await onOk(data);
+  return true;
+ }catch(err){
+  usageStatusBox("用量來源更新失敗："+String(err&&err.message?err.message:err),true);
+  return false;
+ }finally{
+  if(button)button.disabled=false;
+ }
+}
+function showUsageAuth(msg){
+ const panel=document.getElementById("usage-auth-panel");
+ const input=document.getElementById("usage-management-token");
+ if(panel)panel.hidden=false;
+ usageStatusBox(msg,true);
+ if(input)input.focus();
+}
+function hideUsageAuth(){
+ const panel=document.getElementById("usage-auth-panel");
+ if(panel)panel.hidden=true;
+}
+async function retryUsageManagementRequest(){
+ const input=document.getElementById("usage-management-token");
+ usageSourcesState.managementToken=input?input.value.trim():"";
+ if(!usageSourcesState.managementToken){usageStatusBox("請先輸入管理金鑰",true);return}
+ const retry=usageSourcesState.pendingRetry;
+ if(!retry){usageStatusBox("請回到剛才的管理動作再試一次",true);return}
+ usageSourcesState.pendingRetry=null;
+ await retry();
+}
+function showAddUsageSourceForm(){
+ const form=document.getElementById("usage-add-form");
+ if(!form)return;
+ form.hidden=false;
+ document.getElementById("usage-add-msg").textContent="";
+ updateUsageAddHelp();
+ document.getElementById("usage-add-name").focus();
+}
+function hideAddUsageSourceForm(){
+ const form=document.getElementById("usage-add-form");
+ if(!form)return;
+ form.hidden=true;
+ document.getElementById("usage-add-msg").textContent="";
+}
+function updateUsageAddHelp(){
+ const provider=document.getElementById("usage-add-provider")?.value;
+ const help=document.getElementById("usage-add-help");
+ if(!help)return;
+ if(provider==="openai")help.textContent="收集器首次回報後會自動出現；手動新增 Codex 來源時請填穩定帳號 ID。新增來源不會替你登入其他帳號。";
+ else if(provider==="custom")help.textContent="自訂來源建立後，在卡片編輯中按「產生回報金鑰」才會取得回報用金鑰。新增來源不會替你登入其他帳號。";
+ else help.textContent="其他帳號需由其收集器回報；新增來源不會替你登入其他帳號。";
+}
+async function saveNewUsageSource(button){
+ const form=document.getElementById("usage-add-form");
+ const provider=document.getElementById("usage-add-provider").value;
+ const displayName=document.getElementById("usage-add-name").value.trim();
+ const account=document.getElementById("usage-add-account").value.trim();
+ const msg=document.getElementById("usage-add-msg");
+ msg.classList.remove("error");
+ if(!displayName){msg.textContent="請填顯示名稱";msg.classList.add("error");return}
+ if(provider==="openai"&&!account){
+  msg.textContent="手動新增 Codex 來源需要穩定帳號 ID；若不知道，等收集器首次回報後再改名稱。";
+  msg.classList.add("error");return;
+ }
+ const body={provider,display_name:displayName};
+ if(account)body.provider_account_id=account;
+ msg.textContent="儲存中…";
+ const ok=await usageRequest("POST","/api/usage-sources",body,()=>saveNewUsageSource(button),button,async()=>{});
+ if(ok){
+  form.hidden=true;
+  document.getElementById("usage-add-name").value="";
+  document.getElementById("usage-add-account").value="";
+  usageStatusBox("來源已新增；等待收集器回報後會顯示用量。");
+  await loadUsageSources({silent:true});
+ }
+}
+async function archiveUsageSource(sourceId,button){
+ const source=usageSourcesState.sources.find(s=>s.source_id===sourceId);
+ const name=source?source.display_name:sourceId;
+ if(!confirm("移除「"+name+"」？可在已移除來源還原。"))return;
+ const ok=await usagePatch(sourceId,{archived:true},()=>archiveUsageSource(sourceId,button),button);
+ if(ok){usageSourcesState.editingId=null;renderUsageSources();usageStatusBox("來源已移除")}
+}
+async function restoreUsageSource(sourceId,button){
+ const ok=await usagePatch(sourceId,{archived:false},()=>restoreUsageSource(sourceId,button),button);
+ if(ok){renderUsageSources();usageStatusBox("來源已還原")}
+}
+async function moveUsageSource(sourceId,dir,button){
+ if(usageSourcesState.orderPending)return;
+ const active=[...usageSourcesState.sources].filter(s=>!s.archived).sort((a,b)=>
+  (Number(a.order)||0)-(Number(b.order)||0)||String(a.created_at||"").localeCompare(String(b.created_at||"")));
+ const idx=active.findIndex(s=>s.source_id===sourceId);
+ const otherIdx=idx+dir;
+ if(idx<0||otherIdx<0||otherIdx>=active.length)return;
+ const sourceIds=active.map(s=>s.source_id);
+ [sourceIds[idx],sourceIds[otherIdx]]=[sourceIds[otherIdx],sourceIds[idx]];
+ usageSourcesState.orderPending=true;
+ renderUsageSources();
+ try{
+  const ok=await usageRequest("POST","/api/usage-sources/order",{source_ids:sourceIds},
+   ()=>moveUsageSource(sourceId,dir,button),button,async data=>{
+    const ordered=Array.isArray(data&&data.sources)?data.sources:[];
+    const archived=usageSourcesState.sources.filter(s=>s.archived);
+    usageSourcesState.sources=ordered.concat(archived);
+   });
+  if(ok)usageStatusBox("排序已更新");
+ }finally{
+  usageSourcesState.orderPending=false;
+  renderUsageSources();
+ }
+}
 async function savePrefs(){
  const iv=+document.getElementById("p_pi").value;
  const grace={20:60,30:90,45:150}[iv]||150;

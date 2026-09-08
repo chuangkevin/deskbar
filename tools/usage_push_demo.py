@@ -70,6 +70,7 @@ DEFAULT_PUSH_INTERVAL = 60.0
 DEFAULT_AG_INTERVAL = 300.0
 DEFAULT_OA_INTERVAL = 3600.0
 DEFAULT_PREFS_INTERVAL = 60.0
+DEFAULT_DESKBAR_USAGE_URL = "https://desk.sisihome.org/api/usage"
 OA_MIN_INTERVAL = 300.0
 INITIAL_RATE_LIMIT_BACKOFF = 900.0
 MAX_RATE_LIMIT_BACKOFF = 3600.0
@@ -100,6 +101,12 @@ _OA_LATEST: dict = {
     "oa_weekly_pct": None,
     "oa_weekly_resets_at": None,
 }
+OA_OBSERVATION_KEYS = (
+    "oa_weekly_pct",
+    "oa_weekly_resets_at",
+    "oa_fetched_at",
+    "oa_account_id",
+)
 
 # 背景 AG/OA 成功刷新後喚醒 run_loop，立刻補送新時間戳（不必等 push_interval）。
 _SOURCE_REFRESH_EVENT = threading.Event()
@@ -295,6 +302,8 @@ def oa_payload_fields(parsed: dict | None, now: datetime) -> dict:
             pct = float(raw_pct)
         except (TypeError, ValueError):
             pct = None
+    if pct is not None and not (0 <= pct <= 100):
+        pct = None
 
     raw_epoch = parsed.get("resets_at_epoch")
     resets_at = None
@@ -305,10 +314,54 @@ def oa_payload_fields(parsed: dict | None, now: datetime) -> dict:
         except (OSError, OverflowError, TypeError, ValueError):
             resets_at = None
 
-    return {
+    fields = {
         "oa_weekly_pct": pct,
         "oa_weekly_resets_at": resets_at,
     }
+    account_id = _valid_oa_account_id(
+        parsed.get("account_id", parsed.get("oa_account_id"))
+    )
+    if pct is not None and account_id is not None:
+        fields["oa_account_id"] = account_id
+    return fields
+
+
+def _valid_oa_account_id(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    account_id = value.strip()
+    return account_id or None
+
+
+def _has_valid_openai_usage(fields: dict | None) -> bool:
+    if not fields or not isinstance(fields, dict):
+        return False
+    value = fields.get("oa_weekly_pct")
+    if value is None or isinstance(value, bool):
+        return False
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        return False
+    return 0 <= pct <= 100
+
+
+def _replace_openai_fields(fields: dict) -> None:
+    with _OA_LOCK:
+        for key in OA_OBSERVATION_KEYS:
+            _OA_LATEST.pop(key, None)
+        _OA_LATEST.update(fields)
+
+
+def _sanitize_openai_account_field(fields: dict) -> dict:
+    cleaned = dict(fields)
+    if "oa_account_id" in cleaned:
+        account_id = _valid_oa_account_id(cleaned.get("oa_account_id"))
+        if account_id is None:
+            cleaned.pop("oa_account_id", None)
+        else:
+            cleaned["oa_account_id"] = account_id
+    return cleaned
 
 
 def get_openai_fields() -> dict:
@@ -325,14 +378,18 @@ def warm_openai_from_cache(cached: dict | None) -> None:
     """
     if not cached or not isinstance(cached, dict):
         return
+    if not any(key in cached for key in OA_OBSERVATION_KEYS):
+        return
     fields = {
         "oa_weekly_pct": cached.get("oa_weekly_pct"),
         "oa_weekly_resets_at": cached.get("oa_weekly_resets_at"),
     }
     if "oa_fetched_at" in cached:
         fields["oa_fetched_at"] = cached.get("oa_fetched_at")
-    with _OA_LOCK:
-        _OA_LATEST.update(fields)
+    account_id = _valid_oa_account_id(cached.get("oa_account_id"))
+    if account_id is not None:
+        fields["oa_account_id"] = account_id
+    _replace_openai_fields(fields)
 
 
 def _oa_worker() -> None:
@@ -346,12 +403,11 @@ def _oa_worker() -> None:
             return
         now = datetime.now().astimezone()
         fields = oa_payload_fields(parsed, now)
-        if not any(v is not None for v in fields.values()):
+        if not _has_valid_openai_usage(fields):
             print("[OpenAI] 解析結果全空，保留上一次用量資料")
             return
         fields["oa_fetched_at"] = now.isoformat()
-        with _OA_LOCK:
-            _OA_LATEST.update(fields)
+        _replace_openai_fields(fields)
         try:
             merge_source_fields_into_cache(fields)
         except Exception as error:
@@ -667,11 +723,14 @@ def merge_source_fields_into_cache(
     path = CACHE_PATH if path is None else path
     if not fields or not isinstance(fields, dict):
         return load_cache(path)
+    fields = _sanitize_openai_account_field(fields)
     with _CACHE_LOCK:
         cached = load_cache(path)
         if cached is None:
             return None
         cached = dict(cached)
+        if _has_valid_openai_usage(fields) and "oa_account_id" not in fields:
+            cached.pop("oa_account_id", None)
         cached.update(fields)
         save_cache(cached, path)
         return cached
@@ -706,6 +765,23 @@ def prefs_url_from_usage_url(usage_url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, new_path, "", ""))
 
 
+def usage_sources_url_from_prefs_url(prefs_url: str) -> str:
+    """由已推導出的 prefs URL 在同 host 取得 GET /api/usage-sources。"""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(prefs_url)
+    path = parts.path.rstrip("/") or ""
+    if path.endswith("/api/prefs"):
+        new_path = f"{path[:-len('/api/prefs')]}/api/usage-sources"
+    elif path.endswith("/prefs"):
+        new_path = f"{path[:-len('/prefs')]}/usage-sources"
+    else:
+        new_path = f"{path}/api/usage-sources" if path else "/api/usage-sources"
+    if not new_path.startswith("/"):
+        new_path = "/" + new_path
+    return urlunsplit((parts.scheme, parts.netloc, new_path, "include_archived=1", ""))
+
+
 def normalize_remote_usage_sources(value) -> tuple[str, ...] | None:
     """正規化 deskbar prefs 的 usage_sources；無法辨識時回 None。"""
     if not isinstance(value, (list, tuple)) or not all(isinstance(x, str) for x in value):
@@ -713,6 +789,70 @@ def normalize_remote_usage_sources(value) -> tuple[str, ...] | None:
     if any(x not in VALID_USAGE_SOURCES for x in value):
         return None
     return tuple(key for key in VALID_USAGE_SOURCES if key in value)
+
+
+def managed_usage_source_provider_state(
+    value,
+) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    """從 /api/usage-sources 找出 managed provider 狀態。
+
+    回傳 (有 managed records 的 providers, enabled 且未封存的 providers)。
+    """
+    if not isinstance(value, list):
+        return None
+    managed_providers = set()
+    enabled_providers = set()
+    for source in value:
+        if not isinstance(source, dict):
+            return None
+        provider = source.get("provider")
+        if provider not in VALID_USAGE_SOURCES:
+            continue
+        managed_providers.add(provider)
+        if source.get("enabled") is not True or source.get("archived") is True:
+            continue
+        enabled_providers.add(provider)
+    return (
+        tuple(key for key in VALID_USAGE_SOURCES if key in managed_providers),
+        tuple(key for key in VALID_USAGE_SOURCES if key in enabled_providers),
+    )
+
+
+def merge_usage_source_providers(
+    legacy_sources: tuple[str, ...],
+    managed_state: tuple[tuple[str, ...], tuple[str, ...]],
+) -> tuple[str, ...]:
+    managed_sources, managed_enabled_sources = managed_state
+    legacy_enabled = set(legacy_sources)
+    managed_sources = set(managed_sources)
+    managed_enabled_sources = set(managed_enabled_sources)
+    enabled = set()
+    for key in VALID_USAGE_SOURCES:
+        if key in managed_sources:
+            if key in managed_enabled_sources:
+                enabled.add(key)
+        elif key in legacy_enabled:
+            enabled.add(key)
+    return tuple(key for key in VALID_USAGE_SOURCES if key in enabled)
+
+
+def fetch_managed_usage_source_provider_state(
+    usage_sources_url: str, token: str | None = None
+) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    headers = {"X-Deskbar-Token": token} if token else {}
+    try:
+        response = requests.get(usage_sources_url, headers=headers, timeout=5)
+    except requests.RequestException:
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return managed_usage_source_provider_state(data.get("sources"))
 
 
 def fetch_usage_sources(prefs_url: str, token: str | None = None) -> tuple[str, ...] | None:
@@ -736,7 +876,16 @@ def fetch_usage_sources(prefs_url: str, token: str | None = None) -> tuple[str, 
         return None
     if not isinstance(data, dict):
         return None
-    return normalize_remote_usage_sources(data.get("usage_sources"))
+    legacy_sources = normalize_remote_usage_sources(data.get("usage_sources"))
+    if legacy_sources is None:
+        return None
+    managed_state = fetch_managed_usage_source_provider_state(
+        usage_sources_url_from_prefs_url(prefs_url),
+        token,
+    )
+    if managed_state is None:
+        return legacy_sources
+    return merge_usage_source_providers(legacy_sources, managed_state)
 
 
 def resolve_enabled_sources(
@@ -803,7 +952,11 @@ def compose_publish_payload(
     if enable_antigravity:
         payload.update(get_antigravity_fields())
     if enable_openai:
-        payload.update(get_openai_fields())
+        openai_fields = get_openai_fields()
+        if _has_valid_openai_usage(openai_fields):
+            if "oa_account_id" not in openai_fields:
+                payload.pop("oa_account_id", None)
+            payload.update(openai_fields)
     if used_null_shell:
         # 啟動當下 AG/OA 尚未抓到前，不要用全 None payload 洗掉 deskbar 既有畫面。
         interesting = []
@@ -1004,9 +1157,13 @@ def run_loop(
         _loop_idle_wait(max(1.0, min(5.0, next_event - now)))
 
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", required=True, help="deskbar /api/usage 完整網址")
+    parser.add_argument(
+        "--url",
+        default=DEFAULT_DESKBAR_USAGE_URL,
+        help="deskbar /api/usage 完整網址",
+    )
     parser.add_argument("--token", default=None, help="選填 X-Deskbar-Token")
     parser.add_argument("--loop", action="store_true", help="常駐可靠推送模式")
     parser.add_argument("--fetch-interval", type=float,
@@ -1022,6 +1179,11 @@ def main() -> None:
                         help="停用 Antigravity 用量抓取")
     parser.add_argument("--no-openai", action="store_true",
                         help="停用 OpenAI 用量抓取")
+    return parser
+
+
+def main() -> None:
+    parser = build_arg_parser()
     args = parser.parse_args()
 
     enable_ag = not args.no_antigravity

@@ -81,6 +81,23 @@ def _account_id_from_jwt(access_token: str) -> str | None:
         return None
 
 
+def _valid_account_id(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    account_id = value.strip()
+    return account_id or None
+
+
+def _valid_usage_pct(value) -> bool:
+    if value is None or isinstance(value, bool):
+        return False
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        return False
+    return 0 <= pct <= 100
+
+
 def _read_credentials(path, token_key: str, account_key: str, section: str) -> tuple[str, str] | None:
     """讀取單一憑證格式；壞檔或不完整資料一律交由下一個來源接手。"""
     try:
@@ -176,7 +193,12 @@ def fetch_usage(auth_path=None, http=None) -> dict | None:
         if status_code != 200:
             print(f"[OpenAI] 抓取失敗：HTTP {status_code}")
             return None
-        return parse_codex_headers(getattr(response, "headers", {}))
+        parsed = parse_codex_headers(getattr(response, "headers", {}))
+        if _valid_usage_pct(parsed.get("used_pct")):
+            credential_account_id = _valid_account_id(account_id)
+            if credential_account_id is not None:
+                parsed["account_id"] = credential_account_id
+        return parsed
     except Exception as error:
         print(f"[OpenAI] 抓取失敗：{type(error).__name__}")
         return None

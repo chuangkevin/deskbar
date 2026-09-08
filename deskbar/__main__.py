@@ -62,7 +62,7 @@ def main() -> None:
     settings = config.load_settings()
     from deskbar.ui import theme
     theme.set_theme(settings.theme)   # 一定要在 App._init_display()／pygame.init() 之前
-    state = AppState()
+    state = AppState(config.config_dir() / "usage_sources.json")
     state.load_cache()
     from deskbar import linear as _linear
     _cached_items, _cached_at = _linear.load_cache()
