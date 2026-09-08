@@ -4,13 +4,15 @@ import json
 import os
 import tempfile
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from deskbar import config
 from deskbar.models import Event, event_from_json, event_to_json
 from deskbar.presence import PresenceState
+from deskbar.usage_sources import UsageSourceStore
 from deskbar.weather import Weather
 
 from deskbar.work_sessions import WorkSessionActionQueue, WorkSessionSnapshot, utc_now
@@ -41,10 +43,11 @@ class Snapshot:
     linear: list = field(default_factory=list)        # LinearIssue 清單（待辦卡）
     linear_at: datetime | None = None                  # 上次成功同步時間
     work_sessions: WorkSessionSnapshot = field(default_factory=WorkSessionSnapshot)
+    usage_sources: list[dict[str, Any]] = field(default_factory=list)
 
 
 class AppState:
-    def __init__(self):
+    def __init__(self, usage_sources_path: str | os.PathLike[str] | None = None):
         self._lock = threading.Lock()
         self._events: dict[str, list[Event]] = {}
         self._weather: Weather | None = None
@@ -59,6 +62,13 @@ class AppState:
         self._work_sessions_queue: WorkSessionActionQueue = WorkSessionActionQueue()
         self._work_sessions_baseline: bool = False
         self._work_sessions_seen: dict[tuple[str, str], datetime] = {}
+        self.usage_source_store = UsageSourceStore(usage_sources_path)
+        try:
+            self._usage_sources: list[dict[str, Any]] = self.usage_source_store.list_sources(
+                include_archived=True,
+            )
+        except ValueError:
+            self._usage_sources = []
         self._cached_snapshot: Snapshot | None = None
         self._cached_seq: int | None = None
 
@@ -73,10 +83,101 @@ class AppState:
             snap = Snapshot(events, self._weather, dict(self._statuses), self._seq,
                             self._syncing, self._presence, self._usage,
                             list(self._linear), self._linear_at,
-                            self._work_sessions)
+                            self._work_sessions, list(self._usage_sources))
             self._cached_snapshot = snap
             self._cached_seq = self._seq
             return snap
+
+    def list_usage_sources(self, *, include_archived: bool = False) -> list[dict[str, Any]]:
+        return self.usage_source_store.list_sources(include_archived=include_archived)
+
+    def refresh_usage_sources(self) -> list[dict[str, Any]]:
+        sources = self.usage_source_store.list_sources(include_archived=True)
+        with self._lock:
+            if sources != self._usage_sources:
+                self._usage_sources = sources
+                self._seq += 1
+            return list(self._usage_sources)
+
+    def create_usage_source(self, data: dict[str, Any]) -> dict[str, Any]:
+        source = self.usage_source_store.create_source(data)
+        self.refresh_usage_sources()
+        return source
+
+    def update_usage_source(self, source_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        source = self.usage_source_store.update_source(source_id, data)
+        self.refresh_usage_sources()
+        return source
+
+    def reorder_usage_sources(self, source_ids: list[str]) -> list[dict[str, Any]]:
+        sources = self.usage_source_store.reorder_sources(source_ids)
+        self.refresh_usage_sources()
+        return sources
+
+    def rotate_usage_source_token(self, source_id: str) -> dict[str, Any]:
+        result = self.usage_source_store.rotate_token(source_id)
+        self.refresh_usage_sources()
+        return result
+
+    def verify_usage_source_token(self, source_id: str, token: str) -> bool:
+        return self.usage_source_store.verify_token(source_id, token)
+
+    def observe_usage_source(self, source_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        result = self.usage_source_store.observe(source_id, data)
+        self.refresh_usage_sources()
+        return result
+
+    def ingest_legacy_usage_sources(
+        self,
+        payload: dict[str, Any],
+        enabled_providers: list[str] | tuple[str, ...],
+        *,
+        sync_enabled: bool = True,
+    ) -> dict[str, Any]:
+        result = self.usage_source_store.ingest_legacy(
+            payload,
+            enabled_providers,
+            sync_enabled=sync_enabled,
+        )
+        self.refresh_usage_sources()
+        return result
+
+    def sync_legacy_usage_sources(
+        self,
+        enabled_providers: list[str] | tuple[str, ...],
+        *,
+        changed_providers: list[str] | tuple[str, ...] | set[str] | frozenset[str] | None = None,
+    ) -> None:
+        self.usage_source_store.sync_legacy_enabled(
+            enabled_providers,
+            changed_providers=changed_providers,
+        )
+        self.refresh_usage_sources()
+
+    @contextmanager
+    def sync_legacy_usage_sources_transaction(
+        self,
+        enabled_providers: list[str] | tuple[str, ...],
+        *,
+        changed_providers: list[str] | tuple[str, ...] | set[str] | frozenset[str] | None = None,
+    ):
+        try:
+            with self.usage_source_store.legacy_enabled_transaction(
+                enabled_providers,
+                changed_providers=changed_providers,
+            ):
+                yield
+        finally:
+            self._refresh_usage_sources_after_store_change()
+
+    def _refresh_usage_sources_after_store_change(self) -> None:
+        try:
+            self.refresh_usage_sources()
+        except ValueError:
+            with self._lock:
+                if self._usage_sources:
+                    self._usage_sources = []
+                    self._seq += 1
 
     def bump(self) -> None:
         """外部資料（如便條）變更時叫醒 render 迴圈：只推進 seq，不改任何欄位。"""

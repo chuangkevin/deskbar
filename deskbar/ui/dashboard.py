@@ -148,7 +148,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         hits += linearview.render(surface, snap, settings, TL_AREA, now,
                                   page=linear_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
-                           settings.usage_sources)
+                           settings.usage_sources,
+                           source_records=snap.usage_sources)
         _render_right_lower(surface, snap, now, hits, todo_fallback=False)
         return _finish(surface, snap, settings, now, hits)   # 中欄即完整待辦牆，右欄摘要免了
     if center == "notes":
@@ -159,7 +160,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         hits += notesview.render(surface, notes, notes_ui or notesview.new_state(),
                                  TL_AREA, now, _t.monotonic(), page=notes_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
-                           settings.usage_sources)
+                           settings.usage_sources,
+                           source_records=snap.usage_sources)
         _render_right_lower(surface, snap, now, hits)
         return _finish(surface, snap, settings, now, hits)
     if center == "sessions":
@@ -173,7 +175,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         _text(surface, " · ".join(header_parts), 22, theme.C["text2"], TL_X0, 22)
         hits += worksessionwidget.render_center_view(surface, snap, settings, TL_AREA, now)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
-                           settings.usage_sources)
+                           settings.usage_sources,
+                           source_records=snap.usage_sources)
         _render_right_lower(surface, snap, now, hits)
         return _finish(surface, snap, settings, now, hits)
     if center == "scene":
@@ -188,7 +191,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                   "toggle_center", hits)
         _chip_btn(surface, work_label, WORK_BTN, "open_work_sessions", hits, size=20)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
-                           settings.usage_sources)
+                           settings.usage_sources,
+                           source_records=snap.usage_sources)
         _render_right_lower(surface, snap, now, hits)
         return _finish(surface, snap, settings, now, hits)
 
@@ -269,7 +273,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     # 右欄：Claude usage 油表——獨立呼叫，不吃 TL_AREA、不產生 hits（純資訊面板，
     # 跟左欄時鐘/天氣一樣不可互動），畫在最後純粹是慣例（跟中欄內容互不重疊，順序無關）。
     usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
-                       settings.usage_sources)
+                       settings.usage_sources,
+                       source_records=snap.usage_sources)
     _render_right_lower(surface, snap, now, hits)
     return _finish(surface, snap, settings, now, hits)
 

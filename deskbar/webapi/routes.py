@@ -9,7 +9,9 @@ from deskbar import auth, config
 from deskbar.alarms import _is_valid_date_str
 from deskbar.claudeusage import UsageInfo
 from deskbar.presence import PresenceState
+from deskbar.usage_sources import UsageSourceRecoveryRequiredError
 from deskbar.webapi.context import WebContext
+from deskbar.webapi.usage_sources import register_usage_source_routes
 from deskbar.webapi.validation import (
     _PCT_FIELDS,
     _PREF_BOOL,
@@ -29,10 +31,126 @@ from deskbar.webapi.validation import (
 from deskbar.work_sessions import snapshot_from_payload, utc_now
 
 _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+_USAGE_ACCOUNT_ID_MAX_LEN = 160
+
+
+def _enabled_usage_sources(context: WebContext) -> tuple[str, ...]:
+    if context.settings_provider is None or context.settings_lock is None:
+        return config.VALID_USAGE_SOURCES
+    with context.settings_lock:
+        return tuple(
+            getattr(context.settings_provider, "usage_sources", config.VALID_USAGE_SOURCES)
+        )
+
+
+def _changed_usage_providers(
+    old_sources: tuple[str, ...],
+    new_sources: tuple[str, ...],
+) -> tuple[str, ...]:
+    old_enabled = set(old_sources)
+    new_enabled = set(new_sources)
+    return tuple(
+        provider
+        for provider in config.VALID_USAGE_SOURCES
+        if (provider in old_enabled) != (provider in new_enabled)
+    )
+
+
+def _restore_settings_fields(settings_provider, old_values: dict) -> None:
+    for key, value in old_values.items():
+        setattr(settings_provider, key, value)
+
+
+def _validate_oa_account_id(payload: dict) -> None:
+    if "oa_account_id" not in payload or payload["oa_account_id"] is None:
+        return
+    value = payload["oa_account_id"]
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value.strip()) > _USAGE_ACCOUNT_ID_MAX_LEN
+    ):
+        raise ValueError("oa_account_id must be a non-empty string")
+
+
+def _aware_usage_dt(value) -> datetime | None:
+    parsed = _parse_dt(value)
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=_USAGE_TZ)
+    return parsed
+
+
+def _legacy_registry_metric(pct, resets_at) -> dict:
+    metric = {"used_pct": pct}
+    reset_dt = _aware_usage_dt(resets_at)
+    if reset_dt is not None:
+        metric["resets_at"] = reset_dt.isoformat()
+    return metric
+
+
+def _build_legacy_registry_payload(
+    payload: dict,
+    *,
+    fetched_at: datetime,
+    enabled_sources: tuple[str, ...],
+) -> dict | None:
+    enabled = set(enabled_sources)
+    registry_payload = {}
+
+    def add_provider(
+        provider: str,
+        fetched_field: str,
+        fields: tuple[tuple[str, str, str], ...],
+    ) -> None:
+        metrics = {}
+        for pct_field, resets_field, metric_name in fields:
+            pct = payload.get(pct_field)
+            if pct is not None:
+                metrics[metric_name] = _legacy_registry_metric(pct, payload.get(resets_field))
+        if not metrics:
+            return
+        provider_fetched_at = _aware_usage_dt(payload.get(fetched_field)) or fetched_at
+        registry_payload[provider] = {"fetched_at": provider_fetched_at.isoformat(), **metrics}
+
+    if "claude" in enabled:
+        add_provider(
+            "claude",
+            "claude_fetched_at",
+            (
+                ("session_pct", "session_resets_at", "session"),
+                ("weekly_pct", "weekly_resets_at", "weekly"),
+                ("fable_pct", "fable_resets_at", "fable"),
+            ),
+        )
+    if "antigravity" in enabled:
+        add_provider(
+            "antigravity",
+            "ag_fetched_at",
+            (
+                ("ag_5h_pct", "ag_5h_resets_at", "5h"),
+                ("ag_weekly_pct", "ag_weekly_resets_at", "weekly"),
+            ),
+        )
+    if "openai" in enabled or payload.get("oa_account_id"):
+        add_provider(
+            "openai",
+            "oa_fetched_at",
+            (("oa_weekly_pct", "oa_weekly_resets_at", "weekly"),),
+        )
+        if "openai" in registry_payload and payload.get("oa_account_id") is not None:
+            registry_payload["oa_account_id"] = payload["oa_account_id"].strip()
+
+    if any(key in registry_payload for key in ("claude", "antigravity", "openai")):
+        return registry_payload
+    return None
 
 
 def register_routes(app: Flask, context: WebContext) -> None:
     """Registers all endpoint handlers on the Flask app using WebContext."""
+
+    register_usage_source_routes(app, context)
 
     @app.get("/")
     def index():
@@ -289,10 +407,40 @@ def register_routes(app: Flask, context: WebContext) -> None:
                 staged[k] = float(v)
             else:
                 return jsonify({"error": f"unknown field {k}"}), 400
-        with context.settings_lock:
-            for k, v in staged.items():
-                setattr(context.settings_provider, k, v)
-            context.on_save(context.settings_provider)
+        if "usage_sources" in staged:
+            with context.settings_lock:
+                old_values = {k: getattr(context.settings_provider, k) for k in staged}
+                old_usage_sources = tuple(
+                    getattr(context.settings_provider, "usage_sources", config.VALID_USAGE_SOURCES)
+                )
+                changed_providers = _changed_usage_providers(
+                    old_usage_sources,
+                    staged["usage_sources"],
+                )
+                try:
+                    if context.usage_state is None:
+                        for k, v in staged.items():
+                            setattr(context.settings_provider, k, v)
+                        context.on_save(context.settings_provider)
+                    else:
+                        with context.usage_state.sync_legacy_usage_sources_transaction(
+                            staged["usage_sources"],
+                            changed_providers=changed_providers,
+                        ):
+                            for k, v in staged.items():
+                                setattr(context.settings_provider, k, v)
+                            context.on_save(context.settings_provider)
+                except UsageSourceRecoveryRequiredError:
+                    _restore_settings_fields(context.settings_provider, old_values)
+                    return jsonify({"error": "usage sources recovery required"}), 503
+                except (OSError, ValueError):
+                    _restore_settings_fields(context.settings_provider, old_values)
+                    return jsonify({"error": "usage sources update failed"}), 503
+        else:
+            with context.settings_lock:
+                for k, v in staged.items():
+                    setattr(context.settings_provider, k, v)
+                context.on_save(context.settings_provider)
         if context.usage_state is not None:
             context.usage_state.bump()   # 叫醒 render 迴圈：亮度/睡眠等改動即時上畫面
         if staged.keys() & {"weather_lat", "weather_lon", "weather_label",
@@ -412,6 +560,10 @@ def register_routes(app: Flask, context: WebContext) -> None:
         for f in _USAGE_FETCHED_FIELDS:
             if f in d and not _valid_resets_at(d.get(f)):
                 return jsonify({"error": f"invalid {f}"}), 400
+        try:
+            _validate_oa_account_id(d)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
 
         fetched_at = _parse_dt(d.get("fetched_at")) \
             if d.get("fetched_at") is not None else datetime.now(_USAGE_TZ)
@@ -440,6 +592,23 @@ def register_routes(app: Flask, context: WebContext) -> None:
             ag_fetched_at=_optional_fetched("ag_fetched_at"),
             oa_fetched_at=_optional_fetched("oa_fetched_at"),
         )
+        enabled_sources = _enabled_usage_sources(context)
+        try:
+            registry_payload = _build_legacy_registry_payload(
+                d,
+                fetched_at=fetched_at,
+                enabled_sources=enabled_sources,
+            )
+            if registry_payload is not None:
+                context.usage_state.ingest_legacy_usage_sources(
+                    registry_payload,
+                    enabled_sources,
+                    sync_enabled=False,
+                )
+        except OSError:
+            return jsonify({"error": "usage sources update failed"}), 503
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         context.usage_state.set_usage(info)
         return "", 204
 
