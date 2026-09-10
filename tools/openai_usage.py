@@ -190,11 +190,14 @@ def fetch_usage(auth_path=None, http=None) -> dict | None:
         )
         _drain_response(response)
         status_code = getattr(response, "status_code", None)
-        if status_code != 200:
-            print(f"[OpenAI] 抓取失敗：HTTP {status_code}")
-            return None
         parsed = parse_codex_headers(getattr(response, "headers", {}))
-        if _valid_usage_pct(parsed.get("used_pct")):
+        has_valid_usage = _valid_usage_pct(parsed.get("used_pct"))
+        if status_code != 200:
+            if not has_valid_usage:
+                print(f"[OpenAI] 抓取失敗：HTTP {status_code}")
+                return None
+            print(f"[OpenAI] HTTP {status_code}，改用回應 header 的用量")
+        if has_valid_usage:
             credential_account_id = _valid_account_id(account_id)
             if credential_account_id is not None:
                 parsed["account_id"] = credential_account_id
