@@ -11,3 +11,8 @@ def _pygame_session():
     pygame.init()
     yield
     pygame.quit()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_usage_cache(monkeypatch, tmp_path):
+    monkeypatch.setenv("DESKBAR_USAGE_CACHE", str(tmp_path / "usage_cache.json"))

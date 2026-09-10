@@ -51,7 +51,12 @@ USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 USAGE_BETA_HEADER = "oauth-2025-04-20"
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
-CACHE_PATH = Path.home() / ".deskbar-agent" / "usage_cache.json"
+_cache_path_override = os.environ.get("DESKBAR_USAGE_CACHE")
+CACHE_PATH = (
+    Path(_cache_path_override).expanduser()
+    if _cache_path_override
+    else Path.home() / ".deskbar-agent" / "usage_cache.json"
+)
 # 2026-08-10 委派主力從 OpenCode 換成 Codex CLI；只看 opencode.db 會使
 # 活動觸發永遠不發生，因此同時觀察 Codex 會更新的憑證與歷程檔。
 OA_ACTIVITY_PATHS = (
