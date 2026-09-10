@@ -68,6 +68,16 @@ def parse_codex_headers(headers: dict) -> dict:
     }
 
 
+def _valid_usage_pct(value) -> bool:
+    if value is None or isinstance(value, bool):
+        return False
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        return False
+    return 0 <= pct <= 100
+
+
 def _account_id_from_jwt(access_token: str) -> str | None:
     """從 JWT payload 取帳號；憑證格式不完整時仍不可讓抓取程序中斷。"""
     try:
@@ -173,10 +183,14 @@ def fetch_usage(auth_path=None, http=None) -> dict | None:
         )
         _drain_response(response)
         status_code = getattr(response, "status_code", None)
+        parsed = parse_codex_headers(getattr(response, "headers", {}))
+        has_valid_usage = _valid_usage_pct(parsed.get("used_pct"))
         if status_code != 200:
-            print(f"[OpenAI] 抓取失敗：HTTP {status_code}")
-            return None
-        return parse_codex_headers(getattr(response, "headers", {}))
+            if not has_valid_usage:
+                print(f"[OpenAI] 抓取失敗：HTTP {status_code}")
+                return None
+            print(f"[OpenAI] HTTP {status_code}，改用回應 header 的用量")
+        return parsed
     except Exception as error:
         print(f"[OpenAI] 抓取失敗：{type(error).__name__}")
         return None

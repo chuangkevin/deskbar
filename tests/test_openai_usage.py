@@ -136,8 +136,8 @@ def test_fetch_usage_http_exception_returns_none(tmp_path):
 
 def test_fetch_usage_non_200_returns_none(tmp_path):
     class Response:
-        status_code = 500
-        headers = dict(REAL_HEADERS)
+        status_code = 429
+        headers = {}
 
         def iter_content(self, chunk_size=8192):
             yield b"error"
@@ -150,6 +150,54 @@ def test_fetch_usage_non_200_returns_none(tmp_path):
             return Response()
 
     assert fetch_usage(auth_path=_auth_file(tmp_path), http=HTTP()) is None
+
+
+def test_fetch_usage_429_uses_valid_usage_headers(tmp_path):
+    class Response:
+        status_code = 429
+        headers = {
+            "x-codex-primary-used-percent": "100",
+            "x-codex-primary-reset-at": "1789435507",
+        }
+
+        def iter_content(self, chunk_size=8192):
+            yield b'{"error":{"type":"usage_limit_reached"}}'
+
+        def close(self):
+            pass
+
+    class HTTP:
+        def post(self, *args, **kwargs):
+            return Response()
+
+    res = fetch_usage(auth_path=_auth_file(tmp_path), http=HTTP())
+
+    assert res is not None
+    assert res["used_pct"] == 100.0
+    assert res["resets_at_epoch"] == 1789435507
+
+
+def test_fetch_usage_200_keeps_header_parse_behavior(tmp_path):
+    class Response:
+        status_code = 200
+        headers = dict(REAL_HEADERS)
+
+        def iter_content(self, chunk_size=8192):
+            yield b"data: ok"
+
+        def close(self):
+            pass
+
+    class HTTP:
+        def post(self, *args, **kwargs):
+            return Response()
+
+    res = fetch_usage(auth_path=_auth_file(tmp_path), http=HTTP())
+
+    assert res is not None
+    assert res["used_pct"] == 3.0
+    assert res["resets_at_epoch"] == 1786932438
+    assert res["plan"] == "prolite"
 
 
 def test_fetch_usage_missing_auth_file_returns_none(tmp_path):
