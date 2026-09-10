@@ -8,6 +8,7 @@ def test_defaults_when_missing(tmp_path, monkeypatch):
     assert s.rotation == 90 and s.start_hour == 8 and s.end_hour == 24
     assert s.accounts == {}
     assert s.usage_sources == config.VALID_USAGE_SOURCES
+    assert s.oa_hidden == ()
     assert s.pet_enabled is True
     assert (s.pet_x, s.pet_y) == (config.DEFAULT_PET_X, config.DEFAULT_PET_Y)
 
@@ -24,6 +25,25 @@ def test_usage_sources_roundtrip_empty_and_invalid_fallback(tmp_path, monkeypatc
     (tmp_path / "settings.json").write_text(
         json.dumps({"usage_sources": ["claude", "unknown"]}), encoding="utf-8")
     assert config.load_settings().usage_sources == config.VALID_USAGE_SOURCES
+
+
+def test_oa_hidden_roundtrip_and_invalid_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"oa_hidden": [" acct-a ", "acct-b", "acct-a"]}), encoding="utf-8")
+    s = config.load_settings()
+    assert s.oa_hidden == ("acct-a", "acct-b")
+    config.save_settings(s)
+    assert config.load_settings().oa_hidden == ("acct-a", "acct-b")
+
+    for value in ("acct-a", ["acct-a", 1], [""], [str(i) for i in range(9)]):
+        (tmp_path / "settings.json").write_text(
+            json.dumps({"oa_hidden": value}), encoding="utf-8")
+        assert config.load_settings().oa_hidden == ()
+
+
+def test_normalize_oa_hidden_dedupes_preserving_order():
+    assert config.normalize_oa_hidden(["b", "a", "b", " c "]) == ("b", "a", "c")
 
 
 def test_roundtrip(tmp_path, monkeypatch):

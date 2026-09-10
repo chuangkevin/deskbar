@@ -237,8 +237,9 @@ def register_routes(app: Flask, context: WebContext) -> None:
                                                  "scenes_enabled", []))
             out["presence_source"] = getattr(context.settings_provider, "presence_source", "bluetooth")
             out["usage_sources"] = list(getattr(context.settings_provider, "usage_sources",
-                                                    config.VALID_USAGE_SOURCES))
+                                                     config.VALID_USAGE_SOURCES))
             out["oa_aliases"] = dict(getattr(context.settings_provider, "oa_aliases", {}))
+            out["oa_hidden"] = list(getattr(context.settings_provider, "oa_hidden", ()))
         usage = context.usage_state.snapshot().usage if context.usage_state is not None else None
         out["oa_accounts_seen"] = [
             {"account_id": account.account_id, "name": account.name}
@@ -302,6 +303,19 @@ def register_routes(app: Flask, context: WebContext) -> None:
                         return jsonify({"error": "oa_aliases must be 0..24 chars"}), 400
                     aliases[account_id.strip()] = normalized
                 staged[k] = aliases
+            elif k == "oa_hidden":
+                if not isinstance(v, list) or len(v) > 8:
+                    return jsonify({"error": "oa_hidden must be list"}), 400
+                hidden = []
+                seen = set()
+                for account_id in v:
+                    if not isinstance(account_id, str) or not account_id.strip():
+                        return jsonify({"error": "oa_hidden must be string values"}), 400
+                    normalized = account_id.strip()
+                    if normalized not in seen:
+                        hidden.append(normalized)
+                        seen.add(normalized)
+                staged[k] = tuple(hidden)
             elif k == "oa_accounts_seen":
                 continue
             elif k in _PREF_FLOAT:

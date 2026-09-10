@@ -1,4 +1,4 @@
-"""Checks for settings-page OpenAI account alias controls and prefs wiring."""
+"""Checks for settings-page OpenAI account controls and prefs wiring."""
 
 import json
 import threading
@@ -43,9 +43,10 @@ def prefs_client(tmp_path, monkeypatch):
 
 def test_openai_alias_block_renders_only_when_seen_accounts_exist():
     content = _html()
-    assert "OpenAI 帳號別名" in content
+    assert "OpenAI 帳號" in content
     assert "oa_accounts_seen" in content
     assert "oa_aliases" in content
+    assert "oa_hidden" in content
     assert "oaAccounts.length?" in content
     assert "</fieldset>`:\"\"" in content
 
@@ -53,9 +54,11 @@ def test_openai_alias_block_renders_only_when_seen_accounts_exist():
 def test_openai_alias_inputs_follow_mobile_and_touch_contract():
     content = _html()
     assert 'class="p_oa_alias"' in content
+    assert 'class="p_oa_visible"' in content
     assert 'maxlength="24"' in content
     assert 'placeholder="不填就用預設名稱"' in content
     assert ".oa-alias-row" in content
+    assert ".oa-visible-toggle" in content
     assert "min-height:44px" in content
     assert "max-width:100%;overflow-x:hidden" in content
     assert "@media(max-width:767px)" in content
@@ -66,6 +69,13 @@ def test_save_prefs_includes_openai_aliases_from_inputs():
     assert 'document.querySelectorAll(".p_oa_alias")' in content
     assert "Object.fromEntries" in content
     assert "i.dataset.accountId" in content
+
+
+def test_save_prefs_includes_unchecked_openai_accounts_as_hidden():
+    content = _html()
+    assert 'document.querySelectorAll(".p_oa_visible:not(:checked)")' in content
+    assert "oaHidden.includes(id)?\"\":\"checked\"" in content
+    assert "oa_hidden:" in content
 
 
 def test_oa_aliases_roundtrip_and_invalid_fallback(tmp_path, monkeypatch):
@@ -85,7 +95,7 @@ def test_oa_aliases_roundtrip_and_invalid_fallback(tmp_path, monkeypatch):
 
 def test_get_prefs_returns_openai_aliases_and_seen_accounts(tmp_path, monkeypatch):
     monkeypatch.setenv("DESKBAR_CONFIG_DIR", str(tmp_path))
-    settings = Settings(oa_aliases={"acct-a": "SYSTEMCOM"})
+    settings = Settings(oa_aliases={"acct-a": "SYSTEMCOM"}, oa_hidden=("acct-b",))
     state = AppState()
     state.set_usage(UsageInfo(
         session_pct=None, session_resets_at=None,
@@ -103,6 +113,7 @@ def test_get_prefs_returns_openai_aliases_and_seen_accounts(tmp_path, monkeypatc
     app.config["TESTING"] = True
     data = app.test_client().get("/api/prefs").get_json()
     assert data["oa_aliases"] == {"acct-a": "SYSTEMCOM"}
+    assert data["oa_hidden"] == ["acct-b"]
     assert data["oa_accounts_seen"] == [
         {"account_id": "acct-a", "name": "kevin.systemcom"},
         {"account_id": "acct-b", "name": "kevin.dev01"},
@@ -112,6 +123,7 @@ def test_get_prefs_returns_openai_aliases_and_seen_accounts(tmp_path, monkeypatc
 def test_get_prefs_returns_empty_openai_alias_defaults(prefs_client):
     data = prefs_client.get("/api/prefs").get_json()
     assert data["oa_aliases"] == {}
+    assert data["oa_hidden"] == []
     assert data["oa_accounts_seen"] == []
 
 
@@ -130,6 +142,33 @@ def test_oa_aliases_post_stores_reads_and_clears_aliases(prefs_client):
     response = prefs_client.post("/api/prefs", json={"oa_aliases": {"acct-a": ""}})
     assert response.status_code == 200
     assert prefs_client._settings.oa_aliases == {"acct-b": "DEV01"}
+
+
+def test_oa_hidden_patch_stores_and_reads_back(prefs_client):
+    response = prefs_client.patch("/api/prefs", json={"oa_hidden": [
+        " acct-a ", "acct-b", "acct-a",
+    ]})
+
+    assert response.status_code == 200
+    assert prefs_client._settings.oa_hidden == ("acct-a", "acct-b")
+    assert prefs_client.get("/api/prefs").get_json()["oa_hidden"] == ["acct-a", "acct-b"]
+
+
+@pytest.mark.parametrize("value", [
+    "not-a-list",
+    {"acct-a": True},
+    [123],
+    [""],
+    [str(i) for i in range(9)],
+])
+def test_oa_hidden_rejects_invalid_input_without_save(prefs_client, value):
+    prefs_client._settings.oa_hidden = ("acct-a",)
+    before_saves = len(prefs_client._saved)
+    response = prefs_client.patch("/api/prefs", json={"oa_hidden": value})
+
+    assert response.status_code == 400
+    assert prefs_client._settings.oa_hidden == ("acct-a",)
+    assert len(prefs_client._saved) == before_saves
 
 
 @pytest.mark.parametrize("value", [

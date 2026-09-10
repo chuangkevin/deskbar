@@ -45,7 +45,8 @@ def _scan_ink_outside(surf, x_lo, x_hi, bg):
     return bad
 
 
-def _rendered_texts(monkeypatch, usage, enabled_sources=None, oa_aliases=None):
+def _rendered_texts(monkeypatch, usage, enabled_sources=None, oa_aliases=None,
+                    oa_hidden=None):
     texts = []
     original = usagewidget._text
 
@@ -55,7 +56,8 @@ def _rendered_texts(monkeypatch, usage, enabled_sources=None, oa_aliases=None):
 
     monkeypatch.setattr(usagewidget, "_text", spy)
     surf = _surf()
-    usagewidget.render(surf, usage, NOW, 1540, 360, enabled_sources, oa_aliases)
+    usagewidget.render(surf, usage, NOW, 1540, 360, enabled_sources, oa_aliases,
+                       oa_hidden)
     return texts, surf
 
 
@@ -172,6 +174,48 @@ def test_stale_openai_account_only_hides_that_account():
     )
     sections = usagewidget.visible_sections(_usage(oa_accounts=accounts), NOW, ["openai"])
     assert [title for title, _groups, _age in sections] == ["OPENAI · FRESH"]
+
+
+def test_oa_hidden_skips_only_matching_openai_account():
+    accounts = (
+        OaAccount("acct-a", "kevin.systemcom", 100.0, NOW + timedelta(days=3), NOW),
+        OaAccount("acct-b", "kevin.dev01", 18.0, NOW + timedelta(days=6), NOW),
+    )
+    sections = usagewidget.visible_sections(
+        _usage(oa_accounts=accounts), NOW, ["openai"], {"acct-a": "SYSTEMCOM"}, ("acct-a",)
+    )
+
+    assert [title for title, _groups, _age in sections] == ["OPENAI · KEVIN.DEV01"]
+
+
+@pytest.mark.parametrize("hidden", [None, ()])
+def test_oa_hidden_empty_or_none_keeps_all_openai_accounts(hidden):
+    accounts = (
+        OaAccount("acct-a", "kevin.systemcom", 100.0, NOW + timedelta(days=3), NOW),
+        OaAccount("acct-b", "kevin.dev01", 18.0, NOW + timedelta(days=6), NOW),
+    )
+    sections = usagewidget.visible_sections(
+        _usage(oa_accounts=accounts), NOW, ["openai"], None, hidden
+    )
+
+    assert [title for title, _groups, _age in sections] == [
+        "OPENAI · KEVIN.SYSTEMCOM",
+        "OPENAI · KEVIN.DEV01",
+    ]
+
+
+def test_oa_hidden_all_accounts_keeps_claude_and_removes_openai_sections():
+    accounts = (
+        OaAccount("acct-a", "kevin.systemcom", 100.0, NOW + timedelta(days=3), NOW),
+        OaAccount("acct-b", "kevin.dev01", 18.0, NOW + timedelta(days=6), NOW),
+    )
+    sections = usagewidget.visible_sections(
+        _usage(oa_accounts=accounts), NOW, None, None, ("acct-a", "acct-b")
+    )
+    titles = [title for title, _groups, _age in sections]
+
+    assert "CLAUDE CODE" in titles
+    assert not any(title.startswith("OPENAI") for title in titles)
 
 
 def test_full_layout_uses_expected_section_positions(monkeypatch):

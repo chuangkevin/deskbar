@@ -90,7 +90,8 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
                              (round(px), round(bar_y + BAR_H + 3)), 1)
 
 
-def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None):
+def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None,
+                     oa_hidden=None):
     """純顯示決策：回傳仍應畫出的 ``(title, groups, age)`` 區塊。
 
     每個 provider 以自己的成功抓取時間判斷新鮮度。Claude 在缺少
@@ -116,6 +117,7 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
         return (now - fetched).total_seconds() if fetched is not None else 0.0
 
     aliases = oa_aliases or {}
+    hidden = set(oa_hidden or ())
 
     def oa_title(account):
         alias = aliases.get(account.account_id, "")
@@ -151,6 +153,8 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
         oa_accounts = getattr(usage, "oa_accounts", ())
         if oa_accounts:
             for account in oa_accounts:
+                if account.account_id in hidden:
+                    continue
                 oa_age = age_for_oa_account(account)
                 if oa_age < HIDE_AFTER_S:
                     sections.append((oa_title(account), [
@@ -166,9 +170,9 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
 
 
 def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
-           enabled_sources=None, oa_aliases=None) -> None:
+           enabled_sources=None, oa_aliases=None, oa_hidden=None) -> None:
     """畫可見 usage 區塊；未勾選、沒有資料或超過一天的來源完全不留痕跡。"""
-    sections = visible_sections(usage, now, enabled_sources, oa_aliases)
+    sections = visible_sections(usage, now, enabled_sources, oa_aliases, oa_hidden)
     if not sections:
         return
 

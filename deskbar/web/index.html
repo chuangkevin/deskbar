@@ -48,8 +48,10 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
 .oa-aliases{border:0;border-top:1px solid #2a2a2a;margin:12px 0 0;padding:12px 0 0;min-width:0}
 .oa-aliases legend{font-size:15px;font-weight:600;padding:0}
 .oa-alias-row{display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 0;min-width:0}
-.oa-alias-name{flex:0 1 42%;color:#9a9a9a;font-size:14px;min-width:0;overflow-wrap:anywhere}
-.oa-alias-row input{flex:1 1 150px;min-width:0}
+.oa-visible-toggle{display:flex;align-items:center;gap:8px;flex:0 1 42%;min-height:44px;min-width:0;cursor:pointer}
+.oa-visible-toggle input{width:20px;height:20px;margin:0;flex:0 0 auto}
+.oa-alias-name{color:#9a9a9a;font-size:14px;min-width:0;overflow-wrap:anywhere}
+.oa-alias-row>.p_oa_alias{flex:1 1 150px;min-width:0}
 
 .note-card{display:flex;flex-direction:column;gap:8px;min-width:0;overflow-wrap:anywhere}
 .note-card-main{display:flex;flex-direction:column;gap:8px;width:100%}
@@ -75,7 +77,7 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
 }
 
 @media(max-width:374px){body{padding:12px}.row{align-items:stretch;flex-wrap:wrap}.row input[type=text]{min-width:0;flex:1 1 180px}.cal-row select,.cal-row input[type=text]{max-width:100%}}
-@media(max-width:767px){.oa-alias-row{flex-wrap:wrap}.oa-alias-name{flex:1 1 100%}.oa-alias-row input{flex:1 1 100%}}
+@media(max-width:767px){.oa-alias-row{flex-wrap:wrap}.oa-visible-toggle{flex:1 1 100%}.oa-alias-name{flex:1 1 auto}.oa-alias-row>.p_oa_alias{flex:1 1 100%}}
 @media(max-width:479px){.alarm-row{flex-direction:column}.alarm-actions{width:100%;justify-content:flex-start}.alarm-actions button{flex:1 1 132px;padding-inline:8px}}
 </style></head><body>
 <h1>deskbar</h1>
@@ -203,19 +205,22 @@ async function loadPrefs(){
  const p=await r.json();
   const pct=[...Array(10)].map((_,i)=>(i+1)*10);
   const spd=[[20,"快"],[30,"中"],[45,"慢"]];
-  const weatherLabel=esc(p.weather_label||"—");
-  const oaAccounts=Array.isArray(p.oa_accounts_seen)?p.oa_accounts_seen:[];
-  const oaAliases=(p.oa_aliases&&typeof p.oa_aliases==="object")?p.oa_aliases:{};
-  const oaAliasHtml=oaAccounts.length?`<fieldset class="oa-aliases">
-    <legend>OpenAI 帳號別名</legend>
-    ${oaAccounts.map(a=>{
-     const id=String(a.account_id||"");
-     const label=String(a.name||id.slice(0,8));
-     return `<div class="oa-alias-row">
-      <div class="oa-alias-name">${esc(label)}</div>
-      <input type="text" class="p_oa_alias" data-account-id="${esc(id)}" maxlength="24"
-       placeholder="不填就用預設名稱" value="${esc(oaAliases[id]||"")}">
-     </div>`;
+   const weatherLabel=esc(p.weather_label||"—");
+   const oaAccounts=Array.isArray(p.oa_accounts_seen)?p.oa_accounts_seen:[];
+   const oaAliases=(p.oa_aliases&&typeof p.oa_aliases==="object")?p.oa_aliases:{};
+   const oaHidden=Array.isArray(p.oa_hidden)?p.oa_hidden:[];
+   const oaAliasHtml=oaAccounts.length?`<fieldset class="oa-aliases">
+     <legend>OpenAI 帳號</legend>
+     ${oaAccounts.map(a=>{
+      const id=String(a.account_id||"");
+      const label=String(a.name||id.slice(0,8));
+      return `<div class="oa-alias-row">
+       <label class="oa-visible-toggle"><input type="checkbox" class="p_oa_visible"
+        data-account-id="${esc(id)}" ${oaHidden.includes(id)?"":"checked"}>
+        <span class="oa-alias-name">${esc(label)}</span></label>
+       <input type="text" class="p_oa_alias" data-account-id="${esc(id)}" maxlength="24"
+        placeholder="不填就用預設名稱" value="${esc(oaAliases[id]||"")}">
+      </div>`;
     }).join("")}
    </fieldset>`:"";
   box.innerHTML=`<div class="card">
@@ -286,10 +291,11 @@ async function savePrefs(){
   sync_interval_min:+document.getElementById("p_si").value,
   pet_enabled:document.getElementById("p_pet").checked,
   scene_mode:document.getElementById("p_sm").value,
-   scenes_enabled:[...document.querySelectorAll(".p_sc:checked")].map(c=>c.value),
-   usage_sources:[...document.querySelectorAll(".p_us:checked")].map(c=>c.value),
-   oa_aliases:Object.fromEntries([...document.querySelectorAll(".p_oa_alias")]
-    .map(i=>[i.dataset.accountId,i.value]))};
+    scenes_enabled:[...document.querySelectorAll(".p_sc:checked")].map(c=>c.value),
+    usage_sources:[...document.querySelectorAll(".p_us:checked")].map(c=>c.value),
+    oa_hidden:[...document.querySelectorAll(".p_oa_visible:not(:checked)")].map(i=>i.dataset.accountId),
+    oa_aliases:Object.fromEntries([...document.querySelectorAll(".p_oa_alias")]
+     .map(i=>[i.dataset.accountId,i.value]))};
  const r=await fetch("/api/prefs",{method:"PATCH",
   headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
  if(r.ok){document.getElementById("p_msg").textContent=" 已儲存 ✓";setTimeout(loadPrefs,600);}
