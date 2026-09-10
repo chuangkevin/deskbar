@@ -509,6 +509,9 @@ def register_routes(app: Flask, context: WebContext) -> None:
             ag_fetched_at=_optional_fetched("ag_fetched_at"),
             oa_fetched_at=_optional_fetched("oa_fetched_at"),
             oa_accounts=_parse_oa_accounts(d.get("oa_accounts")),
+            cu_pct=_to_float(d.get("cu_pct")),
+            cu_resets_at=_parse_dt(d.get("cu_resets_at")),
+            cu_fetched_at=_optional_fetched("cu_fetched_at"),
         )
         context.usage_state.set_usage(info)
         return "", 204

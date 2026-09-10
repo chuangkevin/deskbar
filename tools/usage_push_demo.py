@@ -32,6 +32,17 @@ except ImportError:
             parse_usage_panel = None
 
 try:
+    from tools.cursor_usage import fetch_usage as fetch_cursor_usage
+except ImportError:
+    try:
+        from cursor_usage import fetch_usage as fetch_cursor_usage
+    except ImportError:
+        try:
+            from .cursor_usage import fetch_usage as fetch_cursor_usage
+        except ImportError:
+            fetch_cursor_usage = None
+
+try:
     from tools.openai_usage import fetch_all_usage as fetch_openai_usage
 except ImportError:
     try:
@@ -74,13 +85,15 @@ DEFAULT_FETCH_INTERVAL = 300.0
 DEFAULT_PUSH_INTERVAL = 60.0
 DEFAULT_AG_INTERVAL = 300.0
 DEFAULT_OA_INTERVAL = 3600.0
+DEFAULT_CU_INTERVAL = 3600.0
 DEFAULT_PREFS_INTERVAL = 60.0
 DEFAULT_DESKBAR_USAGE_URL = "https://desk.sisihome.org/api/usage"
 OA_MIN_INTERVAL = 300.0
+CU_MIN_INTERVAL = 300.0
 INITIAL_RATE_LIMIT_BACKOFF = 900.0
 MAX_RATE_LIMIT_BACKOFF = 3600.0
 # 與 deskbar.config.VALID_USAGE_SOURCES 對齊；publisher 刻意不 import deskbar。
-VALID_USAGE_SOURCES = ("claude", "antigravity", "openai")
+VALID_USAGE_SOURCES = ("claude", "antigravity", "openai", "cursor")
 # /api/prefs 讀不到且無本機確認過的清單時，不要預設打開 Claude（避免已退訂仍打 Anthropic）。
 SAFE_BOOTSTRAP_USAGE_SOURCES = ("antigravity", "openai")
 DEFAULT_USAGE_SOURCES = SAFE_BOOTSTRAP_USAGE_SOURCES
@@ -95,6 +108,106 @@ _AG_LATEST: dict = {
     "ag_weekly_pct": None,
     "ag_weekly_resets_at": None,
 }
+
+_CU_LOCK = threading.Lock()
+_CU_FETCHING_LOCK = threading.Lock()
+_CU_FETCHING = False
+_CU_LAST_REFRESH_MONO: float | None = None
+_CU_LATEST: dict = {
+    "cu_pct": None,
+    "cu_resets_at": None,
+}
+
+
+def cu_payload_fields(parsed: dict | None, now: datetime) -> dict:
+    """純函數：把 cursor_usage 的解析結果換算成 deskbar payload 欄位。"""
+    if not isinstance(parsed, dict):
+        parsed = {}
+    raw_pct = parsed.get("used_pct")
+    if raw_pct is None or isinstance(raw_pct, bool):
+        pct = None
+    else:
+        try:
+            pct = float(raw_pct)
+        except (TypeError, ValueError):
+            pct = None
+    if pct is not None and not 0 <= pct <= 100:
+        pct = None
+    resets_at = parsed.get("resets_at")
+    if not isinstance(resets_at, str) or not resets_at:
+        resets_at = None
+    return {"cu_pct": pct, "cu_resets_at": resets_at}
+
+
+def get_cursor_fields() -> dict:
+    """持鎖回傳 _CU_LATEST 的複本。"""
+    with _CU_LOCK:
+        return dict(_CU_LATEST)
+
+
+def warm_cursor_from_cache(cached: dict | None) -> None:
+    """啟動時用快取預熱，避免右欄 CURSOR 區塊短暫消失。"""
+    if not isinstance(cached, dict):
+        return
+    fields = {
+        "cu_pct": cached.get("cu_pct"),
+        "cu_resets_at": cached.get("cu_resets_at"),
+    }
+    if "cu_fetched_at" in cached:
+        fields["cu_fetched_at"] = cached.get("cu_fetched_at")
+    with _CU_LOCK:
+        _CU_LATEST.update(fields)
+
+
+def _cu_worker() -> None:
+    global _CU_FETCHING
+    try:
+        if fetch_cursor_usage is None:
+            return
+        parsed = fetch_cursor_usage()
+        if parsed is None:
+            print("[Cursor] 抓取失敗，保留上一次用量資料")
+            return
+        now = datetime.now(timezone.utc).astimezone()
+        fields = cu_payload_fields(parsed, now)
+        if fields.get("cu_pct") is None:
+            print("[Cursor] 解析結果全空，保留上一次用量資料")
+            return
+        fields["cu_fetched_at"] = now.isoformat()
+        with _CU_LOCK:
+            _CU_LATEST.update(fields)
+        cached = load_cache() or {}
+        cached.update(fields)
+        try:
+            save_cache(cached)
+        except OSError as error:
+            print(f"[Cursor] 快取寫入失敗：{error}")
+    except Exception as error:
+        print(f"[Cursor] 抓取時發生例外：{type(error).__name__}")
+    finally:
+        with _CU_FETCHING_LOCK:
+            global _CU_FETCHING
+            _CU_FETCHING = False
+
+
+def refresh_cursor_async(min_interval: float = CU_MIN_INTERVAL) -> threading.Thread | None:
+    """背景刷新 Cursor 用量，最小間隔擋連發。"""
+    global _CU_FETCHING, _CU_LAST_REFRESH_MONO
+    if fetch_cursor_usage is None:
+        return None
+    now_mono = time.monotonic()
+    with _CU_FETCHING_LOCK:
+        if _CU_FETCHING:
+            return None
+        if (_CU_LAST_REFRESH_MONO is not None
+                and now_mono - _CU_LAST_REFRESH_MONO < min_interval):
+            return None
+        _CU_FETCHING = True
+        _CU_LAST_REFRESH_MONO = now_mono
+    thread = threading.Thread(target=_cu_worker, daemon=True)
+    thread.start()
+    return thread
+
 
 _OA_LOCK = threading.Lock()
 _OA_FETCHING_LOCK = threading.Lock()
@@ -665,7 +778,8 @@ def fetch_usage(token: str) -> dict:
 
 
 def build_payload(usage: dict, enable_antigravity: bool = True,
-                  enable_openai: bool = True) -> dict:
+                  enable_openai: bool = True,
+                  enable_cursor: bool = False) -> dict:
     five_hour = usage.get("five_hour") or {}
     seven_day = usage.get("seven_day") or {}
     fable_pct, fable_resets_at = None, None
@@ -691,6 +805,8 @@ def build_payload(usage: dict, enable_antigravity: bool = True,
         payload.update(get_antigravity_fields())
     if enable_openai and fetch_openai_usage is not None:
         payload.update(get_openai_fields())
+    if enable_cursor and fetch_cursor_usage is not None:
+        payload.update(get_cursor_fields())
     return payload
 
 
@@ -866,6 +982,11 @@ def resolve_enabled_sources(
     return enable_claude, enable_ag, enable_oa
 
 
+def cursor_enabled(sources: tuple[str, ...], want_cursor: bool = True) -> bool:
+    """Cursor 是否啟用。刻意不併進 resolve_enabled_sources，避免改動既有 3-tuple 簽章。"""
+    return want_cursor and "cursor" in sources and fetch_cursor_usage is not None
+
+
 def null_claude_payload() -> dict:
     """Claude 停用時的推送殼：不帶 stale fetched_at，避免擋 AG/OA 補送。"""
     return {
@@ -884,6 +1005,7 @@ def compose_publish_payload(
     enable_claude: bool,
     enable_antigravity: bool,
     enable_openai: bool,
+    enable_cursor: bool = False,
 ) -> dict | None:
     """組出這一輪要推的 payload。
 
@@ -899,7 +1021,7 @@ def compose_publish_payload(
         payload = {}
 
     if not payload:
-        if not enable_claude and (enable_antigravity or enable_openai):
+        if not enable_claude and (enable_antigravity or enable_openai or enable_cursor):
             payload = null_claude_payload()
             used_null_shell = True
         else:
@@ -915,6 +1037,8 @@ def compose_publish_payload(
         payload.update(get_antigravity_fields())
     if enable_openai:
         payload.update(get_openai_fields())
+    if enable_cursor:
+        payload.update(get_cursor_fields())
     if used_null_shell:
         # 啟動當下 AG/OA 尚未抓到前，不要用全 None payload 洗掉 deskbar 既有畫面。
         interesting = []
@@ -930,6 +1054,8 @@ def compose_publish_payload(
                         interesting.append(account.get("weekly_resets_at"))
             else:
                 interesting.extend(oa_fields.values())
+        if enable_cursor:
+            interesting.append(get_cursor_fields().get("cu_pct"))
         if not any(v is not None for v in interesting):
             return None
     return payload
@@ -959,17 +1085,20 @@ def _summary(payload: dict) -> str:
             summary += f"  OpenAI {' / '.join(parts)}"
     elif "oa_weekly_pct" in payload:
         summary += f"  OpenAI 週 {payload.get('oa_weekly_pct')}%"
+    if payload.get("cu_pct") is not None:
+        summary += f"  Cursor {payload.get('cu_pct')}%"
     return summary
 
 
 def one_cycle(
     url: str, token: str | None, enable_antigravity: bool = True,
-    enable_openai: bool = True
+    enable_openai: bool = True, enable_cursor: bool = False
 ) -> dict:
     payload = build_payload(
         fetch_usage(load_access_token()),
         enable_antigravity=enable_antigravity,
         enable_openai=enable_openai,
+        enable_cursor=enable_cursor,
     )
     cached = save_cache(payload)
     push(payload, url, token)
@@ -984,8 +1113,10 @@ def run_loop(
     push_interval: float,
     ag_interval: float = DEFAULT_AG_INTERVAL,
     oa_interval: float = DEFAULT_OA_INTERVAL,
+    cu_interval: float = DEFAULT_CU_INTERVAL,
     enable_antigravity: bool = True,
     enable_openai: bool = True,
+    enable_cursor: bool = True,
     prefs_interval: float = DEFAULT_PREFS_INTERVAL,
 ) -> None:
     prefs_url = prefs_url_from_usage_url(url)
@@ -1007,14 +1138,19 @@ def run_loop(
         want_openai=enable_openai,
     )
 
+    cursor_available = cursor_enabled(remote_sources, enable_cursor)
+
     if enable_ag:
         warm_ag_from_cache(cached)
     if openai_available:
         warm_openai_from_cache(cached)
+    if cursor_available:
+        warm_cursor_from_cache(cached)
     next_fetch = 0.0
     next_push = 0.0
     next_ag = 0.0
     next_oa = 0.0
+    next_cu = 0.0
     next_prefs = time.monotonic() + prefs_interval
     rate_limit_backoff = INITIAL_RATE_LIMIT_BACKOFF
     claude_status = (
@@ -1030,9 +1166,12 @@ def run_loop(
         if openai_available
         else "OpenAI 已關閉"
     )
+    cu_status = (
+        f"Cursor {cu_interval:g} 秒" if cursor_available else "Cursor 已關閉"
+    )
     print(
         f"常駐模式啟動（{claude_status}、deskbar {push_interval:g} 秒、"
-        f"{ag_status}、{oa_status}、prefs {prefs_interval:g} 秒）"
+        f"{ag_status}、{oa_status}、{cu_status}、prefs {prefs_interval:g} 秒）"
     )
     while True:
         now = time.monotonic()
@@ -1057,6 +1196,9 @@ def run_loop(
                         warm_ag_from_cache(cached)
                     if openai_available:
                         warm_openai_from_cache(cached)
+                    cursor_available = cursor_enabled(remote_sources, enable_cursor)
+                    if cursor_available:
+                        warm_cursor_from_cache(cached)
             next_prefs = now + prefs_interval
 
         if enable_ag and now >= next_ag:
@@ -1077,6 +1219,14 @@ def run_loop(
                     next_oa = now + min(OA_MIN_INTERVAL, oa_interval)
 
         now = time.monotonic()
+        if cursor_available and now >= next_cu:
+            started = refresh_cursor_async()
+            if started is not None:
+                next_cu = now + cu_interval
+            else:
+                next_cu = now + min(CU_MIN_INTERVAL, cu_interval)
+
+        now = time.monotonic()
         # 背景 AG/OA 成功刷新：立刻排程補送，不必等到原本的 push_interval。
         if _consume_source_refresh_signal():
             next_push = now
@@ -1087,6 +1237,7 @@ def run_loop(
                 enable_claude=enable_claude,
                 enable_antigravity=enable_ag,
                 enable_openai=openai_available,
+                enable_cursor=cursor_available,
             )
             if payload is not None:
                 # Claude 失敗或停用期間仍要把剛刷新的 AG/OA 時間戳寫回磁碟，
@@ -1105,6 +1256,7 @@ def run_loop(
                 cached = one_cycle(
                     url, token, enable_antigravity=enable_ag,
                     enable_openai=openai_available,
+                    enable_cursor=cursor_available,
                 )
                 next_fetch = now + fetch_interval
                 next_push = now + push_interval
@@ -1130,6 +1282,8 @@ def run_loop(
             events.append(next_ag)
         if openai_available:
             events.append(next_oa)
+        if cursor_available:
+            events.append(next_cu)
         next_event = min(events)
         # 可被 AG/OA 成功刷新訊號中斷，讓新鮮時間戳在下一輪立刻推送。
         _loop_idle_wait(max(1.0, min(5.0, next_event - now)))

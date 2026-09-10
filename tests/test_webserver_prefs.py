@@ -40,7 +40,7 @@ def test_get_prefs_returns_all_fields(client):
     assert d["presence_interval_sec"] == 45 and d["sync_interval_min"] == 5
     assert d["presence_source"] == "bluetooth"
     assert d["presence_push_ttl_sec"] == 900
-    assert d["usage_sources"] == ["claude", "antigravity", "openai"]
+    assert d["usage_sources"] == ["claude", "antigravity", "openai", "cursor"]
     assert d["pet_enabled"] is True
 
 

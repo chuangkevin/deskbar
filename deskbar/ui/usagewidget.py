@@ -3,7 +3,8 @@
 全寬單欄、由上到下三區：
 1. CLAUDE CODE 區：5H SESSION / 本週 / FABLE（FABLE 無資料時略過）
 2. ANTIGRAVITY · GEMINI 區：5H / 本週（無資料時整區略過，不畫分隔線與標題）
-3. OPENAI 區：本週（無資料時整區略過，不畫分隔線與標題）
+3. OPENAI 區：每個帳號一區（無資料時整區略過，不畫分隔線與標題）
+4. CURSOR 區：本期（帳單週期約一個月；無資料時整區略過）
 
 usage 資料完全被動接收：Mac agent POST 到 deskbar 的 /api/usage。
 
@@ -30,7 +31,7 @@ BAR_Y_OFFSET = 19         # 文字列完整結束後再起橫條，避免字框�
 STALE_AFTER_S = 300       # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
 VERY_STALE_AFTER_S = 3600 # 超過這麼久，整組轉 muted 灰（agent 可能已經停了）
 HIDE_AFTER_S = 24 * 60 * 60
-DEFAULT_SOURCES = ("claude", "antigravity", "openai")
+DEFAULT_SOURCES = ("claude", "antigravity", "openai", "cursor")
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft", bold=False):
@@ -166,6 +167,15 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
                 sections.append(("OPENAI", [
                     ("本週", usage.oa_weekly_pct, usage.oa_weekly_resets_at, WINDOW_S["oa_weekly"]),
                 ], oa_age))
+
+    if "cursor" in enabled:
+        cu_age = age_for("cu_fetched_at", fallback_to_global=False)
+        cu_pct = getattr(usage, "cu_pct", None)
+        if cu_pct is not None and cu_age < HIDE_AFTER_S:
+            # Cursor 的視窗是帳單週期（約一個月），不是一週——標籤用「本期」。
+            sections.append(("CURSOR", [
+                ("本期", cu_pct, getattr(usage, "cu_resets_at", None), WINDOW_S["cu"]),
+            ], cu_age))
     return sections
 
 

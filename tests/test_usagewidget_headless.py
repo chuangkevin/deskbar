@@ -474,3 +474,46 @@ def test_none_state_also_never_renders_outside_column():
     usagewidget.render(surf, None, NOW, 1540, 360)
     bad = _scan_ink_outside(surf, 1540, 1900, theme.C["bg"])
     assert not bad, f"未連結狀態越界：{bad[:10]}"
+
+
+def _cursor_usage(cu_pct=100.0, cu_fetched_at=None, **kw):
+    base = _usage(**kw)
+    from dataclasses import replace
+    return replace(base, cu_pct=cu_pct,
+                   cu_resets_at=NOW + timedelta(days=7),
+                   cu_fetched_at=cu_fetched_at if cu_fetched_at is not None else NOW)
+
+
+def test_cursor_section_rendered_after_openai(monkeypatch):
+    accounts = (OaAccount("a1", "acct-one", 40.0, NOW + timedelta(days=3), NOW),)
+    usage = _cursor_usage(oa_accounts=accounts)
+    sections = usagewidget.visible_sections(
+        usage, NOW, ("claude", "openai", "cursor"))
+    titles = [title for title, _groups, _age in sections]
+    assert titles[-1] == "CURSOR"
+    assert any(t.startswith("OPENAI") for t in titles)
+    assert titles.index("CURSOR") > max(i for i, t in enumerate(titles) if t.startswith("OPENAI"))
+    cursor_groups = [g for t, g, _a in sections if t == "CURSOR"][0]
+    assert cursor_groups[0][0] == "本期"
+    assert cursor_groups[0][1] == 100.0
+
+
+def test_cursor_section_skipped_when_source_not_enabled():
+    usage = _cursor_usage()
+    titles = [t for t, _g, _a in usagewidget.visible_sections(usage, NOW, ("claude",))]
+    assert "CURSOR" not in titles
+
+
+def test_cursor_section_skipped_when_no_data():
+    usage = _cursor_usage(cu_pct=None)
+    titles = [t for t, _g, _a in usagewidget.visible_sections(
+        usage, NOW, ("claude", "cursor"))]
+    assert "CURSOR" not in titles
+
+
+def test_cursor_section_hidden_when_stale():
+    usage = _cursor_usage(cu_fetched_at=NOW - timedelta(days=2))
+    titles = [t for t, _g, _a in usagewidget.visible_sections(
+        usage, NOW, ("claude", "cursor"))]
+    assert "CURSOR" not in titles
+    assert "CLAUDE CODE" in titles
