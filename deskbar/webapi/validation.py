@@ -7,6 +7,7 @@ _USAGE_TZ = ZoneInfo("Asia/Taipei")
 _PCT_FIELDS = ("session_pct", "weekly_pct", "fable_pct", "ag_5h_pct", "ag_weekly_pct", "oa_weekly_pct")
 _RESETS_FIELDS = ("session_resets_at", "weekly_resets_at", "fable_resets_at", "ag_5h_resets_at", "ag_weekly_resets_at", "oa_weekly_resets_at")
 _USAGE_FETCHED_FIELDS = ("fetched_at", "claude_fetched_at", "ag_fetched_at", "oa_fetched_at")
+_MAX_OA_ACCOUNTS = 8
 
 # 手機網頁可調的裝置偏好（2026-07-27 需求：「那些設定也應該要可以在手機
 # 設定頁調整」）。theme 刻意不開放——theme.set_theme 會清渲染快取，只能由
@@ -51,6 +52,27 @@ def _valid_resets_at(v) -> bool:
         return True
     except ValueError:
         return False
+
+
+def validate_oa_accounts_payload(value) -> tuple[bool, str | None]:
+    if value is None:
+        return True, None
+    if not isinstance(value, list):
+        return False, "invalid oa_accounts"
+    if len(value) > _MAX_OA_ACCOUNTS:
+        return False, "invalid oa_accounts"
+    for item in value:
+        if not isinstance(item, dict):
+            return False, "invalid oa_accounts"
+        account_id = item.get("account_id")
+        if not isinstance(account_id, str) or not account_id.strip():
+            return False, "invalid oa_accounts"
+        if not _valid_pct(item.get("weekly_pct")):
+            return False, "invalid oa_accounts"
+        for field in ("weekly_resets_at", "fetched_at"):
+            if field in item and not _valid_resets_at(item.get(field)):
+                return False, "invalid oa_accounts"
+    return True, None
 
 
 def _parse_dt(v):

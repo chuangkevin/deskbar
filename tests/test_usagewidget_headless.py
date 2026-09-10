@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pygame
 import pytest
 
-from deskbar.claudeusage import UsageInfo
+from deskbar.claudeusage import OaAccount, UsageInfo
 from deskbar.ui import theme, usagewidget
 
 TZ = ZoneInfo("Asia/Taipei")
@@ -20,7 +20,8 @@ def _surf():
 
 
 def _usage(session_pct=42.0, weekly_pct=61.0, fable_pct=12.0, fetched_at=None,
-           ag_5h_pct=None, ag_weekly_pct=None, oa_weekly_pct=None):
+           ag_5h_pct=None, ag_weekly_pct=None, oa_weekly_pct=None,
+           oa_accounts=()):
     return UsageInfo(
         session_pct=session_pct, session_resets_at=NOW + timedelta(hours=2, minutes=3),
         weekly_pct=weekly_pct, weekly_resets_at=NOW + timedelta(days=1, hours=4),
@@ -29,6 +30,7 @@ def _usage(session_pct=42.0, weekly_pct=61.0, fable_pct=12.0, fetched_at=None,
         ag_5h_pct=ag_5h_pct, ag_5h_resets_at=NOW + timedelta(hours=3),
         ag_weekly_pct=ag_weekly_pct, ag_weekly_resets_at=NOW + timedelta(days=5),
         oa_weekly_pct=oa_weekly_pct, oa_weekly_resets_at=NOW + timedelta(days=7),
+        oa_accounts=oa_accounts,
     )
 
 
@@ -43,7 +45,7 @@ def _scan_ink_outside(surf, x_lo, x_hi, bg):
     return bad
 
 
-def _rendered_texts(monkeypatch, usage):
+def _rendered_texts(monkeypatch, usage, enabled_sources=None, oa_aliases=None):
     texts = []
     original = usagewidget._text
 
@@ -53,7 +55,7 @@ def _rendered_texts(monkeypatch, usage):
 
     monkeypatch.setattr(usagewidget, "_text", spy)
     surf = _surf()
-    usagewidget.render(surf, usage, NOW, 1540, 360)
+    usagewidget.render(surf, usage, NOW, 1540, 360, enabled_sources, oa_aliases)
     return texts, surf
 
 
@@ -122,6 +124,54 @@ def test_openai_section_skipped_when_oa_data_is_none(monkeypatch):
     )
     assert "OPENAI" not in texts
     assert not separator_has_ink, "OpenAI 無資料時不該畫分隔線、標題或本週群組"
+
+
+def test_openai_accounts_render_one_section_per_account_with_aliases(monkeypatch):
+    accounts = (
+        OaAccount("acct-a", "kevin.systemcom", 100.0, NOW + timedelta(days=3), NOW),
+        OaAccount("acct-b", "kevin.dev01", 18.0, NOW + timedelta(days=6), NOW),
+    )
+    texts, _ = _rendered_texts(
+        monkeypatch,
+        _usage(oa_accounts=accounts),
+        ["openai"],
+        {"acct-a": "SYSTEMCOM", "acct-b": "DEV01"},
+    )
+    assert "OPENAI · SYSTEMCOM" in texts
+    assert "OPENAI · DEV01" in texts
+    assert texts.count("本週") == 2
+
+
+def test_openai_account_title_prefers_alias_then_upper_name_then_plain_title():
+    accounts = (
+        OaAccount("acct-a", "kevin.systemcom", 100.0, NOW + timedelta(days=3), NOW),
+        OaAccount("acct-b", "kevin.dev01", 18.0, NOW + timedelta(days=6), NOW),
+        OaAccount("acct-c", "", 50.0, NOW + timedelta(days=2), NOW),
+    )
+    sections = usagewidget.visible_sections(
+        _usage(oa_accounts=accounts), NOW, ["openai"], {"acct-a": "SYSTEMCOM"}
+    )
+    assert [title for title, _groups, _age in sections] == [
+        "OPENAI · SYSTEMCOM",
+        "OPENAI · KEVIN.DEV01",
+        "OPENAI",
+    ]
+
+
+def test_empty_openai_accounts_keeps_legacy_single_openai_section():
+    sections = usagewidget.visible_sections(
+        _usage(oa_weekly_pct=3.0, oa_accounts=()), NOW, ["openai"]
+    )
+    assert [(title, groups[0][1]) for title, groups, _age in sections] == [("OPENAI", 3.0)]
+
+
+def test_stale_openai_account_only_hides_that_account():
+    accounts = (
+        OaAccount("old", "old", 90.0, NOW + timedelta(days=1), NOW - timedelta(days=1, seconds=1)),
+        OaAccount("fresh", "fresh", 20.0, NOW + timedelta(days=2), NOW - timedelta(minutes=1)),
+    )
+    sections = usagewidget.visible_sections(_usage(oa_accounts=accounts), NOW, ["openai"])
+    assert [title for title, _groups, _age in sections] == ["OPENAI · FRESH"]
 
 
 def test_full_layout_uses_expected_section_positions(monkeypatch):

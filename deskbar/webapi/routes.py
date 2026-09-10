@@ -7,7 +7,7 @@ from flask import Flask, Response, jsonify, request
 
 from deskbar import auth, config
 from deskbar.alarms import _is_valid_date_str
-from deskbar.claudeusage import UsageInfo
+from deskbar.claudeusage import OaAccount, UsageInfo
 from deskbar.presence import PresenceState
 from deskbar.webapi.context import WebContext
 from deskbar.webapi.validation import (
@@ -24,6 +24,7 @@ from deskbar.webapi.validation import (
     _to_float,
     _valid_pct,
     _valid_resets_at,
+    validate_oa_accounts_payload,
     validate_work_sessions_payload,
 )
 from deskbar.work_sessions import snapshot_from_payload, utc_now
@@ -236,9 +237,16 @@ def register_routes(app: Flask, context: WebContext) -> None:
                                                  "scenes_enabled", []))
             out["presence_source"] = getattr(context.settings_provider, "presence_source", "bluetooth")
             out["usage_sources"] = list(getattr(context.settings_provider, "usage_sources",
-                                                   config.VALID_USAGE_SOURCES))
+                                                    config.VALID_USAGE_SOURCES))
+            out["oa_aliases"] = dict(getattr(context.settings_provider, "oa_aliases", {}))
+        usage = context.usage_state.snapshot().usage if context.usage_state is not None else None
+        out["oa_accounts_seen"] = [
+            {"account_id": account.account_id, "name": account.name}
+            for account in getattr(usage, "oa_accounts", ())
+        ]
         return jsonify(out)
 
+    @app.post("/api/prefs")
     @app.patch("/api/prefs")
     def patch_prefs():
         if not context.calendars_available:
@@ -281,6 +289,21 @@ def register_routes(app: Flask, context: WebContext) -> None:
                         isinstance(x, str) and x in config.VALID_USAGE_SOURCES for x in v):
                     return jsonify({"error": "usage_sources has unknown source"}), 400
                 staged[k] = config.normalize_usage_sources(v)
+            elif k == "oa_aliases":
+                if not isinstance(v, dict) or len(v) > 8:
+                    return jsonify({"error": "oa_aliases must be object"}), 400
+                aliases = {}
+                for account_id, alias in v.items():
+                    if not isinstance(account_id, str) or not account_id.strip() \
+                            or not isinstance(alias, str):
+                        return jsonify({"error": "oa_aliases must be string values"}), 400
+                    normalized = alias.strip()
+                    if len(normalized) > 24:
+                        return jsonify({"error": "oa_aliases must be 0..24 chars"}), 400
+                    aliases[account_id.strip()] = normalized
+                staged[k] = aliases
+            elif k == "oa_accounts_seen":
+                continue
             elif k in _PREF_FLOAT:
                 lo, hi = _PREF_FLOAT[k]
                 if isinstance(v, bool) or not isinstance(v, (int, float)) \
@@ -289,7 +312,19 @@ def register_routes(app: Flask, context: WebContext) -> None:
                 staged[k] = float(v)
             else:
                 return jsonify({"error": f"unknown field {k}"}), 400
+        if not staged:
+            return jsonify({"ok": True})
         with context.settings_lock:
+            if "oa_aliases" in staged:
+                aliases = dict(getattr(context.settings_provider, "oa_aliases", {}))
+                for account_id, alias in staged["oa_aliases"].items():
+                    if alias:
+                        aliases[account_id] = alias
+                    else:
+                        aliases.pop(account_id, None)
+                if len(aliases) > 8:
+                    return jsonify({"error": "oa_aliases has too many entries"}), 400
+                staged["oa_aliases"] = aliases
             for k, v in staged.items():
                 setattr(context.settings_provider, k, v)
             context.on_save(context.settings_provider)
@@ -412,6 +447,9 @@ def register_routes(app: Flask, context: WebContext) -> None:
         for f in _USAGE_FETCHED_FIELDS:
             if f in d and not _valid_resets_at(d.get(f)):
                 return jsonify({"error": f"invalid {f}"}), 400
+        valid_oa_accounts, oa_accounts_error = validate_oa_accounts_payload(d.get("oa_accounts"))
+        if not valid_oa_accounts:
+            return jsonify({"error": oa_accounts_error}), 400
 
         fetched_at = _parse_dt(d.get("fetched_at")) \
             if d.get("fetched_at") is not None else datetime.now(_USAGE_TZ)
@@ -421,6 +459,23 @@ def register_routes(app: Flask, context: WebContext) -> None:
         def _optional_fetched(field):
             value = _parse_dt(d.get(field))
             return value.replace(tzinfo=_USAGE_TZ) if value is not None and value.tzinfo is None else value
+
+        def _parse_oa_accounts(items):
+            if not items:
+                return ()
+            accounts = []
+            for item in items:
+                fetched = _parse_dt(item.get("fetched_at"))
+                if fetched is not None and fetched.tzinfo is None:
+                    fetched = fetched.replace(tzinfo=_USAGE_TZ)
+                accounts.append(OaAccount(
+                    account_id=item["account_id"].strip(),
+                    name=item.get("name", "") if isinstance(item.get("name", ""), str) else "",
+                    weekly_pct=_to_float(item.get("weekly_pct")),
+                    weekly_resets_at=_parse_dt(item.get("weekly_resets_at")),
+                    fetched_at=fetched,
+                ))
+            return tuple(accounts)
 
         info = UsageInfo(
             session_pct=_to_float(d.get("session_pct")),
@@ -439,6 +494,7 @@ def register_routes(app: Flask, context: WebContext) -> None:
             claude_fetched_at=_optional_fetched("claude_fetched_at"),
             ag_fetched_at=_optional_fetched("ag_fetched_at"),
             oa_fetched_at=_optional_fetched("oa_fetched_at"),
+            oa_accounts=_parse_oa_accounts(d.get("oa_accounts")),
         )
         context.usage_state.set_usage(info)
         return "", 204

@@ -90,14 +90,14 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
                              (round(px), round(bar_y + BAR_H + 3)), 1)
 
 
-def visible_sections(usage, now: datetime, enabled_sources=None):
+def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None):
     """純顯示決策：回傳仍應畫出的 ``(title, groups, age)`` 區塊。
 
     每個 provider 以自己的成功抓取時間判斷新鮮度。Claude 在缺少
     ``claude_fetched_at`` 時可退回全域 ``fetched_at``（兩者語意相同）。
-    Antigravity / OpenAI **不**退回 Claude／全域時間——舊快取缺分來源時間戳時
-    以中性年齡 0 處理（不顯示「N 分前」、不誤標過期），避免把 Claude 失敗
-    造成的舊 ``fetched_at`` 誤套到仍新鮮的 AG/OA 資料上。
+    Antigravity / 舊單一 OpenAI 區塊 **不**退回 Claude／全域時間——舊快取缺分來源
+    時間戳時以中性年齡 0 處理（不顯示「N 分前」、不誤標過期）。多帳號 OpenAI
+    則依帳號自己的 ``fetched_at``，再退回 OA / 全域時間，以相容新 producer payload。
     """
     if usage is None:
         return []
@@ -110,6 +110,20 @@ def visible_sections(usage, now: datetime, enabled_sources=None):
         if fetched is None:
             return 0.0
         return (now - fetched).total_seconds()
+
+    def age_for_oa_account(account):
+        fetched = account.fetched_at or getattr(usage, "oa_fetched_at", None) or usage.fetched_at
+        return (now - fetched).total_seconds() if fetched is not None else 0.0
+
+    aliases = oa_aliases or {}
+
+    def oa_title(account):
+        alias = aliases.get(account.account_id, "")
+        if alias:
+            return f"OPENAI · {alias}"
+        if account.name:
+            return f"OPENAI · {account.name.upper()}"
+        return "OPENAI"
 
     claude_groups = [
         ("5H SESSION", usage.session_pct, usage.session_resets_at,
@@ -133,18 +147,28 @@ def visible_sections(usage, now: datetime, enabled_sources=None):
             ("本週", usage.ag_weekly_pct, usage.ag_weekly_resets_at, WINDOW_S["ag_weekly"]),
         ], ag_age))
 
-    oa_age = age_for("oa_fetched_at", fallback_to_global=False)
-    if "openai" in enabled and usage.oa_weekly_pct is not None and oa_age < HIDE_AFTER_S:
-        sections.append(("OPENAI", [
-            ("本週", usage.oa_weekly_pct, usage.oa_weekly_resets_at, WINDOW_S["oa_weekly"]),
-        ], oa_age))
+    if "openai" in enabled:
+        oa_accounts = getattr(usage, "oa_accounts", ())
+        if oa_accounts:
+            for account in oa_accounts:
+                oa_age = age_for_oa_account(account)
+                if oa_age < HIDE_AFTER_S:
+                    sections.append((oa_title(account), [
+                        ("本週", account.weekly_pct, account.weekly_resets_at, WINDOW_S["oa_weekly"]),
+                    ], oa_age))
+        else:
+            oa_age = age_for("oa_fetched_at", fallback_to_global=False)
+            if usage.oa_weekly_pct is not None and oa_age < HIDE_AFTER_S:
+                sections.append(("OPENAI", [
+                    ("本週", usage.oa_weekly_pct, usage.oa_weekly_resets_at, WINDOW_S["oa_weekly"]),
+                ], oa_age))
     return sections
 
 
 def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
-           enabled_sources=None) -> None:
+           enabled_sources=None, oa_aliases=None) -> None:
     """畫可見 usage 區塊；未勾選、沒有資料或超過一天的來源完全不留痕跡。"""
-    sections = visible_sections(usage, now, enabled_sources)
+    sections = visible_sections(usage, now, enabled_sources, oa_aliases)
     if not sections:
         return
 

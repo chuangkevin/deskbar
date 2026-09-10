@@ -85,6 +85,29 @@ def test_post_usage_with_openai_fields_success(alarm_store):
     assert usage.oa_weekly_resets_at is not None
 
 
+def test_post_usage_with_openai_accounts_success(alarm_store):
+    state = AppState()
+    client = create_app(alarm_store, usage_state=state).test_client()
+
+    payload = dict(VALID_PAYLOAD, oa_accounts=[
+        {"account_id": "acct-a", "name": "kevin.systemcom", "weekly_pct": 100.0,
+         "weekly_resets_at": "2026-09-15T09:25:07+08:00",
+         "fetched_at": "2026-09-10T16:00:00+08:00"},
+        {"account_id": "acct-b", "name": "kevin.dev01", "weekly_pct": 18.0,
+         "weekly_resets_at": "2026-09-17T09:25:07+08:00",
+         "fetched_at": "2026-09-10T16:01:00+08:00"},
+    ])
+    r = client.post("/api/usage", json=payload)
+    assert r.status_code == 204
+    usage = state.snapshot().usage
+    assert len(usage.oa_accounts) == 2
+    assert usage.oa_accounts[0].account_id == "acct-a"
+    assert usage.oa_accounts[0].name == "kevin.systemcom"
+    assert usage.oa_accounts[0].weekly_pct == 100.0
+    assert usage.oa_accounts[0].weekly_resets_at is not None
+    assert usage.oa_accounts[0].fetched_at is not None
+
+
 def test_post_usage_without_openai_fields_still_returns_204(alarm_store):
     state = AppState()
     client = create_app(alarm_store, usage_state=state).test_client()
@@ -94,6 +117,7 @@ def test_post_usage_without_openai_fields_still_returns_204(alarm_store):
     usage = state.snapshot().usage
     assert usage.oa_weekly_pct is None
     assert usage.oa_weekly_resets_at is None
+    assert usage.oa_accounts == ()
 
 
 def test_post_usage_allows_all_null_fields(alarm_store):
@@ -171,6 +195,18 @@ def test_post_usage_non_dict_body_returns_400(alarm_store):
     assert client.post("/api/usage", json="oops").status_code == 400
     assert client.post("/api/usage", data="not json",
                        content_type="text/plain").status_code == 400
+
+
+@pytest.mark.parametrize("oa_accounts", [
+    "not-a-list",
+    [{"account_id": ""}],
+    [{"account_id": "acct", "weekly_pct": 101}],
+    [{"account_id": str(i)} for i in range(9)],
+])
+def test_post_usage_invalid_openai_accounts_return_400(alarm_store, oa_accounts):
+    state = AppState()
+    client = create_app(alarm_store, usage_state=state).test_client()
+    assert client.post("/api/usage", json=dict(VALID_PAYLOAD, oa_accounts=oa_accounts)).status_code == 400
 
 
 @pytest.mark.parametrize("field", ["session_pct", "weekly_pct", "fable_pct", "ag_5h_pct", "ag_weekly_pct", "oa_weekly_pct"])

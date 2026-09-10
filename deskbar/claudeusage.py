@@ -20,6 +20,15 @@ from datetime import datetime
 
 
 @dataclass(frozen=True)
+class OaAccount:
+    account_id: str
+    name: str
+    weekly_pct: float | None
+    weekly_resets_at: datetime | None
+    fetched_at: datetime | None
+
+
+@dataclass(frozen=True)
 class UsageInfo:
     session_pct: float | None
     session_resets_at: datetime | None
@@ -39,6 +48,7 @@ class UsageInfo:
     claude_fetched_at: datetime | None = None
     ag_fetched_at: datetime | None = None
     oa_fetched_at: datetime | None = None
+    oa_accounts: tuple[OaAccount, ...] = ()
 
 
 def fmt_countdown(dt: datetime | None, now: datetime) -> str:

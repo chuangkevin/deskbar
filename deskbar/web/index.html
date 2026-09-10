@@ -45,6 +45,11 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
 .usage-source-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .usage-source-list label{display:flex;align-items:center;gap:7px;min-height:44px;padding:8px 10px;border:1px solid #444;border-radius:8px;cursor:pointer}
 .usage-source-list input{width:20px;height:20px;margin:0}
+.oa-aliases{border:0;border-top:1px solid #2a2a2a;margin:12px 0 0;padding:12px 0 0;min-width:0}
+.oa-aliases legend{font-size:15px;font-weight:600;padding:0}
+.oa-alias-row{display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 0;min-width:0}
+.oa-alias-name{flex:0 1 42%;color:#9a9a9a;font-size:14px;min-width:0;overflow-wrap:anywhere}
+.oa-alias-row input{flex:1 1 150px;min-width:0}
 
 .note-card{display:flex;flex-direction:column;gap:8px;min-width:0;overflow-wrap:anywhere}
 .note-card-main{display:flex;flex-direction:column;gap:8px;width:100%}
@@ -70,6 +75,7 @@ h2{font-size:16px;font-weight:600;margin:24px 0 8px}
 }
 
 @media(max-width:374px){body{padding:12px}.row{align-items:stretch;flex-wrap:wrap}.row input[type=text]{min-width:0;flex:1 1 180px}.cal-row select,.cal-row input[type=text]{max-width:100%}}
+@media(max-width:767px){.oa-alias-row{flex-wrap:wrap}.oa-alias-name{flex:1 1 100%}.oa-alias-row input{flex:1 1 100%}}
 @media(max-width:479px){.alarm-row{flex-direction:column}.alarm-actions{width:100%;justify-content:flex-start}.alarm-actions button{flex:1 1 132px;padding-inline:8px}}
 </style></head><body>
 <h1>deskbar</h1>
@@ -195,10 +201,24 @@ async function loadPrefs(){
  const r=await fetch("/api/prefs");
  if(!r.ok){box.innerHTML='<div class="card">此功能需重新部署後啟用</div>';return}
  const p=await r.json();
- const pct=[...Array(10)].map((_,i)=>(i+1)*10);
- const spd=[[20,"快"],[30,"中"],[45,"慢"]];
- const weatherLabel=esc(p.weather_label||"—");
- box.innerHTML=`<div class="card">
+  const pct=[...Array(10)].map((_,i)=>(i+1)*10);
+  const spd=[[20,"快"],[30,"中"],[45,"慢"]];
+  const weatherLabel=esc(p.weather_label||"—");
+  const oaAccounts=Array.isArray(p.oa_accounts_seen)?p.oa_accounts_seen:[];
+  const oaAliases=(p.oa_aliases&&typeof p.oa_aliases==="object")?p.oa_aliases:{};
+  const oaAliasHtml=oaAccounts.length?`<fieldset class="oa-aliases">
+    <legend>OpenAI 帳號別名</legend>
+    ${oaAccounts.map(a=>{
+     const id=String(a.account_id||"");
+     const label=String(a.name||id.slice(0,8));
+     return `<div class="oa-alias-row">
+      <div class="oa-alias-name">${esc(label)}</div>
+      <input type="text" class="p_oa_alias" data-account-id="${esc(id)}" maxlength="24"
+       placeholder="不填就用預設名稱" value="${esc(oaAliases[id]||"")}">
+     </div>`;
+    }).join("")}
+   </fieldset>`:"";
+  box.innerHTML=`<div class="card">
   <div class="cal-row">上班開始 ${sel("p_ws",MIN_OPTS,p.work_start_min,fm)}</div>
   <div class="cal-row">下班時間 ${sel("p_we",MIN_OPTS,p.work_end_min,fm)}（此後套用下班亮度）</div>
   <div class="cal-row">上班亮度 ${sel("p_bd",pct.filter(v=>v>=10),p.brightness_day,v=>v+"%")}</div>
@@ -236,6 +256,7 @@ async function loadPrefs(){
    </div>
    <div class="hint">超過 24 小時未更新會自動隱藏</div>
   </fieldset>
+  ${oaAliasHtml}
   <div class="cal-row">Linear Key（${p.linear_key_set?"已設定":"未設定"}）
    <input type="password" id="p_lk" placeholder="lin_api_… 貼上後按存">
    <button onclick="saveKey()">存 Key</button></div>
@@ -265,8 +286,10 @@ async function savePrefs(){
   sync_interval_min:+document.getElementById("p_si").value,
   pet_enabled:document.getElementById("p_pet").checked,
   scene_mode:document.getElementById("p_sm").value,
-  scenes_enabled:[...document.querySelectorAll(".p_sc:checked")].map(c=>c.value),
-  usage_sources:[...document.querySelectorAll(".p_us:checked")].map(c=>c.value)};
+   scenes_enabled:[...document.querySelectorAll(".p_sc:checked")].map(c=>c.value),
+   usage_sources:[...document.querySelectorAll(".p_us:checked")].map(c=>c.value),
+   oa_aliases:Object.fromEntries([...document.querySelectorAll(".p_oa_alias")]
+    .map(i=>[i.dataset.accountId,i.value]))};
  const r=await fetch("/api/prefs",{method:"PATCH",
   headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
  if(r.ok){document.getElementById("p_msg").textContent=" 已儲存 ✓";setTimeout(loadPrefs,600);}

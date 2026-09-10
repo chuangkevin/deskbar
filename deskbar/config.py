@@ -41,6 +41,23 @@ def normalize_usage_sources(value, default=VALID_USAGE_SOURCES) -> tuple[str, ..
     return tuple(key for key in VALID_USAGE_SOURCES if key in value)
 
 
+def normalize_oa_aliases(value, default=None) -> dict[str, str]:
+    if default is None:
+        default = {}
+    if not isinstance(value, dict) or len(value) > 8:
+        return dict(default)
+    aliases = {}
+    for account_id, alias in value.items():
+        if not isinstance(account_id, str) or not account_id.strip() or not isinstance(alias, str):
+            return dict(default)
+        normalized_alias = alias.strip()
+        if len(normalized_alias) > 24:
+            return dict(default)
+        if normalized_alias:
+            aliases[account_id.strip()] = normalized_alias
+    return aliases
+
+
 def config_dir() -> Path:
     d = Path(os.environ.get("DESKBAR_CONFIG_DIR", Path.home() / ".config" / "deskbar"))
     d.mkdir(parents=True, exist_ok=True)
@@ -104,6 +121,7 @@ class Settings:
     pet_enabled: bool = True            # 小喜喜桌面寵物（全域 overlay，非場景）
     pet_x: int = DEFAULT_PET_X          # 小喜喜左上角 logical x（拖曳後持久化）
     pet_y: int = DEFAULT_PET_Y          # 小喜喜左上角 logical y
+    oa_aliases: dict[str, str] = field(default_factory=dict)  # OpenAI account_id -> 使用者別名
 
     def ensure_account(self, email: str) -> AccountCfg:
         if email not in self.accounts:
@@ -219,6 +237,7 @@ def load_settings() -> Settings:
             or DEFAULT_SCENES           # 全被反勾＝退回預設（空清單無意義）
         usage_sources = normalize_usage_sources(
             raw.get("usage_sources", list(VALID_USAGE_SOURCES)))
+        oa_aliases = normalize_oa_aliases(raw.get("oa_aliases", {}))
         pet_enabled = raw.get("pet_enabled", True)
         if not isinstance(pet_enabled, bool):
             pet_enabled = True
@@ -261,6 +280,7 @@ def load_settings() -> Settings:
             pet_enabled=pet_enabled,
             pet_x=pet_x,
             pet_y=pet_y,
+            oa_aliases=oa_aliases,
         )
     except (OSError, ValueError, KeyError, TypeError):
         return Settings()
@@ -300,6 +320,7 @@ def save_settings(s: Settings) -> None:
         "scene_mode": s.scene_mode,
         "scenes_enabled": list(s.scenes_enabled),
         "usage_sources": list(normalize_usage_sources(s.usage_sources)),
+        "oa_aliases": normalize_oa_aliases(s.oa_aliases),
         "pet_enabled": s.pet_enabled,
         "pet_x": int(s.pet_x),
         "pet_y": int(s.pet_y),
