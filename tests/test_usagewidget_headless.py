@@ -345,13 +345,13 @@ def test_none_usage_leaves_column_blank():
 
 def test_stale_fetched_at_shows_minutes_ago_note():
     surf = _surf()
-    usage = _usage(fetched_at=NOW - timedelta(minutes=10))   # 600s > STALE_AFTER_S(300)
+    usage = _usage(fetched_at=NOW - timedelta(minutes=20))   # 1200s > STALE_AFTER_S(900)
     usagewidget.render(surf, usage, NOW, 1540, 360)
     bg = theme.C["bg"]
     has_ink = any(
         surf.get_at((x, usagewidget.TITLE_Y + 4))[:3] != bg
         for x in range(1700, 1900, 2))
-    assert has_ink, "距上次推送超過 300 秒時，標題列右側應該加註「(N 分前)」"
+    assert has_ink, "距上次推送超過 900 秒時，標題列右側應該加註「(N 分前)」"
 
 
 def test_fresh_fetched_at_shows_no_minutes_ago_note():
@@ -437,11 +437,11 @@ def test_per_source_age_label_uses_own_timestamp(monkeypatch):
         ag_5h_pct=20.0, ag_5h_resets_at=NOW + timedelta(hours=3),
         ag_weekly_pct=30.0, ag_weekly_resets_at=NOW + timedelta(days=5),
         oa_weekly_pct=5.0, oa_weekly_resets_at=NOW + timedelta(days=7),
-        ag_fetched_at=NOW - timedelta(minutes=12),
+        ag_fetched_at=NOW - timedelta(minutes=20),
         oa_fetched_at=NOW - timedelta(seconds=30),
     )
     sections = {title: age for title, _groups, age in usagewidget.visible_sections(usage, NOW)}
-    assert sections["ANTIGRAVITY · GEMINI"] == pytest.approx(12 * 60)
+    assert sections["ANTIGRAVITY · GEMINI"] == pytest.approx(20 * 60)
     assert sections["OPENAI"] == pytest.approx(30)
 
     notes = []
@@ -455,7 +455,7 @@ def test_per_source_age_label_uses_own_timestamp(monkeypatch):
     monkeypatch.setattr(usagewidget, "_text", text_spy)
     usagewidget.render(_surf(), usage, NOW, 1540, 360)
     assert "(120 分前)" in notes  # Claude
-    assert "(12 分前)" in notes    # Antigravity
+    assert "(20 分前)" in notes    # Antigravity
     assert not any(s == "(0 分前)" for s in notes)
 
 
@@ -544,3 +544,15 @@ def test_exhausted_group_draws_red_pixels_and_full_bar():
     found = any(surf.get_at((x, y))[:3] == red
                 for x in range(1540, 1900, 3) for y in range(0, 200))
     assert found, "100% 的組別應該畫出 usage_full 紅色"
+
+
+def test_normal_refresh_interval_shows_no_minutes_ago_note():
+    """所有來源都是 300 秒刷新一次；剛好卡在下次刷新前不該掛「(N 分前)」。"""
+    surf = _surf()
+    usage = _usage(fetched_at=NOW - timedelta(seconds=299))
+    usagewidget.render(surf, usage, NOW, 1540, 360)
+    bg = theme.C["bg"]
+    has_ink = any(surf.get_at((x, usagewidget.TITLE_Y + 4))[:3] != bg
+                  for x in range(1700, 1900, 2))
+    assert not has_ink, "刷新間隔內不該顯示「(N 分前)」"
+    assert usagewidget.STALE_AFTER_S > 300

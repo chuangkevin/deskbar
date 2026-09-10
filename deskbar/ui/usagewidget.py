@@ -28,7 +28,9 @@ BAR_H = 9
 BAR_RADIUS = 4
 BAR_MARGIN = 0            # 橫條滿寬，讓獨立的第二行清楚呈現可用範圍。
 BAR_Y_OFFSET = 19         # 文字列完整結束後再起橫條，避免字框與橫條相貼。
-STALE_AFTER_S = 300       # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
+# 2026-09-10：所有來源的刷新間隔都是 300 秒，門檻也放 300 會讓每一區在下次刷新前
+# 一律掛上「(5 分前)」——變成常駐雜訊而不是警訊。放到 900 秒＝連續漏三輪才提醒。
+STALE_AFTER_S = 900       # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
 VERY_STALE_AFTER_S = 3600 # 超過這麼久，整組轉 muted 灰（agent 可能已經停了）
 HIDE_AFTER_S = 24 * 60 * 60
 DEFAULT_SOURCES = ("claude", "antigravity", "openai", "cursor")
