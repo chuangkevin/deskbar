@@ -46,8 +46,21 @@ def _center_text(surface, s, size, color, x0, w, cy):
     surface.blit(img, img.get_rect(center=(x0 + w / 2, cy)))
 
 
+def is_exhausted(pct) -> bool:
+    """額度用完＝這個來源現在不能用。>=100 就算，浮點誤差不必特別容忍。"""
+    if pct is None or isinstance(pct, bool):
+        return False
+    try:
+        return float(pct) >= 100
+    except (TypeError, ValueError):
+        return False
+
+
 def _level_color(pct: float, over: bool = False):
-    # 正常用量一律 usage_bar 珊瑚橘；轉紅使用 usage_warn（針對低對比 TN 面板微調）。
+    # 正常用量一律 usage_bar 珊瑚橘；快用完 usage_warn 橘紅；
+    # 用完（>=100%）走 usage_full 純紅——那代表現在根本不能用，要一眼看得出差別。
+    if is_exhausted(pct):
+        return theme.C["usage_full"]
     if over or pct > 85:
         return theme.C["usage_warn"]
     return theme.C["usage_bar"]
@@ -57,7 +70,12 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
                 pct: float | None, resets_at, now: datetime, muted: bool = False,
                 window_s: float | None = None) -> None:
     label_color = theme.C["muted"] if muted else theme.C["text2"]
-    pct_color = theme.C["muted"] if muted else theme.C["text"]
+    if muted:
+        pct_color = theme.C["muted"]
+    elif is_exhausted(pct):
+        pct_color = theme.C["usage_full"]
+    else:
+        pct_color = theme.C["text"]
     _text(surface, label, 15, label_color, x0, y)
     countdown = fmt_countdown(resets_at, now)
     _text(surface, f"剩 {countdown}", 12, theme.C["muted"],

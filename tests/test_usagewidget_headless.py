@@ -517,3 +517,30 @@ def test_cursor_section_hidden_when_stale():
         usage, NOW, ("claude", "cursor"))]
     assert "CURSOR" not in titles
     assert "CLAUDE CODE" in titles
+
+
+def test_exhausted_pct_uses_red_not_warn_orange():
+    """100% ＝ 現在不能用，顏色要跟「快用完」的橘紅分開。"""
+    assert usagewidget._level_color(100.0) == theme.C["usage_full"]
+    assert usagewidget._level_color(99.9) == theme.C["usage_warn"]
+    assert usagewidget._level_color(100.0) != usagewidget._level_color(99.9)
+    # over_pace 為真也不能把 100% 蓋回橘紅
+    assert usagewidget._level_color(100.0, over=True) == theme.C["usage_full"]
+
+
+@pytest.mark.parametrize("pct,expected", [
+    (None, False), (0.0, False), (85.0, False), (99.99, False),
+    (100.0, True), (100.4, True), (True, False), ("nope", False),
+])
+def test_is_exhausted(pct, expected):
+    assert usagewidget.is_exhausted(pct) is expected
+
+
+def test_exhausted_group_draws_red_pixels_and_full_bar():
+    surf = _surf()
+    usagewidget.render(surf, _usage(session_pct=100.0, weekly_pct=10.0,
+                                    fable_pct=None), NOW, 1540, 360)
+    red = theme.C["usage_full"]
+    found = any(surf.get_at((x, y))[:3] == red
+                for x in range(1540, 1900, 3) for y in range(0, 200))
+    assert found, "100% 的組別應該畫出 usage_full 紅色"
