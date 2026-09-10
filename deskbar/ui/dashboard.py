@@ -149,8 +149,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                                   page=linear_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources, getattr(settings, "oa_aliases", {}))
-        _render_right_lower(surface, snap, now, hits, todo_fallback=False)
-        return _finish(surface, snap, settings, now, hits)   # 中欄即完整待辦牆，右欄摘要免了
+        return _finish(surface, snap, settings, now, hits)
     if center == "notes":
         from deskbar.ui import notesview
         _text(surface, "便條", 22, theme.C["text2"], TL_X0, 22)
@@ -160,7 +159,6 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                                  TL_AREA, now, _t.monotonic(), page=notes_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources, getattr(settings, "oa_aliases", {}))
-        _render_right_lower(surface, snap, now, hits)
         return _finish(surface, snap, settings, now, hits)
     if center == "sessions":
         from deskbar.ui import worksessionwidget
@@ -174,7 +172,6 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         hits += worksessionwidget.render_center_view(surface, snap, settings, TL_AREA, now)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources, getattr(settings, "oa_aliases", {}))
-        _render_right_lower(surface, snap, now, hits)
         return _finish(surface, snap, settings, now, hits)
     if center == "scene":
         from deskbar.ui import scenes
@@ -189,7 +186,6 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         _chip_btn(surface, work_label, WORK_BTN, "open_work_sessions", hits, size=20)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources, getattr(settings, "oa_aliases", {}))
-        _render_right_lower(surface, snap, now, hits)
         return _finish(surface, snap, settings, now, hits)
 
     lane_emails = [e for e in settings.accounts if settings.accounts[e].calendars] \
@@ -270,7 +266,6 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     # 跟左欄時鐘/天氣一樣不可互動），畫在最後純粹是慣例（跟中欄內容互不重疊，順序無關）。
     usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                        settings.usage_sources, getattr(settings, "oa_aliases", {}))
-    _render_right_lower(surface, snap, now, hits)
     return _finish(surface, snap, settings, now, hits)
 
 
@@ -283,20 +278,6 @@ def _finish(surface, snap, settings, now, hits) -> list:
                   rise=getattr(w, "sunrise", None) if w else None,
                   sset=getattr(w, "sunset", None) if w else None)
     return hits
-
-
-def _render_right_todo_mini(surface, snap, now) -> None:
-    """右欄下半（油表最深畫到 y≈352，其下原本整片留白）：前 3 件待辦摘要。
-    行事曆/便條視圖也能瞄到最重要的事，不必切到待辦視圖。"""
-    if snap.linear:
-        from deskbar.ui import linearview
-        linearview.render_mini(surface, snap, USAGE_X0, 362, USAGE_W, now)
-
-
-def _render_right_lower(surface, snap, now, hits, *, todo_fallback: bool = True) -> None:
-    """右欄下半：顯示待辦摘要。"""
-    if todo_fallback:
-        _render_right_todo_mini(surface, snap, now)
 
 
 def _render_right_work_sessions(surface, snap, now, hits) -> None:
