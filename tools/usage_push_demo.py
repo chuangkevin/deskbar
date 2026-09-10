@@ -84,12 +84,16 @@ OA_ACTIVITY_GLOB_PATTERNS = (
 DEFAULT_FETCH_INTERVAL = 300.0
 DEFAULT_PUSH_INTERVAL = 60.0
 DEFAULT_AG_INTERVAL = 300.0
-DEFAULT_OA_INTERVAL = 3600.0
-DEFAULT_CU_INTERVAL = 3600.0
+# 2026-09-10 Kevin：一小時太久。OpenAI 每次刷新是一個真的 Codex 請求（會吃一點額度），
+# 但那是「reply with just: ok」等級的極小請求；額度用完時更是連請求都沒送出就 429。
+# Cursor 是純唯讀 GET，完全不花額度。兩者都拉到 5 分鐘，跟 Claude／Antigravity 一致，
+# 順便讓 usagewidget 的「(N 分前)」不再常駐（那個門檻是 300 秒）。
+DEFAULT_OA_INTERVAL = 300.0
+DEFAULT_CU_INTERVAL = 300.0
 DEFAULT_PREFS_INTERVAL = 60.0
 DEFAULT_DESKBAR_USAGE_URL = "https://desk.sisihome.org/api/usage"
-OA_MIN_INTERVAL = 300.0
-CU_MIN_INTERVAL = 300.0
+OA_MIN_INTERVAL = 120.0
+CU_MIN_INTERVAL = 120.0
 INITIAL_RATE_LIMIT_BACKOFF = 900.0
 MAX_RATE_LIMIT_BACKOFF = 3600.0
 # 與 deskbar.config.VALID_USAGE_SOURCES 對齊；publisher 刻意不 import deskbar。
@@ -1304,6 +1308,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         default=DEFAULT_PUSH_INTERVAL)
     parser.add_argument("--ag-interval", type=float,
                         default=DEFAULT_AG_INTERVAL)
+    parser.add_argument("--oa-interval", type=float,
+                        default=DEFAULT_OA_INTERVAL,
+                        help="多久刷新一次 OpenAI 用量（每次會送一個極小的 Codex 請求）")
+    parser.add_argument("--cu-interval", type=float,
+                        default=DEFAULT_CU_INTERVAL,
+                        help="多久刷新一次 Cursor 用量（唯讀 GET，不花額度）")
     parser.add_argument("--prefs-interval", type=float,
                         default=DEFAULT_PREFS_INTERVAL,
                         help="多久重讀一次 deskbar /api/prefs 的 usage_sources")
@@ -1311,6 +1321,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="停用 Antigravity 用量抓取")
     parser.add_argument("--no-openai", action="store_true",
                         help="停用 OpenAI 用量抓取")
+    parser.add_argument("--no-cursor", action="store_true",
+                        help="停用 Cursor 用量抓取")
     return parser
 
 
@@ -1320,6 +1332,7 @@ def main() -> None:
 
     enable_ag = not args.no_antigravity
     enable_oa = not args.no_openai
+    enable_cu = not args.no_cursor
 
     if args.loop:
         run_loop(
@@ -1328,13 +1341,16 @@ def main() -> None:
             args.fetch_interval,
             args.push_interval,
             ag_interval=args.ag_interval,
+            oa_interval=args.oa_interval,
+            cu_interval=args.cu_interval,
             enable_antigravity=enable_ag,
             enable_openai=enable_oa,
+            enable_cursor=enable_cu,
             prefs_interval=args.prefs_interval,
         )
     else:
         one_cycle(args.url, args.token, enable_antigravity=enable_ag,
-                  enable_openai=enable_oa)
+                  enable_openai=enable_oa, enable_cursor=enable_cu)
 
 
 if __name__ == "__main__":
