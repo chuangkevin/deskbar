@@ -7,6 +7,7 @@ chatgpt.com/backend-api/* 的唯讀 GET 端點都會被 Cloudflare 擋成 403 HT
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -15,6 +16,7 @@ import requests
 
 CODEX_AUTH_PATH = Path.home() / ".codex" / "auth.json"
 OPENCODE_AUTH_PATH = Path.home() / ".local" / "share" / "opencode" / "auth.json"
+OPENAI_ACCOUNTS_CONFIG_PATH = Path.home() / ".deskbar-agent" / "openai_accounts.json"
 CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
 CODEX_BODY = {
     "model": "gpt-5.5",
@@ -30,6 +32,11 @@ CODEX_BODY = {
     "store": False,
 }
 USER_AGENT = "codex_cli_rs/0.51.0 (Mac OS 26.4; arm64) Apple_Terminal"
+
+_CREDENTIAL_FORMATS = {
+    "codex": ("access_token", "account_id", "tokens"),
+    "opencode": ("access", "accountId", "openai"),
+}
 
 
 def _header_map(headers) -> dict[str, object]:
@@ -78,17 +85,44 @@ def _valid_usage_pct(value) -> bool:
     return 0 <= pct <= 100
 
 
-def _account_id_from_jwt(access_token: str) -> str | None:
-    """從 JWT payload 取帳號；憑證格式不完整時仍不可讓抓取程序中斷。"""
+def _jwt_payload(access_token: str) -> dict | None:
     try:
         payload = access_token.split(".")[1]
         payload += "=" * (-len(payload) % 4)
         claims = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
+        return claims if isinstance(claims, dict) else None
+    except (
+        AttributeError,
+        IndexError,
+        TypeError,
+        ValueError,
+        UnicodeDecodeError,
+        binascii.Error,
+    ):
+        return None
+
+
+def _account_id_from_jwt(access_token: str) -> str | None:
+    """從 JWT payload 取帳號；憑證格式不完整時仍不可讓抓取程序中斷。"""
+    claims = _jwt_payload(access_token)
+    if claims is None:
+        return None
+    try:
         auth_claim = claims.get("https://api.openai.com/auth")
         account_id = auth_claim.get("chatgpt_account_id") if isinstance(auth_claim, dict) else None
         return account_id if isinstance(account_id, str) and account_id else None
-    except (AttributeError, IndexError, TypeError, ValueError, UnicodeDecodeError):
+    except (AttributeError, TypeError):
         return None
+
+
+def _name_from_jwt_claims(claims: dict, account_id: str) -> str:
+    profile = claims.get("https://api.openai.com/profile")
+    email = profile.get("email") if isinstance(profile, dict) else None
+    if not isinstance(email, str) or not email:
+        email = claims.get("email")
+    if isinstance(email, str) and email:
+        return email.split("@", 1)[0]
+    return account_id[:8]
 
 
 def _read_credentials(path, token_key: str, account_key: str, section: str) -> tuple[str, str] | None:
@@ -105,6 +139,79 @@ def _read_credentials(path, token_key: str, account_key: str, section: str) -> t
         return access, account_id
     except (OSError, TypeError, ValueError):
         return None
+
+
+def _guess_auth_format(path) -> str:
+    return "opencode" if "opencode" in str(path).lower() else "codex"
+
+
+def _read_credential(path, auth_format: str) -> dict | None:
+    keys = _CREDENTIAL_FORMATS.get(auth_format)
+    if keys is None:
+        return None
+    token_key, account_key, section = keys
+    expanded = Path(path).expanduser()
+    pair = _read_credentials(expanded, token_key, account_key, section)
+    if pair is None:
+        return None
+    access, account_id = pair
+    if not account_id:
+        return None
+    claims = _jwt_payload(access)
+    if claims is None:
+        return None
+    return {
+        "access": access,
+        "account_id": account_id,
+        "name": _name_from_jwt_claims(claims, account_id),
+        "source": str(expanded),
+    }
+
+
+def _configured_auth_sources(config_path) -> list[tuple[Path, str]] | None:
+    path = OPENAI_ACCOUNTS_CONFIG_PATH if config_path is None else Path(config_path).expanduser()
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return None
+    if not isinstance(entries, list):
+        return None
+
+    sources = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        auth_path = entry.get("auth")
+        if not isinstance(auth_path, str) or not auth_path:
+            continue
+        auth_format = entry.get("format")
+        if not isinstance(auth_format, str) or not auth_format:
+            auth_format = _guess_auth_format(auth_path)
+        sources.append((Path(auth_path).expanduser(), auth_format))
+    return sources
+
+
+def list_credentials(config_path=None) -> list[dict]:
+    """列出所有可用 OpenAI credentials；壞來源只跳過，不中斷整體流程。"""
+    sources = _configured_auth_sources(config_path)
+    if sources is None:
+        sources = [
+            (CODEX_AUTH_PATH, "codex"),
+            (OPENCODE_AUTH_PATH, "opencode"),
+        ]
+
+    credentials = []
+    seen_account_ids = set()
+    for path, auth_format in sources:
+        credential = _read_credential(path, auth_format)
+        if credential is None:
+            continue
+        account_id = credential["account_id"]
+        if account_id in seen_account_ids:
+            continue
+        seen_account_ids.add(account_id)
+        credentials.append(credential)
+    return credentials
 
 
 def load_credentials(codex_path=None, opencode_path=None) -> tuple:
@@ -143,20 +250,8 @@ def _drain_response(response) -> None:
             close()
 
 
-def fetch_usage(auth_path=None, http=None) -> dict | None:
-    """抓取 OpenAI primary 週用量。
-
-    這會消耗一點點額度：2026-08-10 實機驗證，Cloudflare 擋掉所有唯讀端點，
-    只能靠帶 `originator: codex_cli_rs` 的真實 Codex responses 請求從回應 header 取得
-    ChatGPT 額度。因此呼叫端必須低頻排程，只在剛使用 Codex CLI 後或長間隔兜底刷新。
-    任何檔案、JSON、網路、HTTP 狀態或 header 解析例外都回 None，不讓推送 agent 掛掉。
-    """
+def _fetch_usage_headers(access: str, account_id: str, http=None) -> dict | None:
     try:
-        # auth_path 保留給舊呼叫端與測試，代表指定 OpenCode 格式路徑。
-        access, account_id = load_credentials(opencode_path=auth_path)
-        if access is None:
-            print("[OpenAI] 抓取失敗：找不到可用憑證")
-            return None
         headers = {
             "Authorization": f"Bearer {access}",
             "chatgpt-account-id": account_id,
@@ -194,3 +289,43 @@ def fetch_usage(auth_path=None, http=None) -> dict | None:
     except Exception as error:
         print(f"[OpenAI] 抓取失敗：{type(error).__name__}")
         return None
+
+
+def fetch_usage(auth_path=None, http=None) -> dict | None:
+    """抓取 OpenAI primary 週用量。
+
+    這會消耗一點點額度：2026-08-10 實機驗證，Cloudflare 擋掉所有唯讀端點，
+    只能靠帶 `originator: codex_cli_rs` 的真實 Codex responses 請求從回應 header 取得
+    ChatGPT 額度。因此呼叫端必須低頻排程，只在剛使用 Codex CLI 後或長間隔兜底刷新。
+    任何檔案、JSON、網路、HTTP 狀態或 header 解析例外都回 None，不讓推送 agent 掛掉。
+    """
+    # auth_path 保留給舊呼叫端與測試，代表指定 OpenCode 格式路徑。
+    access, account_id = load_credentials(opencode_path=auth_path)
+    if access is None:
+        print("[OpenAI] 抓取失敗：找不到可用憑證")
+        return None
+    return _fetch_usage_headers(access, account_id, http=http)
+
+
+def fetch_usage_for(credential: dict, http=None) -> dict | None:
+    access = credential.get("access") if isinstance(credential, dict) else None
+    account_id = credential.get("account_id") if isinstance(credential, dict) else None
+    if not isinstance(access, str) or not access or not isinstance(account_id, str):
+        return None
+    parsed = _fetch_usage_headers(access, account_id, http=http)
+    if parsed is None:
+        return None
+    parsed = dict(parsed)
+    parsed["account_id"] = account_id
+    name = credential.get("name") if isinstance(credential.get("name"), str) else None
+    parsed["name"] = name or account_id[:8]
+    return parsed
+
+
+def fetch_all_usage(config_path=None, http=None) -> list[dict]:
+    results = []
+    for credential in list_credentials(config_path=config_path):
+        parsed = fetch_usage_for(credential, http=http)
+        if parsed is not None:
+            results.append(parsed)
+    return results

@@ -263,6 +263,49 @@ def test_oa_payload_fields_normal_conversion():
     ).isoformat()
 
 
+def test_oa_payload_fields_accounts_keeps_legacy_first():
+    from datetime import datetime, timezone
+    demo = _load_demo_module()
+
+    now = datetime(2026, 9, 10, 16, 0, 0, tzinfo=timezone.utc)
+    first_reset = 1789435507
+    second_reset = 1789436507
+
+    res = demo.oa_payload_fields([
+        {
+            "account_id": "882254a5-first",
+            "name": "kevin.systemcom",
+            "used_pct": 100,
+            "resets_at_epoch": first_reset,
+        },
+        {
+            "account_id": "882254a5-second",
+            "name": "interagent.dev01",
+            "used_pct": 18,
+            "resets_at_epoch": second_reset,
+        },
+    ], now)
+
+    assert len(res["oa_accounts"]) == 2
+    assert res["oa_accounts"][0] == {
+        "account_id": "882254a5-first",
+        "name": "kevin.systemcom",
+        "weekly_pct": 100.0,
+        "weekly_resets_at": datetime.fromtimestamp(
+            first_reset, tz=timezone.utc
+        ).isoformat(),
+        "fetched_at": now.isoformat(),
+    }
+    assert res["oa_accounts"][1]["weekly_pct"] == 18.0
+    assert res["oa_accounts"][1]["weekly_resets_at"] == datetime.fromtimestamp(
+        second_reset, tz=timezone.utc
+    ).isoformat()
+    assert res["oa_weekly_pct"] == 100.0
+    assert res["oa_weekly_resets_at"] == res["oa_accounts"][0]["weekly_resets_at"]
+    assert res["oa_account_id"] == "882254a5-first"
+    assert res["oa_fetched_at"] == now.isoformat()
+
+
 def test_oa_payload_fields_all_none_input():
     from datetime import datetime, timezone
     demo = _load_demo_module()
@@ -302,6 +345,65 @@ def test_build_payload_includes_openai_fields(monkeypatch):
 
     payload_no_oa = demo.build_payload(usage, enable_antigravity=False, enable_openai=False)
     assert "oa_weekly_pct" not in payload_no_oa
+
+
+def test_build_payload_includes_openai_accounts_with_legacy_first(monkeypatch):
+    demo = _load_demo_module()
+
+    fake_oa = {
+        "oa_accounts": [
+            {
+                "account_id": "account-a",
+                "name": "kevin.systemcom",
+                "weekly_pct": 100.0,
+                "weekly_resets_at": "2026-09-15T09:25:07+08:00",
+                "fetched_at": "2026-09-10T16:00:00+08:00",
+            },
+            {
+                "account_id": "account-b",
+                "name": "interagent.dev01",
+                "weekly_pct": 18.0,
+                "weekly_resets_at": "2026-09-15T10:25:07+08:00",
+                "fetched_at": "2026-09-10T16:00:00+08:00",
+            },
+        ],
+        "oa_weekly_pct": 100.0,
+        "oa_weekly_resets_at": "2026-09-15T09:25:07+08:00",
+        "oa_account_id": "account-a",
+        "oa_fetched_at": "2026-09-10T16:00:00+08:00",
+    }
+    monkeypatch.setattr(demo, "fetch_openai_usage", object())
+    monkeypatch.setattr(demo, "get_openai_fields", lambda: fake_oa)
+
+    usage = {
+        "five_hour": {"utilization": 12, "resets_at": "2026-08-04T04:00:00Z"},
+        "seven_day": {"utilization": 34, "resets_at": "2026-08-10T00:00:00Z"},
+    }
+
+    payload = demo.build_payload(usage, enable_antigravity=False, enable_openai=True)
+
+    assert payload["oa_accounts"] == fake_oa["oa_accounts"]
+    assert len(payload["oa_accounts"]) == 2
+    assert payload["oa_weekly_pct"] == payload["oa_accounts"][0]["weekly_pct"]
+    assert payload["oa_weekly_resets_at"] == payload["oa_accounts"][0]["weekly_resets_at"]
+    assert payload["oa_account_id"] == payload["oa_accounts"][0]["account_id"]
+    assert payload["oa_fetched_at"] == payload["oa_accounts"][0]["fetched_at"]
+
+
+def test_summary_formats_openai_accounts():
+    demo = _load_demo_module()
+
+    summary = demo._summary({
+        "session_pct": 1,
+        "weekly_pct": 2,
+        "fable_pct": 3,
+        "oa_accounts": [
+            {"name": "kevin.systemcom", "weekly_pct": 100.0},
+            {"name": "interagent.dev01", "weekly_pct": 18.0},
+        ],
+    })
+
+    assert "OpenAI kevin.systemcom 100.0% / interagent.dev01 18.0%" in summary
 
 
 def test_refresh_antigravity_async_keeps_old_value_on_failure(monkeypatch):
@@ -348,13 +450,55 @@ def test_refresh_openai_async_keeps_old_value_on_failure(monkeypatch):
     demo = _load_demo_module()
 
     initial_oa = {
+        "oa_accounts": [
+            {
+                "account_id": "account-old",
+                "name": "old.account",
+                "weekly_pct": 3.0,
+                "weekly_resets_at": "2026-08-17T00:00:00+00:00",
+                "fetched_at": "2026-08-10T17:00:00+00:00",
+            }
+        ],
         "oa_weekly_pct": 3.0,
         "oa_weekly_resets_at": "2026-08-17T00:00:00+00:00",
+        "oa_account_id": "account-old",
+        "oa_fetched_at": "2026-08-10T17:00:00+00:00",
     }
     with demo._OA_LOCK:
         demo._OA_LATEST.update(initial_oa)
 
     monkeypatch.setattr(demo, "fetch_openai_usage", lambda *a, **kw: None)
+    monkeypatch.setattr(demo.time, "monotonic", lambda: 1000.0)
+
+    t = demo.refresh_openai_async()
+    if t is not None:
+        t.join()
+
+    assert demo.get_openai_fields() == initial_oa
+
+
+def test_refresh_openai_async_keeps_old_value_when_all_accounts_fail(monkeypatch):
+    demo = _load_demo_module()
+
+    initial_oa = {
+        "oa_accounts": [
+            {
+                "account_id": "account-old",
+                "name": "old.account",
+                "weekly_pct": 3.0,
+                "weekly_resets_at": "2026-08-17T00:00:00+00:00",
+                "fetched_at": "2026-08-10T17:00:00+00:00",
+            }
+        ],
+        "oa_weekly_pct": 3.0,
+        "oa_weekly_resets_at": "2026-08-17T00:00:00+00:00",
+        "oa_account_id": "account-old",
+        "oa_fetched_at": "2026-08-10T17:00:00+00:00",
+    }
+    with demo._OA_LOCK:
+        demo._OA_LATEST.update(initial_oa)
+
+    monkeypatch.setattr(demo, "fetch_openai_usage", lambda *a, **kw: [])
     monkeypatch.setattr(demo.time, "monotonic", lambda: 1000.0)
 
     t = demo.refresh_openai_async()
@@ -485,13 +629,27 @@ def test_warm_openai_from_cache_with_openai_fields():
     demo = _load_demo_module()
     cached = {
         "session_pct": 42.0,
+        "oa_accounts": [
+            {
+                "account_id": "account-a",
+                "name": "kevin.systemcom",
+                "weekly_pct": 3.0,
+                "weekly_resets_at": "2026-08-17T00:00:00+00:00",
+                "fetched_at": "2026-08-10T17:00:00+00:00",
+            }
+        ],
         "oa_weekly_pct": 3.0,
         "oa_weekly_resets_at": "2026-08-17T00:00:00+00:00",
+        "oa_account_id": "account-a",
+        "oa_fetched_at": "2026-08-10T17:00:00+00:00",
     }
     demo.warm_openai_from_cache(cached)
     fields = demo.get_openai_fields()
+    assert fields["oa_accounts"] == cached["oa_accounts"]
     assert fields["oa_weekly_pct"] == 3.0
     assert fields["oa_weekly_resets_at"] == "2026-08-17T00:00:00+00:00"
+    assert fields["oa_account_id"] == "account-a"
+    assert fields["oa_fetched_at"] == "2026-08-10T17:00:00+00:00"
 
 
 def test_warm_ag_from_cache_missing_fields_defaults_none():

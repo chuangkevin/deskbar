@@ -32,13 +32,13 @@ except ImportError:
             parse_usage_panel = None
 
 try:
-    from tools.openai_usage import fetch_usage as fetch_openai_usage
+    from tools.openai_usage import fetch_all_usage as fetch_openai_usage
 except ImportError:
     try:
-        from openai_usage import fetch_usage as fetch_openai_usage
+        from openai_usage import fetch_all_usage as fetch_openai_usage
     except ImportError:
         try:
-            from .openai_usage import fetch_usage as fetch_openai_usage
+            from .openai_usage import fetch_all_usage as fetch_openai_usage
         except ImportError:
             fetch_openai_usage = None
 
@@ -103,8 +103,11 @@ _OA_LAST_REFRESH_MONO: float | None = None
 _OA_LAST_ACTIVITY_MTIME: float | None = None
 _OA_ACTIVITY_MTIME_READY = False
 _OA_LATEST: dict = {
+    "oa_accounts": [],
     "oa_weekly_pct": None,
     "oa_weekly_resets_at": None,
+    "oa_account_id": None,
+    "oa_fetched_at": None,
 }
 
 # 背景 AG/OA 成功刷新後喚醒 run_loop，立刻補送新時間戳（不必等 push_interval）。
@@ -288,8 +291,7 @@ def refresh_antigravity_async() -> threading.Thread | None:
     return thread
 
 
-def oa_payload_fields(parsed: dict | None, now: datetime) -> dict:
-    """純函數：將 OpenAI header 解析結果換算為 deskbar payload 欄位。"""
+def _oa_single_payload_fields(parsed: dict | None, now: datetime) -> dict:
     if not parsed or not isinstance(parsed, dict):
         parsed = {}
 
@@ -311,10 +313,108 @@ def oa_payload_fields(parsed: dict | None, now: datetime) -> dict:
         except (OSError, OverflowError, TypeError, ValueError):
             resets_at = None
 
-    return {
+    fields = {
         "oa_weekly_pct": pct,
         "oa_weekly_resets_at": resets_at,
     }
+    if "account_id" in parsed:
+        fields["oa_account_id"] = parsed.get("account_id")
+    if "fetched_at" in parsed:
+        fields["oa_fetched_at"] = parsed.get("fetched_at")
+    return fields
+
+
+def _oa_legacy_fields_from_accounts(accounts: list) -> dict:
+    fields = {
+        "oa_weekly_pct": None,
+        "oa_weekly_resets_at": None,
+        "oa_account_id": None,
+        "oa_fetched_at": None,
+    }
+    if not accounts:
+        return fields
+    first = accounts[0] if isinstance(accounts[0], dict) else {}
+    fields["oa_weekly_pct"] = first.get("weekly_pct")
+    fields["oa_weekly_resets_at"] = first.get("weekly_resets_at")
+    fields["oa_account_id"] = first.get("account_id")
+    fields["oa_fetched_at"] = first.get("fetched_at")
+    return fields
+
+
+def oa_payload_fields(parsed: dict | list | None, now: datetime) -> dict:
+    """純函數：將 OpenAI header 解析結果換算為 deskbar payload 欄位。"""
+    if isinstance(parsed, list):
+        fetched_at = now.isoformat()
+        accounts = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            single = _oa_single_payload_fields(item, now)
+            accounts.append({
+                "account_id": item.get("account_id"),
+                "name": item.get("name"),
+                "weekly_pct": single.get("oa_weekly_pct"),
+                "weekly_resets_at": single.get("oa_weekly_resets_at"),
+                "fetched_at": fetched_at,
+            })
+        fields = {"oa_accounts": accounts}
+        fields.update(_oa_legacy_fields_from_accounts(accounts))
+        return fields
+
+    return _oa_single_payload_fields(parsed, now)
+
+
+def _merge_oa_accounts(existing_accounts, fresh_accounts) -> list:
+    accounts = [
+        dict(account)
+        for account in existing_accounts or []
+        if isinstance(account, dict)
+    ]
+    account_index = {
+        account.get("account_id"): index
+        for index, account in enumerate(accounts)
+        if account.get("account_id") is not None
+    }
+    for fresh in fresh_accounts or []:
+        if not isinstance(fresh, dict):
+            continue
+        account_id = fresh.get("account_id")
+        if account_id in account_index:
+            accounts[account_index[account_id]] = dict(fresh)
+        else:
+            account_index[account_id] = len(accounts)
+            accounts.append(dict(fresh))
+    return accounts
+
+
+def _merge_openai_fields(existing: dict, fresh: dict) -> dict:
+    fresh_accounts = fresh.get("oa_accounts")
+    if not isinstance(fresh_accounts, list):
+        return fresh
+    accounts = _merge_oa_accounts(existing.get("oa_accounts"), fresh_accounts)
+    fields = dict(fresh)
+    fields["oa_accounts"] = accounts
+    fields.update(_oa_legacy_fields_from_accounts(accounts))
+    return fields
+
+
+def _has_usable_openai_fields(fields: dict | None) -> bool:
+    if not fields or not isinstance(fields, dict):
+        return False
+    accounts = fields.get("oa_accounts")
+    if isinstance(accounts, list):
+        return any(
+            isinstance(account, dict)
+            and (
+                account.get("weekly_pct") is not None
+                or account.get("weekly_resets_at") is not None
+            )
+            for account in accounts
+        )
+    return (
+        fields.get("oa_weekly_pct") is not None
+        or fields.get("oa_weekly_resets_at") is not None
+    )
 
 
 def get_openai_fields() -> dict:
@@ -331,9 +431,12 @@ def warm_openai_from_cache(cached: dict | None) -> None:
     """
     if not cached or not isinstance(cached, dict):
         return
+    cached_accounts = cached.get("oa_accounts")
     fields = {
+        "oa_accounts": cached_accounts if isinstance(cached_accounts, list) else [],
         "oa_weekly_pct": cached.get("oa_weekly_pct"),
         "oa_weekly_resets_at": cached.get("oa_weekly_resets_at"),
+        "oa_account_id": cached.get("oa_account_id"),
     }
     if "oa_fetched_at" in cached:
         fields["oa_fetched_at"] = cached.get("oa_fetched_at")
@@ -350,13 +453,15 @@ def _oa_worker() -> None:
         if not parsed:
             print("[OpenAI] 抓取失敗，保留上一次用量資料")
             return
+        if isinstance(parsed, dict):
+            parsed = [parsed]
         now = datetime.now().astimezone()
-        fields = oa_payload_fields(parsed, now)
-        if not any(v is not None for v in fields.values()):
+        fresh_fields = oa_payload_fields(parsed, now)
+        if not _has_usable_openai_fields(fresh_fields):
             print("[OpenAI] 解析結果全空，保留上一次用量資料")
             return
-        fields["oa_fetched_at"] = now.isoformat()
         with _OA_LOCK:
+            fields = _merge_openai_fields(dict(_OA_LATEST), fresh_fields)
             _OA_LATEST.update(fields)
         try:
             merge_source_fields_into_cache(fields)
@@ -816,7 +921,15 @@ def compose_publish_payload(
         if enable_antigravity:
             interesting.extend(get_antigravity_fields().values())
         if enable_openai:
-            interesting.extend(get_openai_fields().values())
+            oa_fields = get_openai_fields()
+            accounts = oa_fields.get("oa_accounts")
+            if isinstance(accounts, list):
+                for account in accounts:
+                    if isinstance(account, dict):
+                        interesting.append(account.get("weekly_pct"))
+                        interesting.append(account.get("weekly_resets_at"))
+            else:
+                interesting.extend(oa_fields.values())
         if not any(v is not None for v in interesting):
             return None
     return payload
@@ -832,7 +945,19 @@ def _summary(payload: dict) -> str:
             f"  AG 5h {payload.get('ag_5h_pct')}%  "
             f"AG 週 {payload.get('ag_weekly_pct')}%"
         )
-    if "oa_weekly_pct" in payload:
+    oa_accounts = payload.get("oa_accounts")
+    if isinstance(oa_accounts, list) and oa_accounts:
+        parts = []
+        for account in oa_accounts:
+            if not isinstance(account, dict):
+                continue
+            label = account.get("name") or str(account.get("account_id") or "")[:8]
+            if not label:
+                label = "unknown"
+            parts.append(f"{label} {account.get('weekly_pct')}%")
+        if parts:
+            summary += f"  OpenAI {' / '.join(parts)}"
+    elif "oa_weekly_pct" in payload:
         summary += f"  OpenAI 週 {payload.get('oa_weekly_pct')}%"
     return summary
 
