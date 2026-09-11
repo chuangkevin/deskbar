@@ -256,7 +256,7 @@ async function loadPrefs(){
   <fieldset class="usage-sources">
    <legend>AI 用量顯示</legend>
    <div class="usage-source-list">
-    ${[["claude","Claude Code"],["antigravity","Antigravity / Gemini"],["openai","OpenAI"],["cursor","Cursor"]].map(([key,label])=>`<label>
+    ${[["claude","Claude Code"],["antigravity","Antigravity / Gemini"],["openai","OpenAI"],["cursor","Cursor"],["opencode","OpenCode Go"]].map(([key,label])=>`<label>
      <input type="checkbox" class="p_us" value="${key}" ${(p.usage_sources||[]).includes(key)?"checked":""}>${label}</label>`).join("")}
    </div>
    <div class="hint">超過 24 小時未更新會自動隱藏</div>

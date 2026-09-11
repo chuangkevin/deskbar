@@ -512,6 +512,11 @@ def register_routes(app: Flask, context: WebContext) -> None:
             cu_pct=_to_float(d.get("cu_pct")),
             cu_resets_at=_parse_dt(d.get("cu_resets_at")),
             cu_fetched_at=_optional_fetched("cu_fetched_at"),
+            og_5h_pct=_to_float(d.get("og_5h_pct")),
+            og_5h_resets_at=_parse_dt(d.get("og_5h_resets_at")),
+            og_weekly_pct=_to_float(d.get("og_weekly_pct")),
+            og_weekly_resets_at=_parse_dt(d.get("og_weekly_resets_at")),
+            og_fetched_at=_optional_fetched("og_fetched_at"),
         )
         context.usage_state.set_usage(info)
         return "", 204

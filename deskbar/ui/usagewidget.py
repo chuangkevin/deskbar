@@ -5,6 +5,10 @@
 2. ANTIGRAVITY · GEMINI 區：5H / 本週（無資料時整區略過，不畫分隔線與標題）
 3. OPENAI 區：每個帳號一區（無資料時整區略過，不畫分隔線與標題）
 4. CURSOR 區：本期（帳單週期約一個月；無資料時整區略過）
+5. OPENCODE GO 區：5H / 本週（無資料時整區略過）
+
+2026-09-11 起來源多到一欄放不下（6 區 10 列）：render() 會先算總高度，超過可用高度時
+把垂直間距等比例縮小（只縮間距，不縮字級、不縮長條），縮到底線仍放不下才裁掉最後幾區。
 
 usage 資料完全被動接收：Mac agent POST 到 deskbar 的 /api/usage。
 
@@ -33,7 +37,7 @@ BAR_Y_OFFSET = 19         # 文字列完整結束後再起橫條，避免字框�
 STALE_AFTER_S = 900       # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
 VERY_STALE_AFTER_S = 3600 # 超過這麼久，整組轉 muted 灰（agent 可能已經停了）
 HIDE_AFTER_S = 24 * 60 * 60
-DEFAULT_SOURCES = ("claude", "antigravity", "openai", "cursor")
+DEFAULT_SOURCES = ("claude", "antigravity", "openai", "cursor", "opencode")
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft", bold=False):
@@ -196,34 +200,102 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
             sections.append(("CURSOR", [
                 ("本期", cu_pct, getattr(usage, "cu_resets_at", None), WINDOW_S["cu"]),
             ], cu_age))
+
+    if "opencode" in enabled:
+        og_age = age_for("og_fetched_at", fallback_to_global=False)
+        og_5h = getattr(usage, "og_5h_pct", None)
+        og_weekly = getattr(usage, "og_weekly_pct", None)
+        if (og_5h is not None or og_weekly is not None) and og_age < HIDE_AFTER_S:
+            sections.append(("OPENCODE GO", [
+                ("5H", og_5h, getattr(usage, "og_5h_resets_at", None), WINDOW_S["og_5h"]),
+                ("本週", og_weekly, getattr(usage, "og_weekly_resets_at", None), WINDOW_S["og_weekly"]),
+            ], og_age))
     return sections
 
 
+MIN_GROUP_STEP = 32       # 壓縮下限：字列 17px＋橫條 9px＋餘裕，再低會貼在一起
+MIN_SECTION_GAP = 10      # sep_gap + title_gap 合計的下限
+DEFAULT_HEIGHT = 480 - 6  # 右欄可用高度（螢幕 480，底下留一點邊）
+
+
+def layout_height(group_counts, *, group_step=GROUP_STEP, sep_gap=SECTION_SEP_GAP,
+                  title_gap=SECTION_TITLE_GAP, first_group=SECTION_FIRST_GROUP) -> float:
+    """純函數：這組區塊照給定間距畫完，最後一條橫條的底在哪個 y。"""
+    if not group_counts:
+        return 0.0
+    y = TITLE_Y
+    bottom = 0.0
+    for i, n in enumerate(group_counts):
+        if i > 0:
+            y = bottom + sep_gap + title_gap
+        bottom = y + first_group + (n - 1) * group_step + BAR_Y_OFFSET + BAR_H
+    return bottom
+
+
+def fit_layout(group_counts, height: float = DEFAULT_HEIGHT) -> dict:
+    """純函數：放得下就用預設間距；放不下就等比例縮間距（不縮字級／橫條），
+    縮到下限還放不下就回 max_sections 讓呼叫端裁掉最後幾區。"""
+    default = {"group_step": GROUP_STEP, "sep_gap": SECTION_SEP_GAP,
+               "title_gap": SECTION_TITLE_GAP, "first_group": SECTION_FIRST_GROUP,
+               "max_sections": len(group_counts), "compact": False}
+    if layout_height(group_counts) <= height:
+        return default
+    # 二分搜尋一個 0..1 的縮放係數，套在三個「可伸縮」的間距上。
+    def scaled(k):
+        return {
+            "group_step": max(MIN_GROUP_STEP, round(GROUP_STEP * k)),
+            "sep_gap": max(MIN_SECTION_GAP // 2, round(SECTION_SEP_GAP * k)),
+            "title_gap": max(MIN_SECTION_GAP - MIN_SECTION_GAP // 2, round(SECTION_TITLE_GAP * k)),
+            "first_group": max(18, round(SECTION_FIRST_GROUP * k)),
+        }
+    lo, hi = 0.0, 1.0
+    best = scaled(0.0)
+    for _ in range(12):
+        mid = (lo + hi) / 2
+        cand = scaled(mid)
+        if layout_height(group_counts, **cand) <= height:
+            best, lo = cand, mid
+        else:
+            hi = mid
+    if layout_height(group_counts, **best) <= height:
+        return {**best, "max_sections": len(group_counts), "compact": True}
+    # 連最緊也放不下：從尾端裁區塊
+    for keep in range(len(group_counts) - 1, 0, -1):
+        if layout_height(group_counts[:keep], **best) <= height:
+            return {**best, "max_sections": keep, "compact": True}
+    return {**best, "max_sections": 1, "compact": True}
+
+
 def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
-           enabled_sources=None, oa_aliases=None, oa_hidden=None) -> None:
-    """畫可見 usage 區塊；未勾選、沒有資料或超過一天的來源完全不留痕跡。"""
+           enabled_sources=None, oa_aliases=None, oa_hidden=None,
+           height: float = DEFAULT_HEIGHT) -> None:
+    """畫可見 usage 區塊；未勾選、沒有資料或超過一天的來源完全不留痕跡。
+    放不下時自動縮間距（見 fit_layout）。"""
     sections = visible_sections(usage, now, enabled_sources, oa_aliases, oa_hidden)
     if not sections:
         return
+
+    layout = fit_layout([len(groups) for _t, groups, _a in sections], height)
+    sections = sections[:layout["max_sections"]]
 
     title_y = TITLE_Y
     previous_bar_bottom = None
     for i, (title, groups, age) in enumerate(sections):
         if i > 0:
-            sep_y = previous_bar_bottom + SECTION_SEP_GAP
+            sep_y = previous_bar_bottom + layout["sep_gap"]
             pygame.draw.line(surface, theme.C["panel_line"],
                              (round(x0), round(sep_y)),
                              (round(x0 + w), round(sep_y)), 1)
-            title_y = sep_y + SECTION_TITLE_GAP
+            title_y = sep_y + layout["title_gap"]
 
         _text(surface, title, 14, theme.C["muted"], x0, title_y)
         if age > STALE_AFTER_S:
             _text(surface, f"({int(age // 60)} 分前)", 16, theme.C["muted"],
                   x0 + w, title_y, "topright")
-        y = title_y + SECTION_FIRST_GROUP
+        y = title_y + layout["first_group"]
         for label, pct, resets_at, win in groups:
             _draw_group(surface, x0, w, y, label, pct, resets_at, now,
                         muted=age > VERY_STALE_AFTER_S,
                         window_s=win)
             previous_bar_bottom = y + BAR_Y_OFFSET + BAR_H
-            y += GROUP_STEP
+            y += layout["group_step"]

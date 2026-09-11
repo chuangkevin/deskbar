@@ -556,3 +556,72 @@ def test_normal_refresh_interval_shows_no_minutes_ago_note():
                   for x in range(1700, 1900, 2))
     assert not has_ink, "刷新間隔內不該顯示「(N 分前)」"
     assert usagewidget.STALE_AFTER_S > 300
+
+
+# ---------------------------------------------------------------- OpenCode Go 與自動壓縮
+
+def _og_usage(**kw):
+    from dataclasses import replace
+    base = _usage(**kw)
+    return replace(base, og_5h_pct=0.0, og_5h_resets_at=NOW + timedelta(hours=5),
+                   og_weekly_pct=37.5, og_weekly_resets_at=NOW + timedelta(days=2),
+                   og_fetched_at=NOW)
+
+
+def test_opencode_go_section_has_5h_and_weekly_rows():
+    sections = usagewidget.visible_sections(_og_usage(), NOW, ("claude", "opencode"))
+    titles = [t for t, _g, _a in sections]
+    assert titles[-1] == "OPENCODE GO"
+    rows = [g for t, g, _a in sections if t == "OPENCODE GO"][0]
+    assert [r[0] for r in rows] == ["5H", "本週"]
+    assert rows[1][1] == 37.5
+
+
+def test_opencode_go_section_skipped_when_not_enabled_or_no_data():
+    titles = [t for t, _g, _a in usagewidget.visible_sections(_og_usage(), NOW, ("claude",))]
+    assert "OPENCODE GO" not in titles
+    titles = [t for t, _g, _a in usagewidget.visible_sections(_usage(), NOW, ("claude", "opencode"))]
+    assert "OPENCODE GO" not in titles
+
+
+def test_fit_layout_keeps_default_spacing_when_it_fits():
+    lay = usagewidget.fit_layout([3, 2, 1, 1, 1])
+    assert lay["compact"] is False
+    assert lay["group_step"] == usagewidget.GROUP_STEP
+    assert lay["max_sections"] == 5
+
+
+def test_fit_layout_compacts_six_sections_without_dropping_any():
+    counts = [3, 2, 1, 1, 1, 2]
+    assert usagewidget.layout_height(counts) > usagewidget.DEFAULT_HEIGHT
+    lay = usagewidget.fit_layout(counts)
+    assert lay["compact"] is True
+    assert lay["max_sections"] == 6
+    assert lay["group_step"] >= usagewidget.MIN_GROUP_STEP
+    spacing = {k: lay[k] for k in ("group_step", "sep_gap", "title_gap", "first_group")}
+    assert usagewidget.layout_height(counts, **spacing) <= usagewidget.DEFAULT_HEIGHT
+
+
+def test_fit_layout_drops_trailing_sections_when_even_compact_overflows():
+    counts = [3, 2, 2, 2, 2, 2, 2, 2]
+    lay = usagewidget.fit_layout(counts)
+    assert lay["max_sections"] < len(counts)
+    spacing = {k: lay[k] for k in ("group_step", "sep_gap", "title_gap", "first_group")}
+    assert usagewidget.layout_height(counts[:lay["max_sections"]], **spacing) <= usagewidget.DEFAULT_HEIGHT
+
+
+def test_render_all_six_sections_stays_inside_screen():
+    """六區全開時不可畫出 480 以外；最後一條橫條必須在畫面內。"""
+    from deskbar.claudeusage import OaAccount as _OA
+    usage = _og_usage(ag_5h_pct=1.0, ag_weekly_pct=2.0,
+                      oa_accounts=(_OA("a", "one", 50.0, NOW + timedelta(days=1), NOW),
+                                   _OA("b", "two", 60.0, NOW + timedelta(days=1), NOW)))
+    from dataclasses import replace
+    usage = replace(usage, cu_pct=70.0, cu_resets_at=NOW + timedelta(days=3), cu_fetched_at=NOW)
+    surf = pygame.Surface((1920, 520)); surf.fill(theme.C["bg"])
+    usagewidget.render(surf, usage, NOW, 1540, 360, ("claude", "antigravity", "openai", "cursor", "opencode"))
+    bg = theme.C["bg"]
+    below = any(surf.get_at((x, y))[:3] != bg for x in range(1540, 1900, 4) for y in range(480, 520))
+    assert not below, "有東西畫到 480 以外"
+    last_rows = any(surf.get_at((x, y))[:3] != bg for x in range(1540, 1900, 4) for y in range(440, 480))
+    assert last_rows, "第六區應該畫在畫面底部"

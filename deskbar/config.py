@@ -22,7 +22,7 @@ DEFAULT_SCENES = (
 VALID_VIEW_SPANS = {"half", "day", "week", "month"}
 VALID_VIEW_MODES = {"lanes", "agenda"}
 VALID_THEMES = {"dark", "light"}
-VALID_USAGE_SOURCES = ("claude", "antigravity", "openai", "cursor")
+VALID_USAGE_SOURCES = ("claude", "antigravity", "openai", "cursor", "opencode")
 DEFAULT_PET_X, DEFAULT_PET_Y = 1660, 300
 
 
