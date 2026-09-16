@@ -7,8 +7,9 @@ from flask import Flask, Response, jsonify, request
 
 from deskbar import auth, config
 from deskbar.alarms import _is_valid_date_str
-from deskbar.claudeusage import OaAccount, UsageInfo
+from deskbar.claudeusage import OaAccount, UsageInfo, fmt_countdown, over_pace
 from deskbar.presence import PresenceState
+from deskbar.ui.usagewidget import visible_sections
 from deskbar.webapi.context import WebContext
 from deskbar.webapi.validation import (
     _PCT_FIELDS,
@@ -433,6 +434,54 @@ def register_routes(app: Flask, context: WebContext) -> None:
         context.usage_state.set_presence(PresenceState(present=present, rssi=rssi,
                                                last_seen=last_seen, enabled=enabled))
         return "", 204
+
+    @app.get("/api/usage")
+    def get_usage():
+        """右欄油表照 ui.usagewidget.visible_sections 的同一份決策序列化。
+
+        Mac 選單列 App 直接顯示這個結果，不自己重算。「畫哪些區、順序、
+        可見度」全部跟右欄同一條路，兩邊才不會分岔。與其他 GET 一樣
+        tailnet 內無認證；DESKBAR_PUSH_TOKEN 只用於 POST。"""
+
+        if context.usage_state is None:
+            return jsonify({"error": "not available"}), 501
+        snapshot = context.usage_state.snapshot()
+        now = datetime.now(_USAGE_TZ)
+        # 偏好讀法與 /api/prefs 相同：鎖內一次讀齊，缺值用 config 預設。
+        if context.settings_lock is not None:
+            with context.settings_lock:
+                enabled_sources = list(getattr(context.settings_provider, "usage_sources",
+                                               config.VALID_USAGE_SOURCES))
+                aliases = dict(getattr(context.settings_provider, "oa_aliases", {}))
+                hidden = list(getattr(context.settings_provider, "oa_hidden", ()))
+        else:
+            enabled_sources = list(config.VALID_USAGE_SOURCES)
+            aliases, hidden = {}, []
+
+        usage = snapshot.usage
+        sections = []
+        for title, groups, age_s in visible_sections(usage, now, enabled_sources,
+                                                     aliases, hidden):
+            sections.append({
+                "title": title,
+                "age_s": age_s,
+                "groups": [{
+                    "label": label,
+                    "pct": pct,
+                    "resets_at": resets_at.isoformat() if resets_at is not None else None,
+                    "countdown": fmt_countdown(resets_at, now),
+                    "window_s": window_s,
+                    "over_pace": over_pace(pct, resets_at, now, window_s),
+                } for label, pct, resets_at, window_s in groups],
+            })
+        fetched_at = usage.fetched_at if usage is not None else None
+        resp = jsonify({
+            "generated_at": now.isoformat(),
+            "fetched_at": fetched_at.isoformat() if fetched_at is not None else None,
+            "sections": sections,
+        })
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     @app.post("/api/usage")
     def push_usage():

@@ -268,7 +268,86 @@ def test_post_usage_without_usage_state_returns_501(alarm_store):
     assert r.status_code == 501
 
 
-# ---------------------------------------------------------------- DESKBAR_PUSH_TOKEN 保護
+# ---------------------------------------------------------------- GET /api/usage
+
+from deskbar.ui.usagewidget import visible_sections
+
+
+def test_get_usage_returns_sections_matching_widget(alarm_store):
+    state = AppState()
+    client = create_app(alarm_store, usage_state=state).test_client()
+
+    assert client.post("/api/usage", json=VALID_PAYLOAD).status_code == 204
+    r = client.get("/api/usage")
+    assert r.status_code == 200
+    assert r.headers["Cache-Control"] == "no-store"
+    d = r.get_json()
+    assert d["fetched_at"] is not None
+    assert d["generated_at"] is not None
+    assert isinstance(d["sections"], list) and d["sections"]
+    first = d["sections"][0]
+    assert first["title"] == "CLAUDE CODE"
+    group = first["groups"][0]
+    assert group["label"] == "5H SESSION"
+    assert group["pct"] == 42.0
+    assert isinstance(group["countdown"], str)
+    assert isinstance(group["over_pace"], bool)
+    # 同一份資料兩條路（HTTP 序列化 vs 直接呼叫純函數）得出相同 title 順序
+    now = datetime.now(TZ)
+    usage = state.snapshot().usage
+    expected = visible_sections(usage, now)
+    assert [s["title"] for s in d["sections"]] == [t for t, _g, _a in expected]
+    # 每組欄位形狀與契約一致
+    for s in d["sections"]:
+        for g in s["groups"]:
+            assert set(g) == {"label", "pct", "resets_at", "countdown",
+                              "window_s", "over_pace"}
+
+
+def test_get_usage_without_data_returns_empty_sections(alarm_store):
+    state = AppState()
+    client = create_app(alarm_store, usage_state=state).test_client()
+    r = client.get("/api/usage")
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["sections"] == []
+    assert d["fetched_at"] is None
+
+
+def test_get_usage_when_usage_state_missing_returns_501(alarm_store):
+    client = create_app(alarm_store).test_client()
+    assert client.get("/api/usage").status_code == 501
+
+
+def test_get_usage_respects_oa_hidden_pref(alarm_store):
+    import threading
+    from deskbar.config import Settings
+
+    state = AppState()
+    settings = Settings()
+    client = create_app(alarm_store, usage_state=state,
+                        settings_provider=settings,
+                        settings_lock=threading.Lock(),
+                        on_save=lambda s: None).test_client()
+
+    payload = dict(VALID_PAYLOAD, oa_accounts=[
+        {"account_id": "acct-a", "name": "kevin.systemcom", "weekly_pct": 100.0,
+         "weekly_resets_at": "2026-09-15T09:25:07+08:00",
+         "fetched_at": datetime.now(TZ).isoformat()},
+        {"account_id": "acct-b", "name": "kevin.dev01", "weekly_pct": 18.0,
+         "weekly_resets_at": "2026-09-17T09:25:07+08:00",
+         "fetched_at": datetime.now(TZ).isoformat()},
+    ])
+    assert client.post("/api/usage", json=payload).status_code == 204
+    assert client.patch("/api/prefs", json={"oa_hidden": ["acct-b"]}).status_code == 200
+
+    r = client.get("/api/usage")
+    assert r.status_code == 200
+    titles = [s["title"] for s in r.get_json()["sections"]]
+    assert "OPENAI · KEVIN.DEV01" not in titles
+    assert "OPENAI · KEVIN.SYSTEMCOM" in titles
+
+
 
 
 def test_post_usage_requires_token_header_when_env_set(alarm_store, monkeypatch):
