@@ -3,6 +3,7 @@ import ServiceManagement
 import SwiftUI
 
 struct UsageMenuView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var client: UsageClient
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var showingURLSettings = false
@@ -33,34 +34,67 @@ struct UsageMenuView: View {
     }
 
     private func sectionView(_ section: UsageSection) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let palette = (client.usage?.theme ?? UsageTheme.defaultTheme).palette(for: colorScheme)
+        let isMuted = section.muted ?? false
+
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Text(section.title)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let age = ageText(ageS: section.ageS) {
+                    .foregroundStyle(isMuted ? palette.muted.color : Color.secondary)
+                if let age = ageText(ageS: section.ageS, stale: section.stale) {
                     Text(age)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(isMuted ? palette.muted.color : Color.secondary)
                 }
             }
 
             ForEach(section.groups) { group in
+                let level = levelFor(group: group)
+                let barColor = usageColor(level: level, palette: palette, isMuted: isMuted)
+                let textColor = isMuted ? palette.muted.color : Color.primary
+
                 HStack(spacing: 8) {
                     Text(group.label)
+                        .foregroundStyle(textColor)
                         .frame(width: 96, alignment: .leading)
-                    ProgressView(value: (group.pct ?? 0) / 100)
-                        .tint(progressTint(overPace: group.overPace))
+                    UsageBar(
+                        pct: group.pct,
+                        pacePct: isMuted ? nil : group.pacePct,
+                        barColor: barColor
+                    )
                     Text(percentText(group.pct))
-                        .foregroundStyle(group.overPace ? .red : .primary)
+                        .foregroundStyle(percentColor(level: level, palette: palette, isMuted: isMuted))
                         .frame(width: 44, alignment: .trailing)
-                    Text(group.countdown ?? "—")
+                    Text(countdownText(group.countdown))
                         .foregroundStyle(.secondary)
                         .frame(width: 64, alignment: .trailing)
                 }
                 .font(.callout)
             }
         }
+    }
+
+    private func usageColor(level: Level, palette: UsageThemePalette, isMuted: Bool) -> Color {
+        if isMuted { return palette.muted.color }
+        switch level {
+        case .normal:
+            return palette.usageBar.color
+        case .warn:
+            return palette.usageWarn.color
+        case .full:
+            return palette.usageFull.color
+        }
+    }
+
+    private func percentColor(level: Level, palette: UsageThemePalette, isMuted: Bool) -> Color {
+        if isMuted { return palette.muted.color }
+        return level == .full ? palette.usageFull.color : .primary
+    }
+
+    private func countdownText(_ countdown: String?) -> String {
+        guard let countdown, !countdown.isEmpty, countdown != "—" else { return "剩 —" }
+        return "剩 \(countdown)"
     }
 
     private var footer: some View {
@@ -135,5 +169,39 @@ struct UsageMenuView: View {
             launchAtLogin = SMAppService.mainApp.status == .enabled
             localError = error.localizedDescription
         }
+    }
+}
+
+private struct UsageBar: View {
+    let pct: Double?
+    let pacePct: Double?
+    let barColor: Color
+
+    var body: some View {
+        GeometryReader { geometry in
+            let fillWidth = geometry.size.width * clampedFraction(pct)
+            let paceX = geometry.size.width * clampedFraction(pacePct)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.18))
+                    .frame(height: 6)
+                Capsule()
+                    .fill(barColor)
+                    .frame(width: fillWidth, height: 6)
+                if pacePct != nil {
+                    Rectangle()
+                        .fill(Color.secondary)
+                        .frame(width: 1, height: 12)
+                        .offset(x: paceX)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .center)
+        }
+        .frame(height: 12)
+    }
+
+    private func clampedFraction(_ value: Double?) -> Double {
+        min(max((value ?? 0) / 100, 0), 1)
     }
 }

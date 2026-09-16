@@ -7,9 +7,15 @@ from flask import Flask, Response, jsonify, request
 
 from deskbar import auth, config
 from deskbar.alarms import _is_valid_date_str
-from deskbar.claudeusage import OaAccount, UsageInfo, fmt_countdown, over_pace
+from deskbar.claudeusage import OaAccount, UsageInfo, fmt_countdown, over_pace, pace_pct
 from deskbar.presence import PresenceState
-from deskbar.ui.usagewidget import visible_sections
+from deskbar.ui.theme import PALETTES
+from deskbar.ui.usagewidget import (
+    STALE_AFTER_S,
+    VERY_STALE_AFTER_S,
+    is_exhausted,
+    visible_sections,
+)
 from deskbar.webapi.context import WebContext
 from deskbar.webapi.validation import (
     _PCT_FIELDS,
@@ -462,9 +468,13 @@ def register_routes(app: Flask, context: WebContext) -> None:
         sections = []
         for title, groups, age_s in visible_sections(usage, now, enabled_sources,
                                                      aliases, hidden):
+            stale = age_s > STALE_AFTER_S
+            muted = age_s > VERY_STALE_AFTER_S
             sections.append({
                 "title": title,
                 "age_s": age_s,
+                "stale": stale,
+                "muted": muted,
                 "groups": [{
                     "label": label,
                     "pct": pct,
@@ -472,13 +482,24 @@ def register_routes(app: Flask, context: WebContext) -> None:
                     "countdown": fmt_countdown(resets_at, now),
                     "window_s": window_s,
                     "over_pace": over_pace(pct, resets_at, now, window_s),
+                    "pace_pct": pace_pct(resets_at, now, window_s),
+                    "level": "full" if is_exhausted(pct)
+                             else ("warn" if over_pace(pct, resets_at, now, window_s)
+                                   or (pct is not None and pct > 85) else "normal"),
+                    "exhausted": bool(is_exhausted(pct)),
                 } for label, pct, resets_at, window_s in groups],
             })
+        top_theme_keys = ("usage_bar", "usage_warn", "usage_full", "muted")
+        usage_theme = {
+            name: {k: list(PALETTES[name][k]) for k in top_theme_keys}
+            for name in ("dark", "light")
+        }
         fetched_at = usage.fetched_at if usage is not None else None
         resp = jsonify({
             "generated_at": now.isoformat(),
             "fetched_at": fetched_at.isoformat() if fetched_at is not None else None,
             "sections": sections,
+            "theme": usage_theme,
         })
         resp.headers["Cache-Control"] = "no-store"
         return resp

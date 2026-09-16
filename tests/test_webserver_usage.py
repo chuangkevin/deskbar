@@ -301,7 +301,46 @@ def test_get_usage_returns_sections_matching_widget(alarm_store):
     for s in d["sections"]:
         for g in s["groups"]:
             assert set(g) == {"label", "pct", "resets_at", "countdown",
-                              "window_s", "over_pace"}
+                              "window_s", "over_pace", "pace_pct",
+                              "level", "exhausted"}
+
+
+def test_get_usage_exposes_pace_level_and_stale(alarm_store):
+    state = AppState()
+    client = create_app(alarm_store, usage_state=state).test_client()
+
+    payload = dict(
+        VALID_PAYLOAD,
+        session_pct=100.0, session_resets_at="2026-07-27T18:00:00Z",
+        weekly_pct=90.0, weekly_resets_at="2026-08-02T00:00:00+00:00",
+        fable_pct=10.0, fable_resets_at="2026-08-02T00:00:00Z",
+    )
+    assert client.post("/api/usage", json=payload).status_code == 204
+    r = client.get("/api/usage")
+    assert r.status_code == 200
+    d = r.get_json()
+
+    by_label = {}
+    for s in d["sections"]:
+        for g in s["groups"]:
+            by_label[g["label"]] = g
+    five_h = by_label["5H SESSION"]
+    weekly = by_label["本週"]
+    fable = by_label["FABLE"]
+    assert five_h["level"] == "full"
+    assert five_h["exhausted"] is True
+    assert weekly["level"] == "warn"
+    assert fable["level"] == "normal"
+    for g in by_label.values():
+        assert "pace_pct" in g
+        assert g["pace_pct"] is None or isinstance(g["pace_pct"], float)
+
+    for s in d["sections"]:
+        assert s["stale"] is False
+        assert s["muted"] is False
+
+    from deskbar.ui import theme
+    assert d["theme"]["dark"]["usage_full"] == list(theme.C["usage_full"])
 
 
 def test_get_usage_without_data_returns_empty_sections(alarm_store):

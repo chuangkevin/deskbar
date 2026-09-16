@@ -22,11 +22,68 @@ struct UsageModelTests {
     }
     """
 
+    let newFieldsJSON = """
+    {
+      "theme": {
+        "dark": {"usage_bar": [217,119,87], "usage_warn": [255,92,0], "usage_full": [255,45,45], "muted": [186,186,186]},
+        "light": {"usage_bar": [184,86,54], "usage_warn": [198,68,0], "usage_full": [200,28,28], "muted": [120,120,120]}
+      },
+      "sections": [
+        {
+          "title": "CLAUDE CODE",
+          "age_s": 33.0,
+          "stale": false,
+          "muted": true,
+          "groups": [
+            {"label": "5H SESSION", "pct": 43.0, "resets_at": "2026-09-16T14:00:00+08:00", "countdown": "1h 36m", "window_s": 18000, "over_pace": false, "pace_pct": 68.0, "level": "normal", "exhausted": false}
+          ]
+        }
+      ]
+    }
+    """
+
     @Test
     func decodesExampleJSON() throws {
         let usage = try decode(exampleJSON)
         #expect(usage.sections.count == 2)
         #expect(usage.sections[0].groups[1].resetsAt == nil)
+    }
+
+    @Test
+    func decodesNewFieldsJSON() throws {
+        let usage = try decode(newFieldsJSON)
+        #expect(usage.theme?.dark?.usageFull == UsageRGB(red: 255, green: 45, blue: 45))
+        #expect(usage.sections[0].stale == false)
+        #expect(usage.sections[0].muted == true)
+        #expect(usage.sections[0].groups[0].pacePct == 68)
+        #expect(usage.sections[0].groups[0].level == .normal)
+        #expect(usage.sections[0].groups[0].isExhausted == false)
+    }
+
+    @Test
+    func decodesOldJSONWithoutNewFields() throws {
+        let usage = try decode(exampleJSON)
+        #expect(usage.theme == nil)
+        #expect(usage.sections[0].stale == nil)
+        #expect(usage.sections[0].muted == nil)
+        #expect(usage.sections[0].groups[0].pacePct == nil)
+        #expect(usage.sections[0].groups[0].level == nil)
+        #expect(usage.sections[0].groups[0].isExhausted == nil)
+    }
+
+    @Test
+    func levelForUsesFallbackRules() {
+        #expect(levelFor(group: group(pct: 100, overPace: false)) == .full)
+        #expect(levelFor(group: group(pct: 99, overPace: true)) == .warn)
+        #expect(levelFor(group: group(pct: 10, overPace: false)) == .normal)
+        #expect(levelFor(group: group(pct: 10, overPace: false, isExhausted: true)) == .full)
+        #expect(levelFor(group: group(pct: 10, overPace: true, level: .normal)) == .normal)
+    }
+
+    @Test
+    func mutedDoesNotAffectLevel() {
+        let section = UsageSection(title: "CLAUDE CODE", ageS: 0, muted: true, groups: [group(pct: 99, overPace: true)])
+        #expect(levelFor(group: section.groups[0]) == .warn)
     }
 
     @Test
@@ -104,5 +161,23 @@ struct UsageModelTests {
         UsageSection(title: title, ageS: 0, groups: [
             UsageGroup(label: "本週", pct: pct, resetsAt: nil, countdown: "—", windowS: 604800, overPace: false),
         ])
+    }
+
+    private func group(
+        pct: Double?,
+        overPace: Bool?,
+        level: Level? = nil,
+        isExhausted: Bool? = nil
+    ) -> UsageGroup {
+        UsageGroup(
+            label: "本週",
+            pct: pct,
+            resetsAt: nil,
+            countdown: "—",
+            windowS: 604800,
+            overPace: overPace,
+            level: level,
+            isExhausted: isExhausted
+        )
     }
 }
