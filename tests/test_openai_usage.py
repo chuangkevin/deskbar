@@ -1,6 +1,7 @@
 """OpenAI Codex responses header 解析與抓取工具測試。"""
 import base64
 import json
+import subprocess
 
 import tools.openai_usage as openai_usage
 from tools.openai_usage import (
@@ -10,6 +11,113 @@ from tools.openai_usage import (
     load_credentials,
     parse_codex_headers,
 )
+
+
+def test_list_credentials_reads_newapi_channels_via_ssh_runner(tmp_path, monkeypatch):
+    access_a = _fake_jwt({
+        "https://api.openai.com/auth": {"chatgpt_account_id": "acc-newapi-a"},
+        "https://api.openai.com/profile": {"email": "kevin.codex@example.com"},
+    })
+    access_b = _fake_jwt({
+        "https://api.openai.com/auth": {"chatgpt_account_id": "acc-newapi-b"},
+        "https://api.openai.com/profile": {"email": "kevin.other@example.com"},
+    })
+    stdout = json.dumps([
+        {"channel_id": 10, "name": "codex-main", "access": access_a},
+        {"channel_id": 11, "name": "codex-backup", "access": access_b},
+    ])
+    calls = []
+
+    class FakeResult:
+        def __init__(self):
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def runner(command, **kwargs):
+        calls.append((command, kwargs))
+        return FakeResult()
+
+    config = _write_json(tmp_path / "openai_accounts.json", [{"format": "newapi-sqlite-ssh"}])
+    cache_path = tmp_path / "newapi_codex_tokens.json"
+    monkeypatch.setattr(openai_usage, "CODEX_AUTH_PATH", tmp_path / "missing-codex.json")
+    monkeypatch.setattr(openai_usage, "OPENCODE_AUTH_PATH", tmp_path / "missing-opencode.json")
+
+    credentials = list_credentials(config_path=config, newapi_runner=runner, newapi_cache_path=cache_path)
+
+    assert len(credentials) == 2
+    assert [item["name"] for item in credentials] == ["kevin.codex", "kevin.other"]
+    assert all(item["source"].startswith("newapi:") for item in credentials)
+    assert calls and calls[0][0][0] == "ssh"
+    assert isinstance(calls[0][1].get("input"), str)
+    cached = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert len(cached) == 2
+    assert "refresh" not in cached[0]
+    assert "refresh" not in cached[1]
+
+
+def test_newapi_credentials_fall_back_to_cache_when_ssh_fails(tmp_path):
+    access = _fake_jwt({
+        "https://api.openai.com/auth": {"chatgpt_account_id": "acc-cached"},
+        "https://api.openai.com/profile": {"email": "cached@example.com"},
+    })
+    cached_rows = [{
+        "access": access,
+        "account_id": "acc-cached",
+        "name": "cached",
+        "source": "newapi:rpi:channel/7",
+    }]
+    cache_path = _write_json(tmp_path / "newapi_codex_tokens.json", cached_rows)
+
+    def runner(command, **kwargs):
+        raise subprocess.TimeoutExpired("ssh", 15)
+
+    from tools.openai_usage import _read_newapi_credentials
+    credentials = _read_newapi_credentials(runner=runner, cache_path=cache_path)
+
+    assert [item["account_id"] for item in credentials] == ["acc-cached"]
+
+
+def test_newapi_remote_script_is_read_only():
+    script = openai_usage._newapi_remote_script("/tmp/one-api.db", 57)
+
+    assert "mode=ro" in script
+    assert "update" not in script.lower()
+    assert "refresh_token" not in script
+
+
+def test_list_credentials_dedupes_newapi_against_local(tmp_path, monkeypatch):
+    access = _fake_jwt({
+        "https://api.openai.com/auth": {"chatgpt_account_id": "acc-dup"},
+        "https://api.openai.com/profile": {"email": "dup@example.com"},
+    })
+    codex = _write_json(tmp_path / "codex.json", {
+        "tokens": {"access_token": access, "account_id": "acc-dup"},
+    })
+    stdout = json.dumps([
+        {"channel_id": 5, "name": "newapi-dup", "access": access},
+    ])
+
+    def runner(command, **kwargs):
+        class FakeResult:
+            returncode = 0
+            stdout = stdout
+            stderr = ""
+        return FakeResult()
+
+    config = _write_json(tmp_path / "openai_accounts.json", [
+        {"auth": str(codex), "format": "codex"},
+        {"format": "newapi-sqlite-ssh"},
+    ])
+
+    credentials = list_credentials(
+        config_path=config,
+        newapi_runner=runner,
+        newapi_cache_path=tmp_path / "newapi_codex_tokens.json",
+    )
+
+    assert len(credentials) == 1
+    assert credentials[0]["source"] == str(codex)
 
 
 REAL_HEADERS = {

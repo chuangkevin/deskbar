@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import subprocess
 from pathlib import Path
 from uuid import uuid4
 
@@ -37,6 +38,12 @@ _CREDENTIAL_FORMATS = {
     "codex": ("access_token", "account_id", "tokens"),
     "opencode": ("access", "accountId", "openai"),
 }
+
+NEWAPI_SSH_HOST = "rpi-minicpm-jump"
+NEWAPI_DB_PATH = "/opt/newapi/data/one-api.db"
+NEWAPI_CHANNEL_TYPE_CODEX = 57
+NEWAPI_SSH_TIMEOUT_SECONDS = 15
+NEWAPI_TOKEN_CACHE_PATH = Path.home() / ".deskbar-agent" / "newapi_codex_tokens.json"
 
 
 def _header_map(headers) -> dict[str, object]:
@@ -168,6 +175,109 @@ def _read_credential(path, auth_format: str) -> dict | None:
     }
 
 
+def _newapi_remote_script(db_path: str, channel_type: int) -> str:
+    """遠端唯讀腳本：從 New API sqlite 取出 Codex channel 的 access token（純讀取，絕不 UPDATE）。"""
+    return f'''
+import json
+import sqlite3
+
+rows = []
+try:
+    conn = sqlite3.connect("file:{db_path}?mode=ro", uri=True)
+    try:
+        cursor = conn.execute(
+            "select id, name, key from channels where type = {channel_type} and status = 1"
+        )
+        for channel_id, name, key in cursor.fetchall():
+            try:
+                data = json.loads(key)
+                tokens = data.get("tokens") if isinstance(data, dict) else None
+                access = tokens.get("access_token") if isinstance(tokens, dict) else None
+                if not isinstance(access, str) or not access:
+                    access = data.get("access_token") if isinstance(data, dict) else None
+                if not isinstance(access, str) or not access:
+                    continue
+                rows.append({{"channel_id": channel_id, "name": name, "access": access}})
+            except (TypeError, ValueError):
+                continue
+    finally:
+        conn.close()
+except Exception:
+    pass
+print(json.dumps(rows))
+'''
+
+
+def _read_newapi_cached(cache_path) -> list[dict]:
+    try:
+        data = json.loads(Path(cache_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _write_newapi_cache(cache_path, credentials: list[dict]) -> None:
+    try:
+        cache = Path(cache_path).expanduser()
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(credentials), encoding="utf-8")
+        cache.chmod(0o600)
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def _read_newapi_credentials(host=NEWAPI_SSH_HOST, db_path=NEWAPI_DB_PATH,
+                            runner=subprocess.run, cache_path=NEWAPI_TOKEN_CACHE_PATH) -> list[dict]:
+    """從 rpi 上的 New API 讀 Codex channel 憑證；失敗時退回上次快取，任何例外不外拋。"""
+    command = [
+        "ssh",
+        "-o", "BatchMode=yes",
+        "-o", f"ConnectTimeout={NEWAPI_SSH_TIMEOUT_SECONDS}",
+        host,
+        "python3", "-",
+    ]
+    try:
+        result = runner(
+            command,
+            input=_newapi_remote_script(db_path, NEWAPI_CHANNEL_TYPE_CODEX),
+            capture_output=True,
+            text=True,
+            timeout=NEWAPI_SSH_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"ssh exit {result.returncode}")
+        rows = json.loads(result.stdout)
+        if not isinstance(rows, list):
+            raise TypeError("newapi output is not a list")
+        credentials = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            access = row.get("access")
+            channel_id = row.get("channel_id")
+            if not isinstance(access, str) or not access:
+                continue
+            account_id = _account_id_from_jwt(access)
+            if not account_id:
+                continue
+            claims = _jwt_payload(access)
+            name = _name_from_jwt_claims(claims, account_id) if claims is not None else account_id[:8]
+            credentials.append({
+                "access": access,
+                "account_id": account_id,
+                "name": name,
+                "source": f"newapi:{host}:channel/{channel_id}",
+            })
+        print(f"[OpenAI] New API 憑證 {len(credentials)} 筆")
+        _write_newapi_cache(cache_path, credentials)
+        return credentials
+    except Exception:
+        cached = _read_newapi_cached(cache_path)
+        print("[OpenAI] New API 憑證抓取失敗，改用快取")
+        return cached
+
+
 def _configured_auth_sources(config_path) -> list[tuple[Path, str]] | None:
     path = OPENAI_ACCOUNTS_CONFIG_PATH if config_path is None else Path(config_path).expanduser()
     try:
@@ -181,6 +291,10 @@ def _configured_auth_sources(config_path) -> list[tuple[Path, str]] | None:
     for entry in entries:
         if not isinstance(entry, dict):
             continue
+        is_newapi = entry.get("newapi") is True or entry.get("format") == "newapi-sqlite-ssh"
+        if is_newapi:
+            sources.append((None, "newapi-sqlite-ssh"))
+            continue
         auth_path = entry.get("auth")
         if not isinstance(auth_path, str) or not auth_path:
             continue
@@ -191,8 +305,14 @@ def _configured_auth_sources(config_path) -> list[tuple[Path, str]] | None:
     return sources
 
 
-def list_credentials(config_path=None) -> list[dict]:
-    """列出所有可用 OpenAI credentials；壞來源只跳過，不中斷整體流程。"""
+def list_credentials(config_path=None, newapi_runner=None, newapi_cache_path=None) -> list[dict]:
+    """列出所有可用 OpenAI credentials；壞來源只跳過，不中斷整體流程。
+
+    設定清單項目支援 `{"auth": "<路徑>", "format": "codex|opencode"}`，
+    以及 `{"format": "newapi-sqlite-ssh"}`（或 `{"newapi": true}`），
+    從 New API 的 sqlite 讀 Codex 憑證。清單順序決定優先：
+    同一個 account_id 先出現的來源贏。
+    """
     sources = _configured_auth_sources(config_path)
     if sources is None:
         sources = [
@@ -203,6 +323,16 @@ def list_credentials(config_path=None) -> list[dict]:
     credentials = []
     seen_account_ids = set()
     for path, auth_format in sources:
+        if auth_format == "newapi-sqlite-ssh":
+            runner = subprocess.run if newapi_runner is None else newapi_runner
+            cache = (NEWAPI_TOKEN_CACHE_PATH if newapi_cache_path is None
+                     else newapi_cache_path)
+            for credential in _read_newapi_credentials(runner=runner, cache_path=cache):
+                if credential["account_id"] in seen_account_ids:
+                    continue
+                seen_account_ids.add(credential["account_id"])
+                credentials.append(credential)
+            continue
         credential = _read_credential(path, auth_format)
         if credential is None:
             continue
