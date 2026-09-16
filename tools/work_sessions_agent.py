@@ -70,6 +70,19 @@ def _mtime(path: Path) -> datetime:
     return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
 
 
+def _recently_modified(path: Path, now: datetime, max_age_seconds: float = MAX_ACTIVE_AGE_SECONDS) -> bool:
+    """Cheap pre-filter: skip transcripts whose mtime is already older than the active window.
+
+    Only ``stat`` runs here; the two file opens in ``_json_lines`` happen for survivors only.
+    A future mtime (clock skew, restored backups) still passes so nothing active is lost.
+    """
+    try:
+        modified = _mtime(path)
+    except OSError:
+        return False
+    return (now - modified).total_seconds() < max_age_seconds * 2
+
+
 @dataclass(frozen=True)
 class LocalSession:
     source: str
@@ -542,11 +555,14 @@ class SessionCollector:
         root = self.home / ".codex" / "sessions"
         if not root.exists():
             return [], [SourceProblem("codex", "unavailable")]
+        now = self.now().astimezone(timezone.utc)
         records: list[LocalSession] = []
         problems: set[str] = set()
         try:
             paths = root.rglob("*.jsonl")
             for path in paths:
+                if not _recently_modified(path, now):
+                    continue
                 try:
                     first, tail_stamp, activity_state = _json_lines(path)
                     meta = {}
@@ -615,6 +631,7 @@ class SessionCollector:
             return [], [SourceProblem("claude", "unavailable")]
         found: dict[str, dict] = {}
         problems: set[str] = set()
+        now = self.now().astimezone(timezone.utc)
 
         def update_candidate(native_id: object, *, title: object = None, custom_title: object = None,
                              cwd: object = None, active_at: datetime | None = None, activity_state: str = "unknown") -> None:
@@ -642,6 +659,8 @@ class SessionCollector:
         if projects.exists():
             try:
                 for path in projects.rglob("*.jsonl"):
+                    if not _recently_modified(path, now):
+                        continue
                     try:
                         first, tail_stamp, activity_state = _json_lines(path)
                         if isinstance(first, dict):
@@ -662,6 +681,8 @@ class SessionCollector:
         if app_sessions.exists():
             try:
                 for path in app_sessions.rglob("*.json"):
+                    if not _recently_modified(path, now):
+                        continue
                     try:
                         value = json.loads(path.read_text(encoding="utf-8", errors="replace"))
                         if isinstance(value, dict):
@@ -686,6 +707,8 @@ class SessionCollector:
         if dispatch_root.exists():
             try:
                 for path in dispatch_root.rglob("local_*.json"):
+                    if not _recently_modified(path, now):
+                        continue
                     try:
                         value = json.loads(path.read_text(encoding="utf-8", errors="replace"))
                         if not isinstance(value, dict) or value.get("sessionType") != "dispatch_child":

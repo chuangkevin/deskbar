@@ -203,6 +203,32 @@ def test_dispatch_task_progress_formatting(tmp_path):
     assert state == "waiting"
 
 
+def test_collector_skips_stale_transcripts_without_opening_them(tmp_path, monkeypatch):
+    fresh = NOW - timedelta(minutes=1)
+    stale = NOW - timedelta(hours=3)
+    fresh_path = tmp_path / ".codex/sessions/2026/08/11/fresh.jsonl"
+    stale_path = tmp_path / ".codex/sessions/2026/08/11/stale.jsonl"
+    _write_jsonl(fresh_path, [
+        {"type": "session_meta", "payload": {"session_id": "fresh-native-id", "cwd": "/private/deskbar"}},
+        {"timestamp": fresh.isoformat()},
+    ], fresh)
+    _write_jsonl(stale_path, [
+        {"type": "session_meta", "payload": {"session_id": "stale-native-id", "cwd": "/private/deskbar"}},
+        {"timestamp": stale.isoformat()},
+    ], stale)
+
+    real_json_lines = session_agent._json_lines
+    opened = []
+    monkeypatch.setattr(session_agent, "_json_lines",
+                        lambda path: opened.append(path) or real_json_lines(path))
+
+    payload = SessionCollector(home=tmp_path, now=lambda: NOW).payload()
+
+    assert opened == [fresh_path]
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["project_label"] == "deskbar"
+
+
 def test_missing_source_is_reported_without_crashing(tmp_path):
     payload = SessionCollector(home=tmp_path, now=lambda: NOW).payload()
     assert payload["items"] == []
