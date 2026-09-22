@@ -414,3 +414,11 @@ def test_post_usage_no_token_check_when_env_unset(alarm_store, monkeypatch):
     client = create_app(alarm_store, usage_state=state).test_client()
     r = client.post("/api/usage", json=VALID_PAYLOAD)
     assert r.status_code == 204
+
+
+def test_usage_page_is_served(alarm_store):
+    client = create_app(alarm_store, usage_state=AppState()).test_client()
+    r = client.get("/usage")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "/api/usage" in body and "viewport" in body

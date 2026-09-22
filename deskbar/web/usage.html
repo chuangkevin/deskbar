@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>deskbar 用量</title>
+<style>
+*{box-sizing:border-box} html,body{max-width:100%;overflow-x:hidden}
+body{font-family:system-ui,-apple-system,"PingFang TC",sans-serif;background:#111;color:#eee;margin:0;padding:16px}
+header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+h1{font-size:20px;font-weight:600;margin:0}
+.meta{color:#9a9a9a;font-size:13px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+a.pill,button.pill{display:inline-flex;align-items:center;min-height:40px;padding:0 14px;border-radius:20px;background:#2a2a2a;color:#eee;text-decoration:none;font-size:14px;border:1px solid #444;cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.card{background:#1c1c1c;border:1px solid #333;border-radius:10px;padding:12px 14px;min-width:0}
+.card.muted{opacity:.55}
+.title{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}
+.title b{font-size:13px;font-weight:600;letter-spacing:.04em;color:#bbb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.title .right{font-size:12px;color:#9a9a9a;white-space:nowrap;flex:0 0 auto}
+.title .right.soon{color:#ff5c00}
+.group{margin:8px 0 0}
+.line{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:14px}
+.line .pct{font-weight:700;font-variant-numeric:tabular-nums}
+.line .left{color:#9a9a9a;font-size:12px;margin-left:auto}
+.bar{position:relative;height:9px;border-radius:5px;background:#333;margin-top:5px;overflow:visible}
+.bar>i{position:absolute;left:0;top:0;bottom:0;border-radius:5px;background:#d97757}
+.bar>i.warn{background:#ff5c00}.bar>i.full{background:#ff2d2d}.bar>i.muted{background:#777}
+.bar>s{position:absolute;top:-3px;bottom:-3px;width:1px;background:#d4d4d4}
+.empty{color:#9a9a9a;padding:40px 0;text-align:center}
+@media(max-width:767px){body{padding:12px}.grid{grid-template-columns:1fr}}
+@media(prefers-color-scheme:light){body{background:#f2f0eb;color:#1a1a1a}.card{background:#fff;border-color:#c6c2ba}.bar{background:#d8d4cc}.title b{color:#555}.meta,.line .left,.title .right{color:#6a6864}.bar>s{background:#464646}a.pill,button.pill{background:#fff;color:#1a1a1a;border-color:#c6c2ba}}
+</style></head><body>
+<header>
+ <div><h1>訂閱用量</h1><div class="meta" id="meta">載入中…</div></div>
+ <div class="actions"><button class="pill" onclick="load()">重新整理</button><a class="pill" href="/">設定</a></div>
+</header>
+<div class="grid" id="grid"></div>
+<div class="empty" id="empty" hidden>還沒有資料——Mac 的推送 agent 一分鐘內會送第一筆</div>
+<script>
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function billingText(s){
+ if(!s.billing_at)return "";
+ const [y,m,d]=s.billing_at.split("-").map(Number);
+ const days=s.billing_days;
+ return `付款 ${m}/${d}`+(days!=null?`（${days<=0?"今天":days+" 天後"}）`:"");
+}
+function render(d){
+ const grid=document.getElementById("grid"),empty=document.getElementById("empty");
+ const secs=Array.isArray(d.sections)?d.sections:[];
+ empty.hidden=secs.length>0;
+ grid.innerHTML=secs.map(s=>{
+  const soon=s.billing_days!=null&&s.billing_days<=3;
+  const stale=s.stale?`<span class="right">(${Math.round((s.age_s||0)/60)} 分前)</span>`:"";
+  return `<div class="card ${s.muted?"muted":""}">
+   <div class="title"><b title="${esc(s.title)}">${esc(s.title)}</b>${stale}<span class="right ${soon?"soon":""}">${esc(billingText(s))}</span></div>
+   ${(s.groups||[]).map(g=>{
+    const pct=g.pct==null?null:Math.max(0,Math.min(100,g.pct));
+    const cls=s.muted?"muted":(g.level==="full"?"full":g.level==="warn"?"warn":"");
+    return `<div class="group"><div class="line"><span>${esc(g.label)}</span>
+     <span class="left">剩 ${esc(g.countdown||"—")}</span><span class="pct">${pct==null?"—":Math.round(g.pct)+"%"}</span></div>
+     <div class="bar"><i class="${cls}" style="width:${pct==null?0:pct}%"></i>${g.pace_pct!=null?`<s style="left:${Math.max(0,Math.min(100,g.pace_pct))}%"></s>`:""}</div></div>`;
+   }).join("")}
+  </div>`;
+ }).join("");
+ // generated_at 是 Pi 的本地時間（+08:00），直接取字串裡的 HH:MM，不經瀏覽器時區換算
+ const hhmm=(d.generated_at||"").slice(11,16)||new Date().toTimeString().slice(0,5);
+ document.getElementById("meta").textContent=`更新於 ${hhmm}，每 60 秒自動重新整理`;
+}
+async function load(){
+ try{const r=await fetch("/api/usage",{cache:"no-store"});if(!r.ok)throw new Error(r.status);render(await r.json());}
+ catch(e){document.getElementById("meta").textContent="讀不到 /api/usage："+e;}
+}
+load();setInterval(load,60000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)load();});
+</script></body></html>

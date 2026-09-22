@@ -48,6 +48,11 @@ def register_routes(app: Flask, context: WebContext) -> None:
     def index():
         return _WEB_DIR.joinpath("index.html").read_text(encoding="utf-8")
 
+    @app.get("/usage")
+    def usage_page():
+        """手機／電腦看用量的網頁：吃 /api/usage，跟 Pi 右欄與 macbar 同一份資料。"""
+        return _WEB_DIR.joinpath("usage.html").read_text(encoding="utf-8")
+
     @app.get("/api/alarms")
     def list_alarms():
         return jsonify([asdict(a) for a in context.store.list()])
