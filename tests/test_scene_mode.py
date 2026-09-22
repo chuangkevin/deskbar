@@ -167,3 +167,16 @@ def test_force_switch_yields_to_sleep_and_imminent_takeover() -> None:
         screen_asleep=True,
         mono=200.0,
     ) is None
+
+
+def test_manual_cycle_skips_scene_when_mode_off() -> None:
+    controller = SceneModeController()
+    seen = []
+    curr = "calendar"
+    for _ in range(4):
+        curr = controller.manual_cycle(curr, scene_mode="off").center_view
+        seen.append(curr)
+    assert "scene" not in seen
+    assert seen == ["linear", "notes", "sessions", "calendar"]
+    # 中欄原本停在場景（舊設定）也能走出來
+    assert controller.manual_cycle("scene", scene_mode="off").center_view == "linear"

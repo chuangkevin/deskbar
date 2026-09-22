@@ -195,7 +195,7 @@ class Settings:
     sleep_end_min: int = 390            # 睡眠結束 06:30
     linear_api_key: str = ""            # Linear 個人 API Key（只存裝置，不進 repo/log）
     center_view: str = "calendar"       # 中欄顯示：calendar｜linear（待辦）｜notes（便條）｜sessions（工作）｜scene（場景）
-    scene_mode: str = "auto"            # 場景進入方式：auto（忙閒排程）｜manual｜force
+    scene_mode: str = "auto"            # 場景進入方式：auto（忙閒排程）｜manual｜force｜off（永遠不進場景，切換鈕也跳過）
     scenes_enabled: tuple = DEFAULT_SCENES  # 要輪播的場景（網頁勾選）
     usage_sources: tuple[str, ...] = VALID_USAGE_SOURCES  # 右欄要顯示的 AI 用量來源
     pet_enabled: bool = True            # 小喜喜桌面寵物（全域 overlay，非場景）
@@ -313,7 +313,7 @@ def load_settings() -> Settings:
         if center_view not in ("calendar", "linear", "notes", "sessions", "scene"):
             center_view = "calendar"
         scene_mode = raw.get("scene_mode", "auto")
-        if scene_mode not in ("auto", "manual", "force"):
+        if scene_mode not in ("auto", "manual", "force", "off"):
             scene_mode = "auto"
         se_raw = raw.get("scenes_enabled", list(DEFAULT_SCENES))
         scenes_enabled = tuple(k for k in SCENE_KEYS

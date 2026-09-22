@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 
 CENTER_VIEWS = ("calendar", "linear", "notes", "sessions", "scene")
+CENTER_VIEWS_NO_SCENE = tuple(v for v in CENTER_VIEWS if v != "scene")
 DASHBOARD_VIEW = "dashboard"
 CALENDAR_VIEW = "calendar"
 SCENE_VIEW = "scene"
@@ -39,19 +40,21 @@ class SceneModeController:
     flow_last_target: str | None = None
     force_scene_at: float = 0.0
 
-    def manual_cycle(self, current_center: str) -> CenterSwitch:
+    def manual_cycle(self, current_center: str, scene_mode: str = "auto") -> CenterSwitch:
         """User manually cycles the center view.
 
         Manual intent takes ownership of the current imminent-event wave: cancel
         any pending restore and keep calendar auto-focus from immediately
-        stealing the view back.
+        stealing the view back. ``scene_mode == "off"`` 時循環裡沒有場景
+        （2026-09-22 Kevin：要能「強制不開」）。
         """
 
-        idx = CENTER_VIEWS.index(current_center) if current_center in CENTER_VIEWS else 0
+        views = CENTER_VIEWS_NO_SCENE if scene_mode == "off" else CENTER_VIEWS
+        idx = views.index(current_center) if current_center in views else 0
         self.auto_center_prev = None
         self.auto_center_hold = True
         return CenterSwitch(
-            center_view=CENTER_VIEWS[(idx + 1) % len(CENTER_VIEWS)],
+            center_view=views[(idx + 1) % len(views)],
             reset_center_pages=True,
             persist=True,
             clear_card_overlay=True,

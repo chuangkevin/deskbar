@@ -129,6 +129,8 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     center = getattr(settings, "center_view", "calendar")
     next_label = {"calendar": "待辦", "linear": "便條", "notes": "工作",
                   "sessions": "場景", "scene": "行事曆"}
+    if getattr(settings, "scene_mode", "auto") == "off":
+        next_label["sessions"] = "行事曆"   # 關閉場景：工作台之後直接回行事曆
     active_cnt = len(snap.work_sessions.active_items(now)) if (snap and hasattr(snap, "work_sessions") and snap.work_sessions) else 0
     unread_res_cnt = snap.work_sessions.unread_result_count(now) if (snap and hasattr(snap, "work_sessions") and snap.work_sessions) else 0
     unread_tot_cnt = snap.work_sessions.unread_count(now) if (snap and hasattr(snap, "work_sessions") and snap.work_sessions) else 0

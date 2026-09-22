@@ -611,7 +611,8 @@ class App:
                     elif a == "toggle_center":
                         self._start_transition()
                         cur = getattr(self.settings, "center_view", "calendar")
-                        switch = self.scene_controller.manual_cycle(cur)
+                        switch = self.scene_controller.manual_cycle(
+                            cur, getattr(self.settings, "scene_mode", "auto"))
                         self.settings.center_view = switch.center_view
                         if switch.center_view == "sessions":
                             self.state.mark_work_sessions_seen()
@@ -1820,6 +1821,11 @@ class App:
                 self._check_flow_center(mono)
             elif mode == "force":
                 self._check_force_scene(mono)
+            elif mode == "off" and getattr(self.settings, "center_view", "") == "scene":
+                # 關閉模式：不管誰把中欄留在場景（舊設定、force 時期），一律拉回行事曆
+                self.settings.center_view = "calendar"
+                self.on_save(self.settings)
+                self._render()
             if self._screen_asleep():
                 # 深夜熄屏：不燒氛圍幀、輪詢降到 2fps（整夜 15fps 畫給黑幕看
                 # 純屬浪費）；觸摸喚醒那一圈 had_input=True 立即提速。

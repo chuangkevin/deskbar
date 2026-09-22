@@ -292,7 +292,7 @@ async function loadPrefs(){
    <label for="p_pet">小喜喜桌面寵物（可直接在螢幕上拖曳）</label></div>
   <div class="cal-row" style="margin-top:10px"><b>氛圍場景</b>
    <select id="p_sm">${[["auto","自動（忙時進場景、閒時回便條）"],["manual","手動（只有自己切）"],
-    ["force","強制（常駐場景，點畫面看 1 分鐘行事曆）"]].map(([v,n])=>
+    ["force","強制（常駐場景，點畫面看 1 分鐘行事曆）"],["off","關閉（永遠不進場景，切換鈕也跳過）"]].map(([v,n])=>
     `<option value="${v}" ${v===p.scene_mode?"selected":""}>${n}</option>`).join("")}</select></div>
   <div class="cal-row scene-options">
    ${SCENE_NAMES.map(([k,n])=>`<label>
