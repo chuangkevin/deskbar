@@ -185,10 +185,12 @@ rows = []
 try:
     conn = sqlite3.connect("file:{db_path}?mode=ro", uri=True)
     try:
+        # 不看 status：通道被手動停用（額度用完先關掉）時額度還是要顯示在 deskbar 上，
+        # 只是那條路不能用。2026-09-22 Kevin：「能不能出現在 deskbar？但不要可以用」。
         cursor = conn.execute(
-            "select id, name, key from channels where type = {channel_type} and status = 1"
+            "select id, name, key, status from channels where type = {channel_type}"
         )
-        for channel_id, name, key in cursor.fetchall():
+        for channel_id, name, key, status in cursor.fetchall():
             try:
                 data = json.loads(key)
                 tokens = data.get("tokens") if isinstance(data, dict) else None
@@ -197,7 +199,7 @@ try:
                     access = data.get("access_token") if isinstance(data, dict) else None
                 if not isinstance(access, str) or not access:
                     continue
-                rows.append({{"channel_id": channel_id, "name": name, "access": access}})
+                rows.append({{"channel_id": channel_id, "name": name, "access": access, "status": status}})
             except (TypeError, ValueError):
                 continue
     finally:
@@ -268,6 +270,9 @@ def _read_newapi_credentials(host=NEWAPI_SSH_HOST, db_path=NEWAPI_DB_PATH,
                 "account_id": account_id,
                 "name": name,
                 "source": f"newapi:{host}:channel/{channel_id}",
+                # New API channel status: 1 = enabled, 2 = manually disabled, 3 = auto-disabled.
+                # Kept so the bar can still show the quota of a channel that is switched off.
+                "channel_enabled": row.get("status", 1) == 1,
             })
         print(f"[OpenAI] New API 憑證 {len(credentials)} 筆")
         _write_newapi_cache(cache_path, credentials)

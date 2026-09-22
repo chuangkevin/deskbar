@@ -442,3 +442,36 @@ def test_fetch_usage_200_keeps_header_parse_behavior(tmp_path):
 
 def test_fetch_usage_missing_auth_file_returns_none(tmp_path):
     assert fetch_usage(auth_path=tmp_path / "missing-auth.json", http=object()) is None
+
+
+def test_newapi_reader_keeps_disabled_channels_and_flags_them(tmp_path):
+    """2026-09-22 Kevin：通道停用（額度用完）時 deskbar 還是要顯示額度，只是不能用。"""
+    import json as _json
+    from tools import openai_usage as ou
+
+    script = ou._newapi_remote_script("/x.db", 57)
+    assert "status = 1" not in script, "must not filter disabled channels out"
+    assert "select id, name, key, status from channels" in script
+
+    def fake_jwt(claims):
+        import base64
+        seg = lambda o: base64.urlsafe_b64encode(_json.dumps(o).encode()).decode().rstrip("=")
+        return f"{seg({'alg':'none'})}.{seg(claims)}.sig"
+
+    rows = [
+        {"channel_id": 11, "name": "acct3", "status": 2,
+         "access": fake_jwt({"https://api.openai.com/auth": {"chatgpt_account_id": "acc-3"}, "https://api.openai.com/profile": {"email": "c@x"}})},
+        {"channel_id": 13, "name": "acct2", "status": 1,
+         "access": fake_jwt({"https://api.openai.com/auth": {"chatgpt_account_id": "acc-2"}, "https://api.openai.com/profile": {"email": "i@x"}})},
+    ]
+
+    class Done:
+        returncode = 0
+        stdout = _json.dumps(rows)
+        stderr = ""
+
+    creds = ou._read_newapi_credentials(runner=lambda *a, **k: Done(), cache_path=tmp_path / "cache.json")
+    by_id = {c["account_id"]: c for c in creds}
+    assert set(by_id) == {"acc-3", "acc-2"}, "disabled channel still listed"
+    assert by_id["acc-3"]["channel_enabled"] is False
+    assert by_id["acc-2"]["channel_enabled"] is True
