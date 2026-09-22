@@ -287,8 +287,8 @@ def register_routes(app: Flask, context: WebContext) -> None:
                     return jsonify({"error": f"{k} must be string"}), 400
                 staged[k] = v.strip()
             elif k == "scene_mode":
-                if v not in ("auto", "manual", "force"):
-                    return jsonify({"error": "scene_mode must be auto/manual/force"}), 400
+                if v not in ("auto", "manual", "force", "off"):
+                    return jsonify({"error": "scene_mode must be auto/manual/force/off"}), 400
                 staged[k] = v
             elif k == "presence_source":
                 if v not in ("bluetooth", "push", "ble"):
