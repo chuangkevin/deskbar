@@ -40,7 +40,7 @@ def test_get_prefs_returns_all_fields(client):
     assert d["presence_interval_sec"] == 45 and d["sync_interval_min"] == 5
     assert d["presence_source"] == "bluetooth"
     assert d["presence_push_ttl_sec"] == 900
-    assert d["usage_sources"] == ["claude", "antigravity", "openai", "cursor", "opencode"]
+    assert d["usage_sources"] == ["claude", "antigravity", "openai", "cursor", "commandcode"]
     assert d["pet_enabled"] is True
 
 
@@ -134,3 +134,14 @@ def test_prefs_unavailable_without_settings_wiring(tmp_path, monkeypatch):
     c = app.test_client()
     assert c.get("/api/prefs").status_code == 501
     assert c.patch("/api/prefs", json={"brightness_day": 50}).status_code == 501
+
+
+def test_billing_dates_patch_get_and_validation(client):
+    r = client.patch("/api/prefs", json={"billing_dates": {"claude": "2026-09-05", "openai:abc": "2026-09-18"}})
+    assert r.status_code == 200
+    assert client.get("/api/prefs").get_json()["billing_dates"] == {"claude": "2026-09-05", "openai:abc": "2026-09-18"}
+    assert client.patch("/api/prefs", json={"billing_dates": {"claude": ""}}).status_code == 200
+    assert client.get("/api/prefs").get_json()["billing_dates"] == {"openai:abc": "2026-09-18"}
+    assert client.patch("/api/prefs", json={"billing_dates": {"nope": "2026-09-05"}}).status_code == 400
+    assert client.patch("/api/prefs", json={"billing_dates": {"claude": "9/5"}}).status_code == 400
+    assert client.patch("/api/prefs", json={"billing_dates": ["x"]}).status_code == 400

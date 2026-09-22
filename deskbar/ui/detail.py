@@ -2,12 +2,14 @@ import pygame
 
 from deskbar.layout import Rect
 from deskbar.ui import Hit
-from deskbar.ui import theme
+from deskbar.ui import dashboard, theme
 
 
-# 三欄版面（中欄 TL_X0=420..TL_X1=1520）：卡片必須完全落在中欄內，不能蓋到左欄
-# （PANEL_W=400）也不能溢進右欄的 usage 油表；左右各留 100px，不頂邊。
-CARD_X, CARD_Y, CARD_W, CARD_H = 520, 60, 900, 360
+# 三欄版面（中欄 TL_X0..TL_X1，見 dashboard 常數）：卡片必須完全落在中欄內，
+# 不能蓋到左欄（PANEL_W）也不能溢進右欄的 usage 油表；左右各留 100px，不頂邊。
+CARD_X = dashboard.TL_X0 + 100
+CARD_W = dashboard.TL_X1 - dashboard.TL_X0 - 200
+CARD_Y, CARD_H = 60, 360
 TEXT_X = CARD_X + 40            # 卡片內文字左邊距，固定 40px
 TEXT_MAX_W = CARD_W - 80        # 內文可用寬度：左右各留 40px
 

@@ -43,15 +43,19 @@ except ImportError:
             fetch_cursor_usage = None
 
 try:
-    from tools.opencode_go_usage import fetch_usage as fetch_opencode_go_usage
+    from tools.commandcode_usage import fetch_usage as fetch_commandcode_usage
+    from tools.commandcode_usage import fetch_accounts as fetch_commandcode_accounts
 except ImportError:
     try:
-        from opencode_go_usage import fetch_usage as fetch_opencode_go_usage
+        from commandcode_usage import fetch_usage as fetch_commandcode_usage
+        from commandcode_usage import fetch_accounts as fetch_commandcode_accounts
     except ImportError:
         try:
-            from .opencode_go_usage import fetch_usage as fetch_opencode_go_usage
+            from .commandcode_usage import fetch_usage as fetch_commandcode_usage
+            from .commandcode_usage import fetch_accounts as fetch_commandcode_accounts
         except ImportError:
-            fetch_opencode_go_usage = None
+            fetch_commandcode_usage = None
+            fetch_commandcode_accounts = None
 
 try:
     from tools.openai_usage import fetch_all_usage as fetch_openai_usage
@@ -101,16 +105,16 @@ DEFAULT_AG_INTERVAL = 300.0
 # 順便讓 usagewidget 的「(N 分前)」不再常駐（那個門檻是 300 秒）。
 DEFAULT_OA_INTERVAL = 300.0
 DEFAULT_CU_INTERVAL = 300.0
-DEFAULT_OG_INTERVAL = 300.0
+DEFAULT_CC_INTERVAL = 300.0
 DEFAULT_PREFS_INTERVAL = 60.0
 DEFAULT_DESKBAR_USAGE_URL = "https://desk.sisihome.org/api/usage"
 OA_MIN_INTERVAL = 120.0
 CU_MIN_INTERVAL = 120.0
-OG_MIN_INTERVAL = 120.0
+CC_MIN_INTERVAL = 120.0
 INITIAL_RATE_LIMIT_BACKOFF = 900.0
 MAX_RATE_LIMIT_BACKOFF = 3600.0
 # 與 deskbar.config.VALID_USAGE_SOURCES 對齊；publisher 刻意不 import deskbar。
-VALID_USAGE_SOURCES = ("claude", "antigravity", "openai", "cursor", "opencode")
+VALID_USAGE_SOURCES = ("claude", "antigravity", "openai", "cursor", "commandcode")
 # /api/prefs 讀不到且無本機確認過的清單時，不要預設打開 Claude（避免已退訂仍打 Anthropic）。
 SAFE_BOOTSTRAP_USAGE_SOURCES = ("antigravity", "openai")
 DEFAULT_USAGE_SOURCES = SAFE_BOOTSTRAP_USAGE_SOURCES
@@ -133,6 +137,7 @@ _CU_LAST_REFRESH_MONO: float | None = None
 _CU_LATEST: dict = {
     "cu_pct": None,
     "cu_resets_at": None,
+    "cu_billing_at": None,
 }
 
 
@@ -153,7 +158,7 @@ def cu_payload_fields(parsed: dict | None, now: datetime) -> dict:
     resets_at = parsed.get("resets_at")
     if not isinstance(resets_at, str) or not resets_at:
         resets_at = None
-    return {"cu_pct": pct, "cu_resets_at": resets_at}
+    return {"cu_pct": pct, "cu_resets_at": resets_at, "cu_billing_at": resets_at}
 
 
 def get_cursor_fields() -> dict:
@@ -169,6 +174,7 @@ def warm_cursor_from_cache(cached: dict | None) -> None:
     fields = {
         "cu_pct": cached.get("cu_pct"),
         "cu_resets_at": cached.get("cu_resets_at"),
+        "cu_billing_at": cached.get("cu_billing_at"),
     }
     if "cu_fetched_at" in cached:
         fields["cu_fetched_at"] = cached.get("cu_fetched_at")
@@ -226,21 +232,23 @@ def refresh_cursor_async(min_interval: float = CU_MIN_INTERVAL) -> threading.Thr
     return thread
 
 
-_OG_LOCK = threading.Lock()
-_OG_FETCHING_LOCK = threading.Lock()
-_OG_FETCHING = False
-_OG_LAST_REFRESH_MONO: float | None = None
-_OG_LATEST: dict = {
-    "og_5h_pct": None,
-    "og_5h_resets_at": None,
-    "og_weekly_pct": None,
-    "og_weekly_resets_at": None,
+_CC_LOCK = threading.Lock()
+_CC_FETCHING_LOCK = threading.Lock()
+_CC_FETCHING = False
+_CC_LAST_REFRESH_MONO: float | None = None
+_CC_LATEST: dict = {
+    "cc_accounts": [],
+    "cc_5h_pct": None,
+    "cc_5h_resets_at": None,
+    "cc_weekly_pct": None,
+    "cc_weekly_resets_at": None,
+    "cc_billing_at": None,
 }
 
 
-def og_payload_fields(parsed: dict | None, now: datetime) -> dict:
-    """純函數：把 opencode_go_usage 的解析結果換算成 deskbar payload 欄位。
-    rolling 視窗實測是 5 小時，對應 og_5h_*；monthly 目前不上畫面。"""
+def cc_payload_fields(parsed: dict | None, now: datetime) -> dict:
+    """純函數：把 commandcode_usage 的解析結果換算成 deskbar payload 欄位。
+    resets_at 是 timezone-aware datetime（epoch 毫秒轉換而來），轉 ISO 字串上線。"""
     if not isinstance(parsed, dict):
         parsed = {}
 
@@ -252,80 +260,143 @@ def og_payload_fields(parsed: dict | None, now: datetime) -> dict:
             value = float(raw)
         except (TypeError, ValueError):
             return None
-        return value if 0 <= value <= 100 else None
+        return value
 
     def resets(key):
         raw = parsed.get(key)
+        if raw is not None and hasattr(raw, "isoformat"):
+            try:
+                return raw.isoformat()
+            except (TypeError, ValueError, OSError):
+                return None
         return raw if isinstance(raw, str) and raw else None
 
     return {
-        "og_5h_pct": pct("rolling_pct"),
-        "og_5h_resets_at": resets("rolling_resets_at"),
-        "og_weekly_pct": pct("weekly_pct"),
-        "og_weekly_resets_at": resets("weekly_resets_at"),
+        "cc_5h_pct": pct("five_hour_pct"),
+        "cc_5h_resets_at": resets("five_hour_resets_at"),
+        "cc_weekly_pct": pct("weekly_pct"),
+        "cc_weekly_resets_at": resets("weekly_resets_at"),
+        "cc_billing_at": resets("period_end"),
     }
 
 
-def get_opencode_go_fields() -> dict:
-    with _OG_LOCK:
-        return dict(_OG_LATEST)
+def cc_accounts_payload_fields(parsed_accounts, now: datetime) -> dict:
+    """多帳號版：每個帳號一筆 ``cc_accounts``；舊的單帳號 ``cc_*`` 欄位由第一個帳號填
+    （Pi 端還沒更新時仍畫得出一區）。"""
+    accounts = []
+    fetched_at = now.isoformat()
+    for parsed in parsed_accounts or []:
+        if not isinstance(parsed, dict):
+            continue
+        single = cc_payload_fields(parsed, now)
+        account_id = parsed.get("account_id")
+        if not isinstance(account_id, str) or not account_id.strip():
+            continue
+        accounts.append({
+            "account_id": account_id,
+            "name": parsed.get("name") or account_id[:8],
+            "five_hour_pct": single.get("cc_5h_pct"),
+            "five_hour_resets_at": single.get("cc_5h_resets_at"),
+            "weekly_pct": single.get("cc_weekly_pct"),
+            "weekly_resets_at": single.get("cc_weekly_resets_at"),
+            "billing_at": single.get("cc_billing_at"),
+            "fetched_at": fetched_at,
+        })
+    fields = {"cc_accounts": accounts}
+    fields.update(_cc_legacy_fields_from_accounts(accounts))
+    return fields
 
 
-def warm_opencode_go_from_cache(cached: dict | None) -> None:
+def _cc_legacy_fields_from_accounts(accounts) -> dict:
+    first = accounts[0] if accounts else {}
+    return {
+        "cc_5h_pct": first.get("five_hour_pct"),
+        "cc_5h_resets_at": first.get("five_hour_resets_at"),
+        "cc_weekly_pct": first.get("weekly_pct"),
+        "cc_weekly_resets_at": first.get("weekly_resets_at"),
+        "cc_billing_at": first.get("billing_at"),
+    }
+
+
+def _merge_cc_accounts(existing_accounts, fresh_accounts) -> list:
+    """快取合併：這次沒抓到的帳號保留上一次的值，抓到的整筆覆蓋。"""
+    accounts = [dict(a) for a in existing_accounts or [] if isinstance(a, dict)]
+    index = {a.get("account_id"): i for i, a in enumerate(accounts) if a.get("account_id") is not None}
+    for fresh in fresh_accounts or []:
+        if not isinstance(fresh, dict):
+            continue
+        account_id = fresh.get("account_id")
+        if account_id in index:
+            accounts[index[account_id]] = dict(fresh)
+        else:
+            index[account_id] = len(accounts)
+            accounts.append(dict(fresh))
+    return accounts
+
+
+def get_commandcode_fields() -> dict:
+    with _CC_LOCK:
+        return dict(_CC_LATEST)
+
+
+def warm_commandcode_from_cache(cached: dict | None) -> None:
     if not isinstance(cached, dict):
         return
-    fields = {key: cached.get(key) for key in _OG_LATEST}
-    if "og_fetched_at" in cached:
-        fields["og_fetched_at"] = cached.get("og_fetched_at")
-    with _OG_LOCK:
-        _OG_LATEST.update(fields)
+    fields = {key: cached.get(key) for key in _CC_LATEST}
+    if "cc_fetched_at" in cached:
+        fields["cc_fetched_at"] = cached.get("cc_fetched_at")
+    with _CC_LOCK:
+        _CC_LATEST.update(fields)
 
 
-def _og_worker() -> None:
-    global _OG_FETCHING
+def _cc_worker() -> None:
+    global _CC_FETCHING
     try:
-        if fetch_opencode_go_usage is None:
+        if fetch_commandcode_accounts is None:
             return
-        parsed = fetch_opencode_go_usage()
-        if parsed is None:
-            print("[OpenCode Go] 抓取失敗，保留上一次用量資料")
+        parsed_accounts = fetch_commandcode_accounts()
+        if not parsed_accounts:
+            print("[CommandCode] 抓取失敗，保留上一次用量資料")
             return
         now = datetime.now(timezone.utc).astimezone()
-        fields = og_payload_fields(parsed, now)
-        if fields.get("og_5h_pct") is None and fields.get("og_weekly_pct") is None:
-            print("[OpenCode Go] 解析結果全空，保留上一次用量資料")
+        fields = cc_accounts_payload_fields(parsed_accounts, now)
+        if not fields.get("cc_accounts"):
+            print("[CommandCode] 解析結果全空，保留上一次用量資料")
             return
-        fields["og_fetched_at"] = now.isoformat()
-        with _OG_LOCK:
-            _OG_LATEST.update(fields)
+        fields["cc_fetched_at"] = now.isoformat()
+        with _CC_LOCK:
+            merged = _merge_cc_accounts(_CC_LATEST.get("cc_accounts"), fields["cc_accounts"])
+            fields["cc_accounts"] = merged
+            fields.update(_cc_legacy_fields_from_accounts(merged))
+            _CC_LATEST.update(fields)
         cached = load_cache() or {}
         cached.update(fields)
         try:
             save_cache(cached)
         except OSError as error:
-            print(f"[OpenCode Go] 快取寫入失敗：{error}")
+            print(f"[CommandCode] 快取寫入失敗：{error}")
     except Exception as error:
-        print(f"[OpenCode Go] 抓取時發生例外：{type(error).__name__}")
+        print(f"[CommandCode] 抓取時發生例外：{type(error).__name__}")
     finally:
-        with _OG_FETCHING_LOCK:
-            global _OG_FETCHING
-            _OG_FETCHING = False
+        with _CC_FETCHING_LOCK:
+            global _CC_FETCHING
+            _CC_FETCHING = False
 
 
-def refresh_opencode_go_async(min_interval: float = OG_MIN_INTERVAL) -> threading.Thread | None:
-    global _OG_FETCHING, _OG_LAST_REFRESH_MONO
-    if fetch_opencode_go_usage is None:
+def refresh_commandcode_async(min_interval: float = CC_MIN_INTERVAL) -> threading.Thread | None:
+    global _CC_FETCHING, _CC_LAST_REFRESH_MONO
+    if fetch_commandcode_accounts is None:
         return None
     now_mono = time.monotonic()
-    with _OG_FETCHING_LOCK:
-        if _OG_FETCHING:
+    with _CC_FETCHING_LOCK:
+        if _CC_FETCHING:
             return None
-        if (_OG_LAST_REFRESH_MONO is not None
-                and now_mono - _OG_LAST_REFRESH_MONO < min_interval):
+        if (_CC_LAST_REFRESH_MONO is not None
+                and now_mono - _CC_LAST_REFRESH_MONO < min_interval):
             return None
-        _OG_FETCHING = True
-        _OG_LAST_REFRESH_MONO = now_mono
-    thread = threading.Thread(target=_og_worker, daemon=True)
+        _CC_FETCHING = True
+        _CC_LAST_REFRESH_MONO = now_mono
+    thread = threading.Thread(target=_cc_worker, daemon=True)
     thread.start()
     return thread
 
@@ -901,7 +972,7 @@ def fetch_usage(token: str) -> dict:
 def build_payload(usage: dict, enable_antigravity: bool = True,
                   enable_openai: bool = True,
                   enable_cursor: bool = False,
-                  enable_opencode: bool = False) -> dict:
+                  enable_commandcode: bool = False) -> dict:
     five_hour = usage.get("five_hour") or {}
     seven_day = usage.get("seven_day") or {}
     fable_pct, fable_resets_at = None, None
@@ -929,8 +1000,8 @@ def build_payload(usage: dict, enable_antigravity: bool = True,
         payload.update(get_openai_fields())
     if enable_cursor and fetch_cursor_usage is not None:
         payload.update(get_cursor_fields())
-    if enable_opencode and fetch_opencode_go_usage is not None:
-        payload.update(get_opencode_go_fields())
+    if enable_commandcode and fetch_commandcode_usage is not None:
+        payload.update(get_commandcode_fields())
     return payload
 
 
@@ -1111,8 +1182,8 @@ def cursor_enabled(sources: tuple[str, ...], want_cursor: bool = True) -> bool:
     return want_cursor and "cursor" in sources and fetch_cursor_usage is not None
 
 
-def opencode_go_enabled(sources: tuple[str, ...], want_opencode: bool = True) -> bool:
-    return want_opencode and "opencode" in sources and fetch_opencode_go_usage is not None
+def commandcode_enabled(sources: tuple[str, ...], want_commandcode: bool = True) -> bool:
+    return want_commandcode and "commandcode" in sources and fetch_commandcode_accounts is not None
 
 
 def null_claude_payload() -> dict:
@@ -1134,7 +1205,7 @@ def compose_publish_payload(
     enable_antigravity: bool,
     enable_openai: bool,
     enable_cursor: bool = False,
-    enable_opencode: bool = False,
+    enable_commandcode: bool = False,
 ) -> dict | None:
     """組出這一輪要推的 payload。
 
@@ -1150,7 +1221,7 @@ def compose_publish_payload(
         payload = {}
 
     if not payload:
-        if not enable_claude and (enable_antigravity or enable_openai or enable_cursor or enable_opencode):
+        if not enable_claude and (enable_antigravity or enable_openai or enable_cursor or enable_commandcode):
             payload = null_claude_payload()
             used_null_shell = True
         else:
@@ -1168,8 +1239,8 @@ def compose_publish_payload(
         payload.update(get_openai_fields())
     if enable_cursor:
         payload.update(get_cursor_fields())
-    if enable_opencode:
-        payload.update(get_opencode_go_fields())
+    if enable_commandcode:
+        payload.update(get_commandcode_fields())
     if used_null_shell:
         # 啟動當下 AG/OA 尚未抓到前，不要用全 None payload 洗掉 deskbar 既有畫面。
         interesting = []
@@ -1187,9 +1258,9 @@ def compose_publish_payload(
                 interesting.extend(oa_fields.values())
         if enable_cursor:
             interesting.append(get_cursor_fields().get("cu_pct"))
-        if enable_opencode:
-            og = get_opencode_go_fields()
-            interesting.extend([og.get("og_5h_pct"), og.get("og_weekly_pct")])
+        if enable_commandcode:
+            cc = get_commandcode_fields()
+            interesting.extend([cc.get("cc_5h_pct"), cc.get("cc_weekly_pct")])
         if not any(v is not None for v in interesting):
             return None
     return payload
@@ -1221,22 +1292,27 @@ def _summary(payload: dict) -> str:
         summary += f"  OpenAI 週 {payload.get('oa_weekly_pct')}%"
     if payload.get("cu_pct") is not None:
         summary += f"  Cursor {payload.get('cu_pct')}%"
-    if payload.get("og_weekly_pct") is not None or payload.get("og_5h_pct") is not None:
-        summary += f"  OpenCode Go 5h {payload.get('og_5h_pct')}% / 週 {payload.get('og_weekly_pct')}%"
+    cc_accounts = payload.get("cc_accounts")
+    if isinstance(cc_accounts, list) and cc_accounts:
+        for account in cc_accounts:
+            summary += (f"  CommandCode {account.get('name')} 5h {account.get('five_hour_pct')}%"
+                        f" / 週 {account.get('weekly_pct')}%")
+    elif payload.get("cc_weekly_pct") is not None or payload.get("cc_5h_pct") is not None:
+        summary += f"  CommandCode 5h {payload.get('cc_5h_pct')}% / 週 {payload.get('cc_weekly_pct')}%"
     return summary
 
 
 def one_cycle(
     url: str, token: str | None, enable_antigravity: bool = True,
-    enable_openai: bool = True, enable_cursor: bool = False,
-    enable_opencode: bool = False
+    enable_openai: bool = True,     enable_cursor: bool = False,
+    enable_commandcode: bool = False
 ) -> dict:
     payload = build_payload(
         fetch_usage(load_access_token()),
         enable_antigravity=enable_antigravity,
         enable_openai=enable_openai,
         enable_cursor=enable_cursor,
-        enable_opencode=enable_opencode,
+        enable_commandcode=enable_commandcode,
     )
     cached = save_cache(payload)
     push(payload, url, token)
@@ -1252,11 +1328,11 @@ def run_loop(
     ag_interval: float = DEFAULT_AG_INTERVAL,
     oa_interval: float = DEFAULT_OA_INTERVAL,
     cu_interval: float = DEFAULT_CU_INTERVAL,
-    og_interval: float = DEFAULT_OG_INTERVAL,
+    cc_interval: float = DEFAULT_CC_INTERVAL,
     enable_antigravity: bool = True,
     enable_openai: bool = True,
     enable_cursor: bool = True,
-    enable_opencode: bool = True,
+    enable_commandcode: bool = True,
     prefs_interval: float = DEFAULT_PREFS_INTERVAL,
 ) -> None:
     prefs_url = prefs_url_from_usage_url(url)
@@ -1279,7 +1355,7 @@ def run_loop(
     )
 
     cursor_available = cursor_enabled(remote_sources, enable_cursor)
-    opencode_available = opencode_go_enabled(remote_sources, enable_opencode)
+    commandcode_available = commandcode_enabled(remote_sources, enable_commandcode)
 
     if enable_ag:
         warm_ag_from_cache(cached)
@@ -1287,14 +1363,14 @@ def run_loop(
         warm_openai_from_cache(cached)
     if cursor_available:
         warm_cursor_from_cache(cached)
-    if opencode_available:
-        warm_opencode_go_from_cache(cached)
+    if commandcode_available:
+        warm_commandcode_from_cache(cached)
     next_fetch = 0.0
     next_push = 0.0
     next_ag = 0.0
     next_oa = 0.0
     next_cu = 0.0
-    next_og = 0.0
+    next_cc = 0.0
     next_prefs = time.monotonic() + prefs_interval
     rate_limit_backoff = INITIAL_RATE_LIMIT_BACKOFF
     claude_status = (
@@ -1313,12 +1389,12 @@ def run_loop(
     cu_status = (
         f"Cursor {cu_interval:g} 秒" if cursor_available else "Cursor 已關閉"
     )
-    og_status = (
-        f"OpenCode Go {og_interval:g} 秒" if opencode_available else "OpenCode Go 已關閉"
+    cc_status = (
+        f"CommandCode {cc_interval:g} 秒" if commandcode_available else "CommandCode 已關閉"
     )
     print(
         f"常駐模式啟動（{claude_status}、deskbar {push_interval:g} 秒、"
-        f"{ag_status}、{oa_status}、{cu_status}、{og_status}、prefs {prefs_interval:g} 秒）"
+        f"{ag_status}、{oa_status}、{cu_status}、{cc_status}、prefs {prefs_interval:g} 秒）"
     )
     while True:
         now = time.monotonic()
@@ -1346,9 +1422,9 @@ def run_loop(
                     cursor_available = cursor_enabled(remote_sources, enable_cursor)
                     if cursor_available:
                         warm_cursor_from_cache(cached)
-                    opencode_available = opencode_go_enabled(remote_sources, enable_opencode)
-                    if opencode_available:
-                        warm_opencode_go_from_cache(cached)
+                    commandcode_available = commandcode_enabled(remote_sources, enable_commandcode)
+                    if commandcode_available:
+                        warm_commandcode_from_cache(cached)
             next_prefs = now + prefs_interval
 
         if enable_ag and now >= next_ag:
@@ -1377,12 +1453,12 @@ def run_loop(
                 next_cu = now + min(CU_MIN_INTERVAL, cu_interval)
 
         now = time.monotonic()
-        if opencode_available and now >= next_og:
-            started = refresh_opencode_go_async()
+        if commandcode_available and now >= next_cc:
+            started = refresh_commandcode_async()
             if started is not None:
-                next_og = now + og_interval
+                next_cc = now + cc_interval
             else:
-                next_og = now + min(OG_MIN_INTERVAL, og_interval)
+                next_cc = now + min(CC_MIN_INTERVAL, cc_interval)
 
         now = time.monotonic()
         # 背景 AG/OA 成功刷新：立刻排程補送，不必等到原本的 push_interval。
@@ -1396,7 +1472,7 @@ def run_loop(
                 enable_antigravity=enable_ag,
                 enable_openai=openai_available,
                 enable_cursor=cursor_available,
-                enable_opencode=opencode_available,
+                enable_commandcode=commandcode_available,
             )
             if payload is not None:
                 # Claude 失敗或停用期間仍要把剛刷新的 AG/OA 時間戳寫回磁碟，
@@ -1416,7 +1492,7 @@ def run_loop(
                     url, token, enable_antigravity=enable_ag,
                     enable_openai=openai_available,
                     enable_cursor=cursor_available,
-                    enable_opencode=opencode_available,
+                    enable_commandcode=commandcode_available,
                 )
                 next_fetch = now + fetch_interval
                 next_push = now + push_interval
@@ -1444,8 +1520,8 @@ def run_loop(
             events.append(next_oa)
         if cursor_available:
             events.append(next_cu)
-        if opencode_available:
-            events.append(next_og)
+        if commandcode_available:
+            events.append(next_cc)
         next_event = min(events)
         # 可被 AG/OA 成功刷新訊號中斷，讓新鮮時間戳在下一輪立刻推送。
         _loop_idle_wait(max(1.0, min(5.0, next_event - now)))
@@ -1472,9 +1548,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cu-interval", type=float,
                         default=DEFAULT_CU_INTERVAL,
                         help="多久刷新一次 Cursor 用量（唯讀 GET，不花額度）")
-    parser.add_argument("--og-interval", type=float,
-                        default=DEFAULT_OG_INTERVAL,
-                        help="多久刷新一次 OpenCode Go 用量（唯讀 GET，不花額度）")
+    parser.add_argument("--cc-interval", type=float,
+                        default=DEFAULT_CC_INTERVAL,
+                        help="多久刷新一次 CommandCode 用量（唯讀 GET，不花額度）")
     parser.add_argument("--prefs-interval", type=float,
                         default=DEFAULT_PREFS_INTERVAL,
                         help="多久重讀一次 deskbar /api/prefs 的 usage_sources")
@@ -1484,8 +1560,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="停用 OpenAI 用量抓取")
     parser.add_argument("--no-cursor", action="store_true",
                         help="停用 Cursor 用量抓取")
-    parser.add_argument("--no-opencode", action="store_true",
-                        help="停用 OpenCode Go 用量抓取")
+    parser.add_argument("--no-commandcode", action="store_true",
+                        help="停用 CommandCode 用量抓取")
     return parser
 
 
@@ -1496,7 +1572,7 @@ def main() -> None:
     enable_ag = not args.no_antigravity
     enable_oa = not args.no_openai
     enable_cu = not args.no_cursor
-    enable_og = not args.no_opencode
+    enable_cc = not args.no_commandcode
 
     if args.loop:
         run_loop(
@@ -1507,17 +1583,17 @@ def main() -> None:
             ag_interval=args.ag_interval,
             oa_interval=args.oa_interval,
             cu_interval=args.cu_interval,
-            og_interval=args.og_interval,
+            cc_interval=args.cc_interval,
             enable_antigravity=enable_ag,
             enable_openai=enable_oa,
             enable_cursor=enable_cu,
-            enable_opencode=enable_og,
+            enable_commandcode=enable_cc,
             prefs_interval=args.prefs_interval,
         )
     else:
         one_cycle(args.url, args.token, enable_antigravity=enable_ag,
                   enable_openai=enable_oa, enable_cursor=enable_cu,
-                  enable_opencode=enable_og)
+                  enable_commandcode=enable_cc)
 
 
 if __name__ == "__main__":

@@ -7,12 +7,13 @@ from flask import Flask, Response, jsonify, request
 
 from deskbar import auth, config
 from deskbar.alarms import _is_valid_date_str
-from deskbar.claudeusage import OaAccount, UsageInfo, fmt_countdown, over_pace, pace_pct
+from deskbar.claudeusage import CcAccount, OaAccount, UsageInfo, fmt_countdown, over_pace, pace_pct
 from deskbar.presence import PresenceState
 from deskbar.ui.theme import PALETTES
 from deskbar.ui.usagewidget import (
     STALE_AFTER_S,
     VERY_STALE_AFTER_S,
+    billing_for,
     is_exhausted,
     visible_sections,
 )
@@ -31,6 +32,7 @@ from deskbar.webapi.validation import (
     _to_float,
     _valid_pct,
     _valid_resets_at,
+    validate_cc_accounts_payload,
     validate_oa_accounts_payload,
     validate_work_sessions_payload,
 )
@@ -247,10 +249,17 @@ def register_routes(app: Flask, context: WebContext) -> None:
                                                      config.VALID_USAGE_SOURCES))
             out["oa_aliases"] = dict(getattr(context.settings_provider, "oa_aliases", {}))
             out["oa_hidden"] = list(getattr(context.settings_provider, "oa_hidden", ()))
+            out["cc_aliases"] = dict(getattr(context.settings_provider, "cc_aliases", {}))
+            out["cc_hidden"] = list(getattr(context.settings_provider, "cc_hidden", ()))
+            out["billing_dates"] = dict(getattr(context.settings_provider, "billing_dates", {}))
         usage = context.usage_state.snapshot().usage if context.usage_state is not None else None
         out["oa_accounts_seen"] = [
             {"account_id": account.account_id, "name": account.name}
             for account in getattr(usage, "oa_accounts", ())
+        ]
+        out["cc_accounts_seen"] = [
+            {"account_id": account.account_id, "name": account.name}
+            for account in getattr(usage, "cc_accounts", ())
         ]
         return jsonify(out)
 
@@ -325,6 +334,60 @@ def register_routes(app: Flask, context: WebContext) -> None:
                 staged[k] = tuple(hidden)
             elif k == "oa_accounts_seen":
                 continue
+            elif k == "cc_aliases":
+                if not isinstance(v, dict) or len(v) > 8:
+                    return jsonify({"error": "cc_aliases must be object"}), 400
+                aliases = {}
+                for account_id, alias in v.items():
+                    if not isinstance(account_id, str) or not account_id.strip() \
+                            or not isinstance(alias, str):
+                        return jsonify({"error": "cc_aliases must be string values"}), 400
+                    normalized = alias.strip()
+                    if len(normalized) > 24:
+                        return jsonify({"error": "cc_aliases must be 0..24 chars"}), 400
+                    aliases[account_id.strip()] = normalized
+                staged[k] = aliases
+            elif k == "cc_hidden":
+                if not isinstance(v, list) or len(v) > 8:
+                    return jsonify({"error": "cc_hidden must be list"}), 400
+                hidden = []
+                seen = set()
+                for account_id in v:
+                    if not isinstance(account_id, str) or not account_id.strip():
+                        return jsonify({"error": "cc_hidden must be string values"}), 400
+                    normalized = account_id.strip()
+                    if normalized not in seen:
+                        hidden.append(normalized)
+                        seen.add(normalized)
+                staged[k] = tuple(hidden)
+            elif k == "cc_accounts_seen":
+                continue
+            elif k == "billing_dates":
+                from datetime import date as _date
+                if not isinstance(v, dict):
+                    return jsonify({"error": "billing_dates must be object"}), 400
+                cleaned = {}
+                for bkey, bval in v.items():
+                    if not isinstance(bkey, str):
+                        return jsonify({"error": "billing_dates has invalid key"}), 400
+                    bk = bkey.strip()
+                    valid = (bk in config.VALID_USAGE_SOURCES and bk != "openai") \
+                        or bk in ("claude", "antigravity", "cursor", "commandcode") \
+                        or (bk.startswith("openai:") and bk[len("openai:"):].strip()) \
+                        or (bk.startswith("commandcode:") and bk[len("commandcode:"):].strip())
+                    if not valid:
+                        return jsonify({"error": "billing_dates has invalid key"}), 400
+                    if not isinstance(bval, str):
+                        return jsonify({"error": "billing_dates must be YYYY-MM-DD"}), 400
+                    bv = bval.strip()
+                    if not bv:
+                        continue
+                    try:
+                        _date.fromisoformat(bv)
+                    except ValueError:
+                        return jsonify({"error": "billing_dates must be YYYY-MM-DD"}), 400
+                    cleaned[bk] = bv
+                staged[k] = cleaned
             elif k in _PREF_FLOAT:
                 lo, hi = _PREF_FLOAT[k]
                 if isinstance(v, bool) or not isinstance(v, (int, float)) \
@@ -346,6 +409,29 @@ def register_routes(app: Flask, context: WebContext) -> None:
                 if len(aliases) > 8:
                     return jsonify({"error": "oa_aliases has too many entries"}), 400
                 staged["oa_aliases"] = aliases
+            if "cc_aliases" in staged:
+                aliases = dict(getattr(context.settings_provider, "cc_aliases", {}))
+                for account_id, alias in staged["cc_aliases"].items():
+                    if alias:
+                        aliases[account_id] = alias
+                    else:
+                        aliases.pop(account_id, None)
+                if len(aliases) > 8:
+                    return jsonify({"error": "cc_aliases has too many entries"}), 400
+                staged["cc_aliases"] = aliases
+            if "billing_dates" in staged:
+                merged = dict(getattr(context.settings_provider, "billing_dates", {}))
+                incoming = d.get("billing_dates", {})
+                if isinstance(incoming, dict):
+                    for bkey, bval in incoming.items():
+                        if not isinstance(bkey, str):
+                            continue
+                        bk = bkey.strip()
+                        if isinstance(bval, str) and not bval.strip():
+                            merged.pop(bk, None)
+                for bkey, bval in staged["billing_dates"].items():
+                    merged[bkey] = bval
+                staged["billing_dates"] = config.normalize_billing_dates(merged)
             for k, v in staged.items():
                 setattr(context.settings_provider, k, v)
             context.on_save(context.settings_provider)
@@ -460,21 +546,39 @@ def register_routes(app: Flask, context: WebContext) -> None:
                                                config.VALID_USAGE_SOURCES))
                 aliases = dict(getattr(context.settings_provider, "oa_aliases", {}))
                 hidden = list(getattr(context.settings_provider, "oa_hidden", ()))
+                cc_aliases = dict(getattr(context.settings_provider, "cc_aliases", {}))
+                cc_hidden = list(getattr(context.settings_provider, "cc_hidden", ()))
+                billing_dates = dict(getattr(context.settings_provider, "billing_dates", {}))
         else:
             enabled_sources = list(config.VALID_USAGE_SOURCES)
             aliases, hidden = {}, []
+            cc_aliases, cc_hidden = {}, []
+            billing_dates = {}
 
         usage = snapshot.usage
         sections = []
-        for title, groups, age_s in visible_sections(usage, now, enabled_sources,
-                                                     aliases, hidden):
+        for title, groups, age_s, key in visible_sections(usage, now, enabled_sources,
+                                                          aliases, hidden,
+                                                          cc_aliases, cc_hidden):
             stale = age_s > STALE_AFTER_S
             muted = age_s > VERY_STALE_AFTER_S
+            billed = billing_for(key, usage, billing_dates, now)
+            if billed is not None:
+                pay_date, pay_src = billed
+                billing_at = pay_date.isoformat()
+                billing_days = (pay_date - now.date()).days
+                billing_source = pay_src
+            else:
+                billing_at, billing_days, billing_source = None, None, None
             sections.append({
                 "title": title,
+                "key": key,
                 "age_s": age_s,
                 "stale": stale,
                 "muted": muted,
+                "billing_at": billing_at,
+                "billing_days": billing_days,
+                "billing_source": billing_source,
                 "groups": [{
                     "label": label,
                     "pct": pct,
@@ -499,6 +603,7 @@ def register_routes(app: Flask, context: WebContext) -> None:
             "generated_at": now.isoformat(),
             "fetched_at": fetched_at.isoformat() if fetched_at is not None else None,
             "sections": sections,
+            "columns": 2,
             "theme": usage_theme,
         })
         resp.headers["Cache-Control"] = "no-store"
@@ -534,6 +639,9 @@ def register_routes(app: Flask, context: WebContext) -> None:
         valid_oa_accounts, oa_accounts_error = validate_oa_accounts_payload(d.get("oa_accounts"))
         if not valid_oa_accounts:
             return jsonify({"error": oa_accounts_error}), 400
+        valid_cc_accounts, cc_accounts_error = validate_cc_accounts_payload(d.get("cc_accounts"))
+        if not valid_cc_accounts:
+            return jsonify({"error": cc_accounts_error}), 400
 
         fetched_at = _parse_dt(d.get("fetched_at")) \
             if d.get("fetched_at") is not None else datetime.now(_USAGE_TZ)
@@ -561,6 +669,26 @@ def register_routes(app: Flask, context: WebContext) -> None:
                 ))
             return tuple(accounts)
 
+        def _parse_cc_accounts(items):
+            if not items:
+                return ()
+            accounts = []
+            for item in items:
+                fetched = _parse_dt(item.get("fetched_at"))
+                if fetched is not None and fetched.tzinfo is None:
+                    fetched = fetched.replace(tzinfo=_USAGE_TZ)
+                accounts.append(CcAccount(
+                    account_id=item["account_id"].strip(),
+                    name=item.get("name", "") if isinstance(item.get("name", ""), str) else "",
+                    five_hour_pct=_to_float(item.get("five_hour_pct")),
+                    five_hour_resets_at=_parse_dt(item.get("five_hour_resets_at")),
+                    weekly_pct=_to_float(item.get("weekly_pct")),
+                    weekly_resets_at=_parse_dt(item.get("weekly_resets_at")),
+                    billing_at=_parse_dt(item.get("billing_at")),
+                    fetched_at=fetched,
+                ))
+            return tuple(accounts)
+
         info = UsageInfo(
             session_pct=_to_float(d.get("session_pct")),
             session_resets_at=_parse_dt(d.get("session_resets_at")),
@@ -579,14 +707,17 @@ def register_routes(app: Flask, context: WebContext) -> None:
             ag_fetched_at=_optional_fetched("ag_fetched_at"),
             oa_fetched_at=_optional_fetched("oa_fetched_at"),
             oa_accounts=_parse_oa_accounts(d.get("oa_accounts")),
+            cc_accounts=_parse_cc_accounts(d.get("cc_accounts")),
             cu_pct=_to_float(d.get("cu_pct")),
             cu_resets_at=_parse_dt(d.get("cu_resets_at")),
             cu_fetched_at=_optional_fetched("cu_fetched_at"),
-            og_5h_pct=_to_float(d.get("og_5h_pct")),
-            og_5h_resets_at=_parse_dt(d.get("og_5h_resets_at")),
-            og_weekly_pct=_to_float(d.get("og_weekly_pct")),
-            og_weekly_resets_at=_parse_dt(d.get("og_weekly_resets_at")),
-            og_fetched_at=_optional_fetched("og_fetched_at"),
+            cc_5h_pct=_to_float(d.get("cc_5h_pct")),
+            cc_5h_resets_at=_parse_dt(d.get("cc_5h_resets_at")),
+            cc_weekly_pct=_to_float(d.get("cc_weekly_pct")),
+            cc_weekly_resets_at=_parse_dt(d.get("cc_weekly_resets_at")),
+            cc_fetched_at=_optional_fetched("cc_fetched_at"),
+            cc_billing_at=_parse_dt(d.get("cc_billing_at")),
+            cu_billing_at=_parse_dt(d.get("cu_billing_at")),
         )
         context.usage_state.set_usage(info)
         return "", 204

@@ -129,6 +129,9 @@ struct UsageSection: Codable, Equatable, Identifiable {
     let stale: Bool?
     let muted: Bool?
     let groups: [UsageGroup]
+    /// 下次付款日（YYYY-MM-DD）與距今天數；deskbar /api/usage 2026-09-22 起提供，舊版沒有就 nil。
+    let billingAt: String?
+    let billingDays: Int?
 
     enum CodingKeys: String, CodingKey {
         case title
@@ -136,14 +139,27 @@ struct UsageSection: Codable, Equatable, Identifiable {
         case stale
         case muted
         case groups
+        case billingAt = "billing_at"
+        case billingDays = "billing_days"
     }
 
-    init(title: String, ageS: Double?, stale: Bool? = nil, muted: Bool? = nil, groups: [UsageGroup]) {
+    init(title: String, ageS: Double?, stale: Bool? = nil, muted: Bool? = nil, groups: [UsageGroup],
+         billingAt: String? = nil, billingDays: Int? = nil) {
         self.title = title
         self.ageS = ageS
         self.stale = stale
         self.muted = muted
         self.groups = groups
+        self.billingAt = billingAt
+        self.billingDays = billingDays
+    }
+
+    /// 「付款 10/18」；沒有付款日回 nil。
+    var billingText: String? {
+        guard let raw = billingAt else { return nil }
+        let parts = raw.split(separator: "-")
+        guard parts.count == 3, let m = Int(parts[1]), let d = Int(parts[2]) else { return nil }
+        return "付款 \(m)/\(d)"
     }
 }
 

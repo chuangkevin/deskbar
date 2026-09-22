@@ -181,3 +181,25 @@ struct UsageModelTests {
         )
     }
 }
+
+@Suite
+struct BillingDecodeTests {
+    @Test func decodesBillingFieldsAndFormatsLabel() throws {
+        let json = """
+        {"sections":[{"title":"COMMANDCODE","age_s":1,"groups":[],"billing_at":"2026-10-18","billing_days":26,"billing_source":"auto"}]}
+        """
+        let r = try JSONDecoder().decode(UsageResponse.self, from: Data(json.utf8))
+        #expect(r.sections.first?.billingAt == "2026-10-18")
+        #expect(r.sections.first?.billingDays == 26)
+        #expect(r.sections.first?.billingText == "付款 10/18")
+    }
+
+    @Test func missingBillingIsNil() throws {
+        let json = """
+        {"sections":[{"title":"CLAUDE CODE","age_s":1,"groups":[]}]}
+        """
+        let r = try JSONDecoder().decode(UsageResponse.self, from: Data(json.utf8))
+        #expect(r.sections.first?.billingAt == nil)
+        #expect(r.sections.first?.billingText == nil)
+    }
+}

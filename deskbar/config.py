@@ -22,7 +22,8 @@ DEFAULT_SCENES = (
 VALID_VIEW_SPANS = {"half", "day", "week", "month"}
 VALID_VIEW_MODES = {"lanes", "agenda"}
 VALID_THEMES = {"dark", "light"}
-VALID_USAGE_SOURCES = ("claude", "antigravity", "openai", "cursor", "opencode")
+VALID_USAGE_SOURCES = ("claude", "antigravity", "openai", "cursor", "commandcode")
+VALID_BILLING_KEYS = ("claude", "antigravity", "cursor", "commandcode")
 DEFAULT_PET_X, DEFAULT_PET_Y = 1660, 300
 
 
@@ -73,6 +74,68 @@ def normalize_oa_hidden(value, default=None) -> tuple[str, ...]:
             hidden.append(normalized)
             seen.add(normalized)
     return tuple(hidden)
+
+
+def normalize_cc_aliases(value, default=None) -> dict[str, str]:
+    if default is None:
+        default = {}
+    if not isinstance(value, dict) or len(value) > 8:
+        return dict(default)
+    aliases = {}
+    for account_id, alias in value.items():
+        if not isinstance(account_id, str) or not account_id.strip() or not isinstance(alias, str):
+            return dict(default)
+        normalized_alias = alias.strip()
+        if len(normalized_alias) > 24:
+            return dict(default)
+        if normalized_alias:
+            aliases[account_id.strip()] = normalized_alias
+    return aliases
+
+
+def normalize_cc_hidden(value, default=None) -> tuple[str, ...]:
+    if default is None:
+        default = ()
+    if not isinstance(value, (list, tuple)) or len(value) > 8:
+        return tuple(default)
+    hidden = []
+    seen = set()
+    for account_id in value:
+        if not isinstance(account_id, str) or not account_id.strip():
+            return tuple(default)
+        normalized = account_id.strip()
+        if normalized not in seen:
+            hidden.append(normalized)
+            seen.add(normalized)
+    return tuple(hidden)
+
+
+def normalize_billing_dates(value, default=None) -> dict[str, str]:
+    """只留合法 key 與合法 YYYY-MM-DD，其他丟掉。"""
+    from datetime import date as _date
+    if default is None:
+        default = {}
+    if not isinstance(value, dict):
+        return dict(default)
+    out: dict[str, str] = {}
+    for key, val in value.items():
+        if not isinstance(key, str) or not isinstance(val, str):
+            continue
+        k = key.strip()
+        v = val.strip()
+        if not v:
+            continue
+        if k in VALID_BILLING_KEYS or k.startswith("openai:") or k.startswith("commandcode:"):
+            if k.startswith("openai:") and not k[len("openai:"):].strip():
+                continue
+            if k.startswith("commandcode:") and not k[len("commandcode:"):].strip():
+                continue
+            try:
+                _date.fromisoformat(v)
+            except ValueError:
+                continue
+            out[k] = v
+    return out
 
 
 def config_dir() -> Path:
@@ -140,6 +203,9 @@ class Settings:
     pet_y: int = DEFAULT_PET_Y          # 小喜喜左上角 logical y
     oa_aliases: dict[str, str] = field(default_factory=dict)  # OpenAI account_id -> 使用者別名
     oa_hidden: tuple[str, ...] = ()      # 不顯示的 OpenAI account_id；新帳號預設顯示
+    cc_aliases: dict[str, str] = field(default_factory=dict)  # CommandCode account_id -> 使用者別名
+    cc_hidden: tuple[str, ...] = ()      # 不顯示的 CommandCode account_id；新帳號預設顯示
+    billing_dates: dict[str, str] = field(default_factory=dict)  # 來源 key -> 每月固定日 YYYY-MM-DD
 
     def ensure_account(self, email: str) -> AccountCfg:
         if email not in self.accounts:
@@ -257,6 +323,9 @@ def load_settings() -> Settings:
             raw.get("usage_sources", list(VALID_USAGE_SOURCES)))
         oa_aliases = normalize_oa_aliases(raw.get("oa_aliases", {}))
         oa_hidden = normalize_oa_hidden(raw.get("oa_hidden", ()))
+        cc_aliases = normalize_cc_aliases(raw.get("cc_aliases", {}))
+        cc_hidden = normalize_cc_hidden(raw.get("cc_hidden", ()))
+        billing_dates = normalize_billing_dates(raw.get("billing_dates", {}))
         pet_enabled = raw.get("pet_enabled", True)
         if not isinstance(pet_enabled, bool):
             pet_enabled = True
@@ -301,6 +370,9 @@ def load_settings() -> Settings:
             pet_y=pet_y,
             oa_aliases=oa_aliases,
             oa_hidden=oa_hidden,
+            cc_aliases=cc_aliases,
+            cc_hidden=cc_hidden,
+            billing_dates=billing_dates,
         )
     except (OSError, ValueError, KeyError, TypeError):
         return Settings()
@@ -342,6 +414,9 @@ def save_settings(s: Settings) -> None:
         "usage_sources": list(normalize_usage_sources(s.usage_sources)),
         "oa_aliases": normalize_oa_aliases(s.oa_aliases),
         "oa_hidden": list(normalize_oa_hidden(s.oa_hidden)),
+        "cc_aliases": normalize_cc_aliases(s.cc_aliases),
+        "cc_hidden": list(normalize_cc_hidden(s.cc_hidden)),
+        "billing_dates": normalize_billing_dates(s.billing_dates),
         "pet_enabled": s.pet_enabled,
         "pet_x": int(s.pet_x),
         "pet_y": int(s.pet_y),

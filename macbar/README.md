@@ -10,6 +10,11 @@ macOS menu bar app for showing the same usage data served by deskbar `GET /api/u
 
 ## Build
 
+> 2026-09-22：macOS 27 的 Command Line Tools 沒有 SwiftUI／Swift Testing 的 macro plugin，
+> `@State` 會報 `SwiftUIMacros.StateMacro could not be found`。沒有 Xcode 時用舊 SDK 建：
+> `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk bash build-app.sh`
+> （`swift test` 同樣缺 TestingMacros，測試在這台機器跑不起來，要 Xcode。）
+
 ```sh
 swift build --configuration release
 ```

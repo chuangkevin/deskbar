@@ -296,7 +296,7 @@ def test_get_usage_returns_sections_matching_widget(alarm_store):
     now = datetime.now(TZ)
     usage = state.snapshot().usage
     expected = visible_sections(usage, now)
-    assert [s["title"] for s in d["sections"]] == [t for t, _g, _a in expected]
+    assert [s["title"] for s in d["sections"]] == [t for t, _g, _a, _k in expected]
     # 每組欄位形狀與契約一致
     for s in d["sections"]:
         for g in s["groups"]:

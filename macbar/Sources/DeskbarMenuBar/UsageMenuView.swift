@@ -47,6 +47,14 @@ struct UsageMenuView: View {
                         .font(.caption2)
                         .foregroundStyle(isMuted ? palette.muted.color : Color.secondary)
                 }
+                Spacer()
+                if let billing = section.billingText {
+                    // 付款日靠右；剩 ≤3 天用 warn 色，跟 Pi 右欄一致
+                    let soon = (section.billingDays ?? 99) <= 3
+                    Text(billing)
+                        .font(.caption2)
+                        .foregroundStyle(soon ? palette.usageWarn.color : Color.secondary)
+                }
             }
 
             ForEach(section.groups) { group in

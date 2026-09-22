@@ -19,6 +19,12 @@ def _surf():
     return s
 
 
+def _blank(rgb) -> bool:
+    """卡片底色與卡片框線不算「內容」：2026-09-22 起每個 provider 一張卡片，
+    掃像素找文字／橫條時要把這兩色跟背景一起排除。"""
+    return tuple(rgb[:3]) in (tuple(theme.C["bg"]), tuple(theme.C["card"]), tuple(theme.C["panel_line"]))
+
+
 def _usage(session_pct=42.0, weekly_pct=61.0, fable_pct=12.0, fetched_at=None,
            ag_5h_pct=None, ag_weekly_pct=None, oa_weekly_pct=None,
            oa_accounts=()):
@@ -40,7 +46,7 @@ def _scan_ink_outside(surf, x_lo, x_hi, bg):
     w, h = surf.get_size()
     for y in range(0, h, 3):          # 抽樣掃描，夠密到抓出違規又不會太慢
         for x in list(range(0, x_lo, 5)) + list(range(x_hi, w, 5)):
-            if surf.get_at((x, y))[:3] != bg:
+            if not _blank(surf.get_at((x, y))):
                 bad.append((x, y))
     return bad
 
@@ -57,7 +63,7 @@ def _rendered_texts(monkeypatch, usage, enabled_sources=None, oa_aliases=None,
     monkeypatch.setattr(usagewidget, "_text", spy)
     surf = _surf()
     usagewidget.render(surf, usage, NOW, 1540, 360, enabled_sources, oa_aliases,
-                       oa_hidden)
+                       oa_hidden, columns=1)
     return texts, surf
 
 
@@ -66,24 +72,24 @@ def _rendered_texts(monkeypatch, usage, enabled_sources=None, oa_aliases=None,
 
 def test_render_three_groups_draws_ink_for_each_group():
     surf = _surf()
-    usagewidget.render(surf, _usage(), NOW, 1540, 360)
+    usagewidget.render(surf, _usage(), NOW, 1540, 360, columns=1)
     bg = theme.C["bg"]
     for i in range(3):     # 5H SESSION / 本週 / FABLE 三組的 label 列各抽一行檢查
         y = (usagewidget.TITLE_Y + usagewidget.SECTION_FIRST_GROUP
              + i * usagewidget.GROUP_STEP)
         row_has_ink = any(
-            surf.get_at((x, y + 8))[:3] != bg for x in range(1540, 1900, 2))
+            not _blank(surf.get_at((x, y + 8))) for x in range(1540, 1900, 2))
         assert row_has_ink, f"第 {i} 組應該畫出 label/百分比文字"
 
 
 def test_fable_group_skipped_when_no_data():
     surf = _surf()
-    usagewidget.render(surf, _usage(fable_pct=None), NOW, 1540, 360)
+    usagewidget.render(surf, _usage(fable_pct=None), NOW, 1540, 360, columns=1)
     bg = theme.C["bg"]
     third_y = (usagewidget.TITLE_Y + usagewidget.SECTION_FIRST_GROUP
                + 2 * usagewidget.GROUP_STEP)
     row_has_ink = any(
-        surf.get_at((x, third_y + 8))[:3] != bg for x in range(1540, 1900, 2))
+        not _blank(surf.get_at((x, third_y + 8))) for x in range(1540, 1900, 2))
     assert not row_has_ink, "FABLE 無資料時第三組不該畫任何東西"
 
 
@@ -109,7 +115,7 @@ def test_antigravity_section_skipped_when_ag_data_is_none(monkeypatch):
     )
     bg = theme.C["bg"]
     separator_has_ink = any(
-        surf.get_at((x, 140))[:3] != bg for x in range(1540, 1901)
+        not _blank(surf.get_at((x, 170))) for x in range(1540, 1901)
     )
     assert "ANTIGRAVITY · GEMINI" not in texts
     assert not separator_has_ink, "AG 兩個 pct 皆 None 時連分隔線也不該畫"
@@ -122,7 +128,7 @@ def test_openai_section_skipped_when_oa_data_is_none(monkeypatch):
     )
     bg = theme.C["bg"]
     separator_has_ink = any(
-        surf.get_at((x, 246))[:3] != bg for x in range(1540, 1901)
+        not _blank(surf.get_at((x, 284))) for x in range(1540, 1901)
     )
     assert "OPENAI" not in texts
     assert not separator_has_ink, "OpenAI 無資料時不該畫分隔線、標題或本週群組"
@@ -153,7 +159,7 @@ def test_openai_account_title_prefers_alias_then_upper_name_then_plain_title():
     sections = usagewidget.visible_sections(
         _usage(oa_accounts=accounts), NOW, ["openai"], {"acct-a": "SYSTEMCOM"}
     )
-    assert [title for title, _groups, _age in sections] == [
+    assert [title for title, _groups, _age, _key in sections] == [
         "OPENAI · SYSTEMCOM",
         "OPENAI · KEVIN.DEV01",
         "OPENAI",
@@ -164,7 +170,7 @@ def test_empty_openai_accounts_keeps_legacy_single_openai_section():
     sections = usagewidget.visible_sections(
         _usage(oa_weekly_pct=3.0, oa_accounts=()), NOW, ["openai"]
     )
-    assert [(title, groups[0][1]) for title, groups, _age in sections] == [("OPENAI", 3.0)]
+    assert [(title, groups[0][1]) for title, groups, _age, _key in sections] == [("OPENAI", 3.0)]
 
 
 def test_stale_openai_account_only_hides_that_account():
@@ -173,7 +179,7 @@ def test_stale_openai_account_only_hides_that_account():
         OaAccount("fresh", "fresh", 20.0, NOW + timedelta(days=2), NOW - timedelta(minutes=1)),
     )
     sections = usagewidget.visible_sections(_usage(oa_accounts=accounts), NOW, ["openai"])
-    assert [title for title, _groups, _age in sections] == ["OPENAI · FRESH"]
+    assert [title for title, _groups, _age, _key in sections] == ["OPENAI · FRESH"]
 
 
 def test_oa_hidden_skips_only_matching_openai_account():
@@ -185,7 +191,7 @@ def test_oa_hidden_skips_only_matching_openai_account():
         _usage(oa_accounts=accounts), NOW, ["openai"], {"acct-a": "SYSTEMCOM"}, ("acct-a",)
     )
 
-    assert [title for title, _groups, _age in sections] == ["OPENAI · KEVIN.DEV01"]
+    assert [title for title, _groups, _age, _key in sections] == ["OPENAI · KEVIN.DEV01"]
 
 
 @pytest.mark.parametrize("hidden", [None, ()])
@@ -198,7 +204,7 @@ def test_oa_hidden_empty_or_none_keeps_all_openai_accounts(hidden):
         _usage(oa_accounts=accounts), NOW, ["openai"], None, hidden
     )
 
-    assert [title for title, _groups, _age in sections] == [
+    assert [title for title, _groups, _age, _key in sections] == [
         "OPENAI · KEVIN.SYSTEMCOM",
         "OPENAI · KEVIN.DEV01",
     ]
@@ -212,7 +218,7 @@ def test_oa_hidden_all_accounts_keeps_claude_and_removes_openai_sections():
     sections = usagewidget.visible_sections(
         _usage(oa_accounts=accounts), NOW, None, None, ("acct-a", "acct-b")
     )
-    titles = [title for title, _groups, _age in sections]
+    titles = [title for title, _groups, _age, _key in sections]
 
     assert "CLAUDE CODE" in titles
     assert not any(title.startswith("OPENAI") for title in titles)
@@ -245,35 +251,36 @@ def test_full_layout_uses_expected_section_positions(monkeypatch):
     usagewidget.render(
         _surf(),
         _usage(ag_5h_pct=64.24, ag_weekly_pct=94.04, oa_weekly_pct=3.0),
-        NOW, 1540, 360,
+        NOW, 1540, 360, columns=1,
     )
 
+    # 2026-09-22：整欄從 TITLE_Y=20 起畫（避開頂緣日光帶），每區上方都有分隔線（含第一區）
+    # 卡片模型：卡片頂 16 → 標題 +8 → 第一列 +20 → 每列 +40 → 最後橫條底 +8 = 卡片底，卡片間 10
     assert titles == [
-        ("CLAUDE CODE", 2, 14),
-        ("ANTIGRAVITY · GEMINI", 148, 14),
-        ("OPENAI", 254, 14),
+        ("CLAUDE CODE", 24, 14),
+        ("ANTIGRAVITY · GEMINI", 178, 14),
+        ("OPENAI", 292, 14),
     ]
     assert groups == [
-        ("5H SESSION", 22), ("本週", 62), ("FABLE", 102),
-        ("5H", 168), ("本週", 208),
-        ("本週", 274),
+        ("5H SESSION", 44), ("本週", 84), ("FABLE", 124),
+        ("5H", 198), ("本週", 238),
+        ("本週", 312),
     ]
-    assert separators == [((1540, 140), (1900, 140)),
-                          ((1540, 246), (1900, 246))]
+    assert separators == []   # 分隔線已由卡片框取代
 
 
 def test_layout_bottom_never_exceeds_y340():
     surf = _surf()
     usage = _usage(fable_pct=12.0, ag_5h_pct=64.24, ag_weekly_pct=94.04,
                    oa_weekly_pct=3.0)
-    usagewidget.render(surf, usage, NOW, 1540, 360)
+    usagewidget.render(surf, usage, NOW, 1540, 360, columns=1)
     bg = theme.C["bg"]
     ink_rows = [
         y for y in range(surf.get_height())
-        if any(surf.get_at((x, y))[:3] != bg for x in range(1540, 1900))
+        if any(not _blank(surf.get_at((x, y))) for x in range(1540, 1900))
     ]
     assert ink_rows
-    assert max(ink_rows) <= 340, f"版面最深畫到 y={max(ink_rows)}"
+    assert max(ink_rows) <= 352, f"版面最深畫到 y={max(ink_rows)}"   # 三張卡片 348（含底邊留白）
 
 
 def test_percentage_text_bottom_stays_above_bar(monkeypatch):
@@ -311,8 +318,8 @@ def test_percentage_text_bottom_stays_above_bar(monkeypatch):
 
 
 def _bar_fill_pixel(surf, group_index=0):
-    x0 = 1540
-    y = (usagewidget.TITLE_Y + usagewidget.SECTION_FIRST_GROUP
+    x0 = 1540 + usagewidget.CARD_PAD_X
+    y = (usagewidget.TITLE_Y + usagewidget.SECTION_TITLE_GAP + usagewidget.SECTION_FIRST_GROUP
          + group_index * usagewidget.GROUP_STEP)
     bar_x = x0 + usagewidget.BAR_MARGIN
     bar_y = y + 19
@@ -322,13 +329,13 @@ def _bar_fill_pixel(surf, group_index=0):
 def test_bar_color_normal_use_is_claude_orange():
     for pct in (20.0, 40.0, 55.0):
         surf = _surf()
-        usagewidget.render(surf, _usage(session_pct=pct), NOW, 1540, 360)
+        usagewidget.render(surf, _usage(session_pct=pct), NOW, 1540, 360, columns=1)
         assert _bar_fill_pixel(surf) == theme.C["usage_bar"], pct
 
 
 def test_bar_color_warn_tier_above_85_percent():
     surf = _surf()
-    usagewidget.render(surf, _usage(session_pct=90.0), NOW, 1540, 360)
+    usagewidget.render(surf, _usage(session_pct=90.0), NOW, 1540, 360, columns=1)
     assert _bar_fill_pixel(surf) == theme.C["usage_warn"]
 
 
@@ -337,44 +344,44 @@ def test_bar_color_warn_tier_above_85_percent():
 
 def test_none_usage_leaves_column_blank():
     surf = _surf()
-    usagewidget.render(surf, None, NOW, 1540, 360)
+    usagewidget.render(surf, None, NOW, 1540, 360, columns=1)
     bg = theme.C["bg"]
-    assert not any(surf.get_at((x, y))[:3] != bg
+    assert not any(not _blank(surf.get_at((x, y)))
                    for x in range(1540, 1900, 2) for y in range(0, 480, 2))
 
 
 def test_stale_fetched_at_shows_minutes_ago_note():
     surf = _surf()
     usage = _usage(fetched_at=NOW - timedelta(minutes=20))   # 1200s > STALE_AFTER_S(900)
-    usagewidget.render(surf, usage, NOW, 1540, 360)
+    usagewidget.render(surf, usage, NOW, 1540, 360, columns=1)
     bg = theme.C["bg"]
     has_ink = any(
-        surf.get_at((x, usagewidget.TITLE_Y + 4))[:3] != bg
-        for x in range(1700, 1900, 2))
+        not _blank(surf.get_at((x, usagewidget.TITLE_Y + usagewidget.SECTION_TITLE_GAP + 4)))
+        for x in range(1700, 1890, 2))
     assert has_ink, "距上次推送超過 900 秒時，標題列右側應該加註「(N 分前)」"
 
 
 def test_fresh_fetched_at_shows_no_minutes_ago_note():
     surf = _surf()
     usage = _usage(fetched_at=NOW - timedelta(seconds=30))   # 遠低於 STALE_AFTER_S
-    usagewidget.render(surf, usage, NOW, 1540, 360)
+    usagewidget.render(surf, usage, NOW, 1540, 360, columns=1)
     bg = theme.C["bg"]
     has_ink = any(
-        surf.get_at((x, usagewidget.TITLE_Y + 4))[:3] != bg
-        for x in range(1700, 1900, 2))
+        not _blank(surf.get_at((x, usagewidget.TITLE_Y + usagewidget.SECTION_TITLE_GAP + 4)))
+        for x in range(1700, 1890, 2))
     assert not has_ink, "剛推送不久不該顯示「(N 分前)」"
 
 
 def test_very_stale_fetched_at_turns_bars_muted_gray():
     surf = _surf()
     fresh = _usage(session_pct=90.0)   # 90% 正常時應該是 usage_warn 色
-    usagewidget.render(surf, fresh, NOW, 1540, 360)
+    usagewidget.render(surf, fresh, NOW, 1540, 360, columns=1)
     fresh_pixel = _bar_fill_pixel(surf)
     assert fresh_pixel == theme.C["usage_warn"]
 
     surf2 = _surf()
     stale = _usage(session_pct=90.0, fetched_at=NOW - timedelta(hours=2))   # > VERY_STALE_AFTER_S(3600)
-    usagewidget.render(surf2, stale, NOW, 1540, 360)
+    usagewidget.render(surf2, stale, NOW, 1540, 360, columns=1)
     stale_pixel = _bar_fill_pixel(surf2)
     assert stale_pixel == theme.C["muted"], "超過 1 小時沒推送，橫條應該整組轉 muted 灰"
 
@@ -387,7 +394,7 @@ def test_per_source_selection_and_24h_expiry(monkeypatch):
         "oa_fetched_at": NOW - timedelta(minutes=1),
     })
     sections = usagewidget.visible_sections(usage, NOW)
-    assert [title for title, _groups, _age in sections] == ["OPENAI"]
+    assert [title for title, _groups, _age, _key in sections] == ["OPENAI"]
     assert usagewidget.visible_sections(usage, NOW, ["claude"]) == []
     texts, _ = _rendered_texts(monkeypatch, usage)
     assert "OPENAI" in texts and "CLAUDE CODE" not in texts
@@ -408,7 +415,7 @@ def test_ag_oa_do_not_inherit_claude_global_freshness(monkeypatch):
         ag_fetched_at=None,
         oa_fetched_at=None,
     )
-    sections = {title: age for title, _groups, age in usagewidget.visible_sections(usage, NOW)}
+    sections = {title: age for title, _groups, age, _key in usagewidget.visible_sections(usage, NOW)}
     assert sections["CLAUDE CODE"] == pytest.approx(544 * 60)
     assert sections["ANTIGRAVITY · GEMINI"] == 0.0
     assert sections["OPENAI"] == 0.0
@@ -422,7 +429,7 @@ def test_ag_oa_do_not_inherit_claude_global_freshness(monkeypatch):
         return original_text(surface, s, size, color, x, y, anchor=anchor, bold=bold)
 
     monkeypatch.setattr(usagewidget, "_text", text_spy)
-    usagewidget.render(_surf(), usage, NOW, 1540, 360)
+    usagewidget.render(_surf(), usage, NOW, 1540, 360, columns=1)
     assert ages == ["(544 分前)"], "只有 Claude 該顯示全域過期註記，AG/OA 不可跟風"
 
 
@@ -440,7 +447,7 @@ def test_per_source_age_label_uses_own_timestamp(monkeypatch):
         ag_fetched_at=NOW - timedelta(minutes=20),
         oa_fetched_at=NOW - timedelta(seconds=30),
     )
-    sections = {title: age for title, _groups, age in usagewidget.visible_sections(usage, NOW)}
+    sections = {title: age for title, _groups, age, _key in usagewidget.visible_sections(usage, NOW)}
     assert sections["ANTIGRAVITY · GEMINI"] == pytest.approx(20 * 60)
     assert sections["OPENAI"] == pytest.approx(30)
 
@@ -489,31 +496,31 @@ def test_cursor_section_rendered_after_openai(monkeypatch):
     usage = _cursor_usage(oa_accounts=accounts)
     sections = usagewidget.visible_sections(
         usage, NOW, ("claude", "openai", "cursor"))
-    titles = [title for title, _groups, _age in sections]
+    titles = [title for title, _groups, _age, _k in sections]
     assert titles[-1] == "CURSOR"
     assert any(t.startswith("OPENAI") for t in titles)
     assert titles.index("CURSOR") > max(i for i, t in enumerate(titles) if t.startswith("OPENAI"))
-    cursor_groups = [g for t, g, _a in sections if t == "CURSOR"][0]
+    cursor_groups = [g for t, g, _a, _k in sections if t == "CURSOR"][0]
     assert cursor_groups[0][0] == "本期"
     assert cursor_groups[0][1] == 100.0
 
 
 def test_cursor_section_skipped_when_source_not_enabled():
     usage = _cursor_usage()
-    titles = [t for t, _g, _a in usagewidget.visible_sections(usage, NOW, ("claude",))]
+    titles = [t for t, _g, _a, _k in usagewidget.visible_sections(usage, NOW, ("claude",))]
     assert "CURSOR" not in titles
 
 
 def test_cursor_section_skipped_when_no_data():
     usage = _cursor_usage(cu_pct=None)
-    titles = [t for t, _g, _a in usagewidget.visible_sections(
+    titles = [t for t, _g, _a, _k in usagewidget.visible_sections(
         usage, NOW, ("claude", "cursor"))]
     assert "CURSOR" not in titles
 
 
 def test_cursor_section_hidden_when_stale():
     usage = _cursor_usage(cu_fetched_at=NOW - timedelta(days=2))
-    titles = [t for t, _g, _a in usagewidget.visible_sections(
+    titles = [t for t, _g, _a, _k in usagewidget.visible_sections(
         usage, NOW, ("claude", "cursor"))]
     assert "CURSOR" not in titles
     assert "CLAUDE CODE" in titles
@@ -552,54 +559,56 @@ def test_normal_refresh_interval_shows_no_minutes_ago_note():
     usage = _usage(fetched_at=NOW - timedelta(seconds=299))
     usagewidget.render(surf, usage, NOW, 1540, 360)
     bg = theme.C["bg"]
-    has_ink = any(surf.get_at((x, usagewidget.TITLE_Y + 4))[:3] != bg
+    has_ink = any(not _blank(surf.get_at((x, usagewidget.TITLE_Y + 4)))
                   for x in range(1700, 1900, 2))
     assert not has_ink, "刷新間隔內不該顯示「(N 分前)」"
     assert usagewidget.STALE_AFTER_S > 300
 
 
-# ---------------------------------------------------------------- OpenCode Go 與自動壓縮
+# ---------------------------------------------------------------- 自動壓縮
 
-def _og_usage(**kw):
+def _cc_usage(**kw):
     from dataclasses import replace
     base = _usage(**kw)
-    return replace(base, og_5h_pct=0.0, og_5h_resets_at=NOW + timedelta(hours=5),
-                   og_weekly_pct=37.5, og_weekly_resets_at=NOW + timedelta(days=2),
-                   og_fetched_at=NOW)
+    return replace(base, cc_5h_pct=4.08, cc_5h_resets_at=NOW + timedelta(hours=5),
+                   cc_weekly_pct=71.2, cc_weekly_resets_at=NOW + timedelta(days=2),
+                   cc_fetched_at=NOW)
 
 
-def test_opencode_go_section_has_5h_and_weekly_rows():
-    sections = usagewidget.visible_sections(_og_usage(), NOW, ("claude", "opencode"))
-    titles = [t for t, _g, _a in sections]
-    assert titles[-1] == "OPENCODE GO"
-    rows = [g for t, g, _a in sections if t == "OPENCODE GO"][0]
+def test_commandcode_section_has_5h_and_weekly_rows():
+    sections = usagewidget.visible_sections(_cc_usage(), NOW, ("claude", "commandcode"))
+    titles = [t for t, _g, _a, _k in sections]
+    assert titles[-1] == "COMMANDCODE"
+    rows = [g for t, g, _a, _k in sections if t == "COMMANDCODE"][0]
     assert [r[0] for r in rows] == ["5H", "本週"]
-    assert rows[1][1] == 37.5
+    assert rows[1][1] == 71.2
 
 
-def test_opencode_go_section_skipped_when_not_enabled_or_no_data():
-    titles = [t for t, _g, _a in usagewidget.visible_sections(_og_usage(), NOW, ("claude",))]
-    assert "OPENCODE GO" not in titles
-    titles = [t for t, _g, _a in usagewidget.visible_sections(_usage(), NOW, ("claude", "opencode"))]
-    assert "OPENCODE GO" not in titles
+def test_commandcode_section_skipped_when_not_enabled_or_no_data():
+    titles = [t for t, _g, _a, _k in usagewidget.visible_sections(_cc_usage(), NOW, ("claude",))]
+    assert "COMMANDCODE" not in titles
+    titles = [t for t, _g, _a, _k in usagewidget.visible_sections(_usage(), NOW, ("claude", "commandcode"))]
+    assert "COMMANDCODE" not in titles
 
 
 def test_fit_layout_keeps_default_spacing_when_it_fits():
-    lay = usagewidget.fit_layout([3, 2, 1, 1, 1])
+    lay = usagewidget.fit_layout([3, 2, 1])   # 兩欄版面下一欄的典型負載
     assert lay["compact"] is False
     assert lay["group_step"] == usagewidget.GROUP_STEP
-    assert lay["max_sections"] == 5
+    assert lay["max_sections"] == 3
 
 
-def test_fit_layout_compacts_six_sections_without_dropping_any():
-    counts = [3, 2, 1, 1, 1, 2]
+def test_six_sections_fit_in_two_columns_without_compacting():
+    """五區九列單欄放不下（卡片有上下留白），但保序切成兩欄後每欄都用預設間距放得下。"""
+    counts = [3, 2, 1, 1, 2]
     assert usagewidget.layout_height(counts) > usagewidget.DEFAULT_HEIGHT
-    lay = usagewidget.fit_layout(counts)
-    assert lay["compact"] is True
-    assert lay["max_sections"] == 6
-    assert lay["group_step"] >= usagewidget.MIN_GROUP_STEP
-    spacing = {k: lay[k] for k in ("group_step", "sep_gap", "title_gap", "first_group")}
-    assert usagewidget.layout_height(counts, **spacing) <= usagewidget.DEFAULT_HEIGHT
+    fake = [(f"S{i}", [None] * n, 0.0, f"k{i}") for i, n in enumerate(counts)]
+    cols = usagewidget.split_columns(fake, 2)
+    assert [len(c) for c in cols] == [2, 3]   # 高度最平均的切點：[3,2] vs [1,1,2]
+    for col in cols:
+        lay = usagewidget.fit_layout([len(g) for _t, g, _a, _k in col])
+        assert lay["compact"] is False
+        assert lay["max_sections"] == len(col)
 
 
 def test_fit_layout_drops_trailing_sections_when_even_compact_overflows():
@@ -611,17 +620,69 @@ def test_fit_layout_drops_trailing_sections_when_even_compact_overflows():
 
 
 def test_render_all_six_sections_stays_inside_screen():
-    """六區全開時不可畫出 480 以外；最後一條橫條必須在畫面內。"""
+    """全部來源開啟（7 區 14 列）時，兩欄版面不可畫出 480 以外，而且兩欄都要有內容。"""
     from deskbar.claudeusage import OaAccount as _OA
-    usage = _og_usage(ag_5h_pct=1.0, ag_weekly_pct=2.0,
+    usage = _usage(ag_5h_pct=1.0, ag_weekly_pct=2.0,
                       oa_accounts=(_OA("a", "one", 50.0, NOW + timedelta(days=1), NOW),
                                    _OA("b", "two", 60.0, NOW + timedelta(days=1), NOW)))
     from dataclasses import replace
-    usage = replace(usage, cu_pct=70.0, cu_resets_at=NOW + timedelta(days=3), cu_fetched_at=NOW)
+    usage = replace(usage, cu_pct=70.0, cu_resets_at=NOW + timedelta(days=3), cu_fetched_at=NOW,
+                    cc_5h_pct=6.0, cc_5h_resets_at=NOW + timedelta(hours=3),
+                    cc_weekly_pct=72.0, cc_weekly_resets_at=NOW + timedelta(days=3), cc_fetched_at=NOW)
     surf = pygame.Surface((1920, 520)); surf.fill(theme.C["bg"])
-    usagewidget.render(surf, usage, NOW, 1540, 360, ("claude", "antigravity", "openai", "cursor", "opencode"))
+    usagewidget.render(surf, usage, NOW, 1300, 600,
+                       ("claude", "antigravity", "openai", "cursor", "commandcode"))
     bg = theme.C["bg"]
-    below = any(surf.get_at((x, y))[:3] != bg for x in range(1540, 1900, 4) for y in range(480, 520))
+    below = any(not _blank(surf.get_at((x, y))) for x in range(1300, 1900, 4) for y in range(480, 520))
     assert not below, "有東西畫到 480 以外"
-    last_rows = any(surf.get_at((x, y))[:3] != bg for x in range(1540, 1900, 4) for y in range(440, 480))
-    assert last_rows, "第六區應該畫在畫面底部"
+    left = any(not _blank(surf.get_at((x, y))) for x in range(1300, 1590, 4) for y in range(0, 480, 2))
+    right = any(not _blank(surf.get_at((x, y))) for x in range(1610, 1900, 4) for y in range(0, 480, 2))
+    assert left and right, "兩欄都應該有內容"
+
+
+# ---- 付款日（2026-09-22）：手動每月固定日 / 自動來源 / section key ----
+
+def test_next_monthly_rolls_to_next_occurrence():
+    from datetime import date
+    assert usagewidget.next_monthly("2026-09-05", date(2026, 9, 22)) == date(2026, 10, 5)
+    assert usagewidget.next_monthly("2026-09-22", date(2026, 9, 22)) == date(2026, 9, 22)
+    assert usagewidget.next_monthly("2026-01-31", date(2026, 2, 10)) == date(2026, 2, 28)
+    assert usagewidget.next_monthly("2026-12-31", date(2026, 12, 31)) == date(2026, 12, 31)
+    assert usagewidget.next_monthly("garbage", date(2026, 9, 22)) is None
+
+
+def test_billing_for_manual_beats_auto_and_auto_per_source():
+    from dataclasses import replace
+    from datetime import date
+    usage = replace(_cc_usage(), cc_billing_at=NOW + timedelta(days=26))
+    assert usagewidget.billing_for("commandcode", usage, {}, NOW) == ((NOW + timedelta(days=26)).date(), "auto")
+    assert usagewidget.billing_for("commandcode", usage, {"commandcode": "2026-09-05"}, NOW) == (date(2026, 8, 5), "manual")
+    assert usagewidget.billing_for("claude", usage, {}, NOW) is None
+    assert usagewidget.billing_for("claude", usage, {"claude": "2026-01-15"}, NOW) == (date(2026, 8, 15), "manual")
+
+
+def test_visible_sections_carry_source_keys():
+    from dataclasses import replace
+    usage = replace(_cc_usage(ag_5h_pct=1.0, ag_weekly_pct=2.0,
+                              oa_accounts=(OaAccount("acc1", "one", 50.0, NOW + timedelta(days=1), NOW),)),
+                    cu_pct=1.0, cu_resets_at=NOW + timedelta(days=3), cu_fetched_at=NOW)
+    keys = [k for _t, _g, _a, k in usagewidget.visible_sections(
+        usage, NOW, ("claude", "antigravity", "openai", "cursor", "commandcode"))]
+    assert keys == ["claude", "antigravity", "openai:acc1", "cursor", "commandcode"]
+
+
+def test_render_with_billing_dates_draws_label_in_title_row():
+    surf = pygame.Surface((1920, 480)); surf.fill(theme.C["bg"])
+    usagewidget.render(surf, _usage(), NOW, 1540, 360, ("claude",), columns=1,
+                       billing_dates={"claude": "2026-09-05"})
+    bg = theme.C["bg"]
+    # 標題列右半段（x 1760..1900、y 0..18）應該有「付款 8/5」的像素
+    ty = usagewidget.TITLE_Y + usagewidget.SECTION_TITLE_GAP
+    assert any(not _blank(surf.get_at((x, y))) for x in range(1760, 1890, 2) for y in range(ty, ty + 16))
+
+
+def test_fit_title_truncates_long_titles_only():
+    assert usagewidget.fit_title("CLAUDE CODE", 10_000) == "CLAUDE CODE"
+    short = usagewidget.fit_title("COMMANDCODE · KEVIN202511180YSI", 150)
+    assert short.endswith("…") and len(short) < len("COMMANDCODE · KEVIN202511180YSI")
+    assert usagewidget.theme.font(14).size(short)[0] <= 150

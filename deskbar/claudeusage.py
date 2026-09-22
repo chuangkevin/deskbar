@@ -29,6 +29,18 @@ class OaAccount:
 
 
 @dataclass(frozen=True)
+class CcAccount:
+    account_id: str
+    name: str
+    five_hour_pct: float | None
+    five_hour_resets_at: datetime | None
+    weekly_pct: float | None
+    weekly_resets_at: datetime | None
+    billing_at: datetime | None
+    fetched_at: datetime | None
+
+
+@dataclass(frozen=True)
 class UsageInfo:
     session_pct: float | None
     session_resets_at: datetime | None
@@ -51,12 +63,15 @@ class UsageInfo:
     cu_pct: float | None = None
     cu_resets_at: datetime | None = None
     cu_fetched_at: datetime | None = None
-    og_5h_pct: float | None = None
-    og_5h_resets_at: datetime | None = None
-    og_weekly_pct: float | None = None
-    og_weekly_resets_at: datetime | None = None
-    og_fetched_at: datetime | None = None
+    cc_5h_pct: float | None = None
+    cc_5h_resets_at: datetime | None = None
+    cc_weekly_pct: float | None = None
+    cc_weekly_resets_at: datetime | None = None
+    cc_fetched_at: datetime | None = None
+    cc_billing_at: datetime | None = None
+    cu_billing_at: datetime | None = None
     oa_accounts: tuple[OaAccount, ...] = ()
+    cc_accounts: tuple[CcAccount, ...] = ()
 
 
 def fmt_countdown(dt: datetime | None, now: datetime) -> str:
@@ -79,7 +94,7 @@ def fmt_countdown(dt: datetime | None, now: datetime) -> str:
 # ---------------------------------------------------------------- 配速判定
 
 # 各視窗長度（秒）：5 小時 session、7 天週限額、7 天 Fable 週限額、AG 與 OpenAI 對應視窗
-WINDOW_S = {"session": 5 * 3600, "weekly": 7 * 86400, "fable": 7 * 86400, "ag_5h": 5 * 3600, "ag_weekly": 7 * 86400, "oa_weekly": 7 * 86400, "cu": 30 * 86400, "og_5h": 5 * 3600, "og_weekly": 7 * 86400}
+WINDOW_S = {"session": 5 * 3600, "weekly": 7 * 86400, "fable": 7 * 86400, "ag_5h": 5 * 3600, "ag_weekly": 7 * 86400, "oa_weekly": 7 * 86400, "cu": 30 * 86400, "cc_5h": 5 * 3600, "cc_weekly": 7 * 86400}
 PACE_GRACE_PCT = 5.0     # 容許超前配速的緩衝（百分點）：視窗剛開的小額使用不該轉紅
 
 

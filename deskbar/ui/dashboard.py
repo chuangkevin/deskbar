@@ -12,22 +12,24 @@ from deskbar.ui import agenda, eventcard, icons, monthgrid, theme, transitions, 
 from deskbar.viewwin import agenda_window, data_window, view_window, window_label
 from deskbar.weather import code_text
 
-# 三欄版面（2026-07 三欄重構）：左＝時鐘/日期/天氣/同步狀態，中＝行事曆時間軸，
-# 右＝Claude usage 油表。座標全部集中在這裡，其餘子渲染（agenda/weekgrid/monthgrid/
-# grid_range/now_line/lanes）一律吃 TL_AREA 或 module 常量，不再各自硬寫魔術數字。
-PANEL_W, TL_X0, TL_X1 = 400, 420, 1520
+# 三欄版面（2026-07 三欄重構，2026-09 右欄改兩欄）：左＝時鐘/日期/天氣/同步狀態，
+# 中＝行事曆時間軸，右＝各家 AI 訂閱油表（兩欄並排）。座標全部集中在這裡，
+# 其餘子渲染（agenda/weekgrid/monthgrid/grid_range/now_line/lanes）一律吃
+# TL_AREA 或 module 常量，不再各自硬寫魔術數字。見常數：中欄 TL_X0..TL_X1，
+# 右欄 USAGE_X0..USAGE_X0+USAGE_W。
+PANEL_W, TL_X0, TL_X1 = 400, 420, 1280
 TL_AREA = Rect(TL_X0, 52, TL_X1 - TL_X0, 368)
-USAGE_X0, USAGE_W = 1540, 360            # 右欄 1540..1900：跟左/中欄一樣在螢幕右緣留 20px
+USAGE_X0, USAGE_W = TL_X1 + 20, 600      # 右欄見常數（右緣仍留 20px）
 SPAN_LABELS = {"half": "半天", "day": "日", "week": "週", "month": "月"}
 # 寬度鈕／模式鈕改放中欄頂帶右側（原本在畫面最右側，現在中欄變窄，兩顆鈕改貼中欄右界，
-# 右欄完全不放任何頂帶元素）。
-SPAN_BTN = Rect(1290, 2, 110, 48)
-MODE_BTN = Rect(1408, 2, 110, 48)
-CENTER_BTN = Rect(1172, 2, 110, 48)      # 行事曆↔待辦（Linear）切換
-WORK_BTN = Rect(1034, 2, 130, 48)        # 頂列工作 Session 直達鈕
+# 右欄完全不放任何頂帶元素）。四顆鈕一律由 TL_X1 推導，保持原本相對位置。
+MODE_BTN = Rect(TL_X1 - 112, 2, 110, 48)
+SPAN_BTN = Rect(TL_X1 - 230, 2, 110, 48)
+CENTER_BTN = Rect(TL_X1 - 348, 2, 110, 48)  # 行事曆↔待辦（Linear）切換
+WORK_BTN = Rect(TL_X1 - 486, 2, 130, 48)    # 頂列工作 Session 直達鈕
 GOTO_NOW_W, GOTO_NOW_H = 110, 40        # 「回到今天」鈕：緊貼工作直達鈕左側
 TOPBAR_GAP = 16                          # 頂帶固定區塊之間的最小留白
-# 中欄內容的滑動過場區域：x 避開左欄分隔線(400)與右界線(1520)，y 從頂帶以下開始
+# 中欄內容的滑動過場區域：x 避開左欄分隔線(400)與右界線（見 TL_X1），y 從頂帶以下開始
 # ——過場只滑「內容」，左右欄與頂列按鈕是 chrome，釘死不動（2026-07-30 實機回報）。
 CENTER_SLIDE_AREA = Rect(PANEL_W + 2, 52, TL_X1 - PANEL_W - 2, 480 - 52)
 # 2026-07-27：頂欄整日行程膠囊（_render_allday／_layout_allday_chips）已移除——
@@ -77,7 +79,7 @@ def _layout_topbar(span, anchor_or_now, win_start, win_end,
     不呼叫 window_label——行程模式的視窗是 agenda_window 算出的日期範圍，跟河道
     的 view_window 不是同一組數字，標籤格式也不同（"7/27–8/2" vs "7月27日–8月2日"）。
     """
-    # 2026-07-30：CENTER_BTN（中欄切換）固定佔 1172..1282，「回到今天」再往左
+    # 2026-07-30：CENTER_BTN（中欄切換）固定佔 CENTER_BTN 見常數，「回到今天」再往左
     # 一格——首日把它留在 SPAN_BTN 左側，跟切換鈕整顆重疊（實機滑動時回報）。
     goto_now_rect = (Rect(WORK_BTN.x - GOTO_NOW_W, 4, GOTO_NOW_W, GOTO_NOW_H)
                      if show_goto_now else None)
@@ -149,7 +151,10 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                                   page=linear_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources, getattr(settings, "oa_aliases", {}),
-                           getattr(settings, "oa_hidden", ()))
+                           getattr(settings, "oa_hidden", ()),
+                           billing_dates=getattr(settings, "billing_dates", {}),
+                           cc_aliases=getattr(settings, "cc_aliases", {}),
+                           cc_hidden=getattr(settings, "cc_hidden", ()))
         return _finish(surface, snap, settings, now, hits)
     if center == "notes":
         from deskbar.ui import notesview
@@ -160,7 +165,10 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
                                  TL_AREA, now, _t.monotonic(), page=notes_page)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources, getattr(settings, "oa_aliases", {}),
-                           getattr(settings, "oa_hidden", ()))
+                           getattr(settings, "oa_hidden", ()),
+                           billing_dates=getattr(settings, "billing_dates", {}),
+                           cc_aliases=getattr(settings, "cc_aliases", {}),
+                           cc_hidden=getattr(settings, "cc_hidden", ()))
         return _finish(surface, snap, settings, now, hits)
     if center == "sessions":
         from deskbar.ui import worksessionwidget
@@ -174,7 +182,10 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         hits += worksessionwidget.render_center_view(surface, snap, settings, TL_AREA, now)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources, getattr(settings, "oa_aliases", {}),
-                           getattr(settings, "oa_hidden", ()))
+                           getattr(settings, "oa_hidden", ()),
+                           billing_dates=getattr(settings, "billing_dates", {}),
+                           cc_aliases=getattr(settings, "cc_aliases", {}),
+                           cc_hidden=getattr(settings, "cc_hidden", ()))
         return _finish(surface, snap, settings, now, hits)
     if center == "scene":
         from deskbar.ui import scenes
@@ -189,7 +200,10 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         _chip_btn(surface, work_label, WORK_BTN, "open_work_sessions", hits, size=20)
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources, getattr(settings, "oa_aliases", {}),
-                           getattr(settings, "oa_hidden", ()))
+                           getattr(settings, "oa_hidden", ()),
+                           billing_dates=getattr(settings, "billing_dates", {}),
+                           cc_aliases=getattr(settings, "cc_aliases", {}),
+                           cc_hidden=getattr(settings, "cc_hidden", ()))
         return _finish(surface, snap, settings, now, hits)
 
     lane_emails = [e for e in settings.accounts if settings.accounts[e].calendars] \
@@ -270,7 +284,10 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     # 跟左欄時鐘/天氣一樣不可互動），畫在最後純粹是慣例（跟中欄內容互不重疊，順序無關）。
     usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                        settings.usage_sources, getattr(settings, "oa_aliases", {}),
-                       getattr(settings, "oa_hidden", ()))
+                       getattr(settings, "oa_hidden", ()),
+                       billing_dates=getattr(settings, "billing_dates", {}),
+                           cc_aliases=getattr(settings, "cc_aliases", {}),
+                           cc_hidden=getattr(settings, "cc_hidden", ()))
     return _finish(surface, snap, settings, now, hits)
 
 
