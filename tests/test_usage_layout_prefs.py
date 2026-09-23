@@ -333,3 +333,14 @@ def test_density_normal_never_compacts_and_compact_always_compacts():
     tight = usagewidget._scaled(0.0)
     assert compact["group_step"] == tight["group_step"]
     assert compact["first_group"] == tight["first_group"]
+
+
+def test_fixed_density_reports_overflow_so_render_adds_a_column():
+    """2026-09-23 實機：寬度 800＋緊湊，左欄 5 張卡片要 491px > 474px，
+    以前 compact 一律回報放得下，最後一張卡片被畫到螢幕外。"""
+    from deskbar.ui import usagewidget as u
+    counts = [3, 3, 2, 1, 1]
+    for density in ("compact", "normal"):
+        layout = u.fit_layout(counts, u.DEFAULT_HEIGHT, density=density)
+        assert layout["max_sections"] < len(counts), density
+    assert u.fit_layout([3, 1], u.DEFAULT_HEIGHT, density="compact")["max_sections"] == 2

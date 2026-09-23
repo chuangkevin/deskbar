@@ -86,6 +86,11 @@ input[type=date]{background:#2a2a2a;color:#eee;border:1px solid #444;border-radi
 @media(max-width:374px){body{padding:12px}.row{align-items:stretch;flex-wrap:wrap}.row input[type=text]{min-width:0;flex:1 1 180px}.cal-row select,.cal-row input[type=text]{max-width:100%}}
 @media(max-width:767px){.oa-alias-row{flex-wrap:wrap}.oa-visible-toggle{flex:1 1 100%}.oa-alias-name{flex:1 1 auto}.oa-alias-row>.p_oa_alias{flex:1 1 100%}.billing-row{flex-wrap:wrap}.billing-name{flex:1 1 100%}.billing-row>.p_billing{flex:1 1 100%}}
 @media(max-width:479px){.alarm-row{flex-direction:column}.alarm-actions{width:100%;justify-content:flex-start}.alarm-actions button{flex:1 1 132px;padding-inline:8px}}
+.ul-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #2a2a2a}
+.ul-handle{min-width:32px;min-height:32px;display:flex;align-items:center;justify-content:center;touch-action:none;cursor:grab;font-size:20px}
+.ul-visible{width:24px;height:24px}
+.ul-title{flex:1;min-width:0;overflow-wrap:anywhere}
+#ul-width{width:100%;max-width:420px}
 </style></head><body>
 <h1>deskbar</h1>
 <nav class="sticky-nav" aria-label="頁面快速導航">
@@ -115,6 +120,8 @@ input[type=date]{background:#2a2a2a;color:#eee;border:1px solid #444;border-radi
 <h2 id="sec-cals">日曆</h2>
 <div id="cals"></div>
 <h2 id="sec-prefs">裝置設定</h2>
+<h3>右欄卡片</h3>
+<div id="usage-layout"></div>
 <div id="prefs"></div>
 <script>
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -254,9 +261,7 @@ async function loadPrefs(){
       const id=String(a.account_id||"");
       const label=String(a.name||id.slice(0,8));
       return `<div class="oa-alias-row">
-       <label class="oa-visible-toggle"><input type="checkbox" class="p_oa_visible"
-        data-account-id="${esc(id)}" ${oaHidden.includes(id)?"":"checked"}>
-        <span class="oa-alias-name">${esc(label)}</span></label>
+       <span class="oa-alias-name">${esc(label)}</span>
        <input type="text" class="p_oa_alias" data-account-id="${esc(id)}" maxlength="24"
         placeholder="不填就用預設名稱" value="${esc(oaAliases[id]||"")}">
       </div>`;
@@ -268,9 +273,7 @@ async function loadPrefs(){
       const id=String(a.account_id||"");
       const label=String(a.name||id.slice(0,8));
       return `<div class="oa-alias-row">
-       <label class="oa-visible-toggle"><input type="checkbox" class="p_cc_visible"
-        data-account-id="${esc(id)}" ${ccHidden.includes(id)?"":"checked"}>
-        <span class="oa-alias-name">${esc(label)}</span></label>
+       <span class="oa-alias-name">${esc(label)}</span>
        <input type="text" class="p_cc_alias" data-account-id="${esc(id)}" maxlength="24"
         placeholder="不填就用預設名稱" value="${esc(ccAliases[id]||"")}">
       </div>`;
@@ -348,8 +351,8 @@ async function savePrefs(){
   scene_mode:document.getElementById("p_sm").value,
     scenes_enabled:[...document.querySelectorAll(".p_sc:checked")].map(c=>c.value),
     usage_sources:[...document.querySelectorAll(".p_us:checked")].map(c=>c.value),
-    oa_hidden:[...document.querySelectorAll(".p_oa_visible:not(:checked)")].map(i=>i.dataset.accountId),
-    cc_hidden:[...document.querySelectorAll(".p_cc_visible:not(:checked)")].map(i=>i.dataset.accountId),
+    oa_hidden:[],
+    cc_hidden:[],
     cc_aliases:Object.fromEntries([...document.querySelectorAll(".p_cc_alias")]
      .map(i=>[i.dataset.accountId,i.value])),
     billing_dates:Object.fromEntries([...document.querySelectorAll(".p_billing")]
@@ -490,8 +493,87 @@ document.querySelectorAll('.sticky-nav a[href^="#sec-"]').forEach(a=>{
   if(history.pushState){history.pushState(null,"",href)}else{location.hash=href}
  });
 });
+// ---- 右欄卡片：section 排序／隱藏／寬度／密度 ----
+let ulDragEl=null;
+function ulMsg(){const m=document.getElementById("ul-msg");m.textContent="已套用";setTimeout(()=>{if(m.textContent==="已套用")m.textContent=""},2000)}
+async function loadUsageLayout(){
+ const box=document.getElementById("usage-layout");
+ try{
+  const [ur,pr]=await Promise.all([fetch("/api/usage?include_hidden=1"),fetch("/api/prefs")]);
+  if(!ur.ok||!pr.ok){box.innerHTML="";return}
+  let ud=await ur.json();let p=await pr.json();
+  let usageHidden=Array.isArray(p.usage_hidden)?p.usage_hidden:[];
+  const oaHidden=Array.isArray(p.oa_hidden)?p.oa_hidden:[];
+  const ccHidden=Array.isArray(p.cc_hidden)?p.cc_hidden:[];
+  if(oaHidden.length||ccHidden.length){
+   const merged=[...new Set([...usageHidden,
+    ...oaHidden.map(id=>"openai:"+id),
+    ...ccHidden.map(id=>"commandcode:"+id)])];
+   await fetch("/api/prefs",{method:"PATCH",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({usage_hidden:merged,oa_hidden:[],cc_hidden:[]})});
+   const ur2=await fetch("/api/usage?include_hidden=1");
+   ud=ur2.ok?await ur2.json():ud;
+  }
+  const sections=Array.isArray(ud.sections)?ud.sections:[];
+  const width=Number.isFinite(+p.usage_width)&&+p.usage_width>0?+p.usage_width:600;
+  const density=p.usage_density||"auto";
+  box.innerHTML=`${sections.map(s=>`
+   <div class="ul-row" data-key="${esc(s.key)}">
+    <span class="ul-handle" onpointerdown="ulDragStart(event)" style="touch-action:none">≡</span>
+    <input type="checkbox" class="ul-visible" ${s.hidden?"":"checked"} onchange="ulVisibleChange()">
+    <span class="ul-title">${esc(s.title)}</span>
+   </div>`).join("")||'<div class="hint">尚無卡片</div>'}
+   <div class="cal-row" style="margin-top:10px">右欄寬度
+    <input type="range" id="ul-width" min="360" max="1100" step="20" value="${width}" oninput="ulWidthInput()" onchange="ulWidthChange()">
+    <span id="ul-width-val">${width}px</span></div>
+   <div class="cal-row">卡片大小
+    <label><input type="radio" name="ul-density" value="auto" ${density==="auto"?"checked":""} onchange="ulDensityChange()">自動</label>
+    <label><input type="radio" name="ul-density" value="normal" ${density==="normal"?"checked":""} onchange="ulDensityChange()">正常</label>
+    <label><input type="radio" name="ul-density" value="compact" ${density==="compact"?"checked":""} onchange="ulDensityChange()">緊湊</label></div>
+   <span id="ul-msg"></span>`;
+ }catch(err){box.innerHTML=""}
+}
+async function ulVisibleChange(){
+ const hidden=[...document.querySelectorAll(".ul-row")].filter(r=>!r.querySelector(".ul-visible").checked).map(r=>r.dataset.key);
+ await fetch("/api/prefs",{method:"PATCH",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({usage_hidden:hidden})});ulMsg()
+}
+function ulWidthInput(){document.getElementById("ul-width-val").textContent=document.getElementById("ul-width").value+"px"}
+async function ulWidthChange(){
+ await fetch("/api/prefs",{method:"PATCH",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({usage_width:+document.getElementById("ul-width").value})});ulMsg()
+}
+async function ulDensityChange(){
+ const v=document.querySelector('input[name="ul-density"]:checked').value;
+ await fetch("/api/prefs",{method:"PATCH",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({usage_density:v})});ulMsg()
+}
+function ulDragStart(e){
+ ulDragEl=e.target.closest(".ul-row");
+ if(!ulDragEl)return;
+ ulDragEl.style.opacity=.55;e.preventDefault()
+}
+document.addEventListener("pointermove",e=>{
+ if(!ulDragEl)return;
+ e.preventDefault();
+ for(const el of document.querySelectorAll(".ul-row")){
+  if(el===ulDragEl)continue;
+  const r=el.getBoundingClientRect();
+  if(e.clientY<r.top+r.height/2){el.before(ulDragEl);return}
+ }
+ const all=[...document.querySelectorAll(".ul-row")];
+ if(all.length)all[all.length-1].after(ulDragEl);
+},{passive:false});
+document.addEventListener("pointerup",async()=>{
+ if(!ulDragEl)return;
+ ulDragEl.style.opacity=1;ulDragEl=null;
+ const order=[...document.querySelectorAll(".ul-row")].map(el=>el.dataset.key);
+ await fetch("/api/prefs",{method:"PATCH",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({usage_order:order})});ulMsg()
+});
 load();
 loadCals();
 loadPrefs();
+loadUsageLayout();
 loadNotes();
 </script></body></html>

@@ -54,7 +54,8 @@ def test_openai_alias_block_renders_only_when_seen_accounts_exist():
 def test_openai_alias_inputs_follow_mobile_and_touch_contract():
     content = _html()
     assert 'class="p_oa_alias"' in content
-    assert 'class="p_oa_visible"' in content
+    # 2026-09-23：帳號「顯示」勾選移到「右欄卡片」清單（usage_hidden），這裡只留別名
+    assert 'class="p_oa_visible"' not in content
     assert 'maxlength="24"' in content
     assert 'placeholder="不填就用預設名稱"' in content
     assert ".oa-alias-row" in content
@@ -72,10 +73,13 @@ def test_save_prefs_includes_openai_aliases_from_inputs():
 
 
 def test_save_prefs_includes_unchecked_openai_accounts_as_hidden():
+    """2026-09-23 起隱藏統一走「右欄卡片」清單：沒勾的卡片 key 送 usage_hidden；
+    舊 oa_hidden／cc_hidden 併進 usage_hidden 後清空。"""
     content = _html()
-    assert 'document.querySelectorAll(".p_oa_visible:not(:checked)")' in content
-    assert "oaHidden.includes(id)?\"\":\"checked\"" in content
-    assert "oa_hidden:" in content
+    assert 'class="ul-visible"' in content
+    assert "usage_hidden:hidden" in content
+    assert "usage_hidden:merged,oa_hidden:[],cc_hidden:[]" in content
+    assert "oa_hidden:[]" in content
 
 
 def test_oa_aliases_roundtrip_and_invalid_fallback(tmp_path, monkeypatch):

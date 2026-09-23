@@ -454,10 +454,15 @@ def fit_layout(group_counts, height: float = DEFAULT_HEIGHT, density: str = "aut
     default = {"group_step": GROUP_STEP, "sep_gap": SECTION_SEP_GAP,
                "title_gap": SECTION_TITLE_GAP, "first_group": SECTION_FIRST_GROUP,
                "max_sections": len(group_counts), "compact": False}
-    if density == "compact":
-        return {**_scaled(0.0), "max_sections": len(group_counts), "compact": True}
-    if density == "normal":
-        return default
+    if density in ("compact", "normal"):
+        # 固定間距也要老實回報放得下幾區，呼叫端才會加欄；以前一律回全區，
+        # 放不下時最後一張卡片被畫到螢幕外（2026-09-23 寬度 800＋緊湊實機）
+        spacing = _scaled(0.0) if density == "compact" else {
+            k: default[k] for k in ("group_step", "sep_gap", "title_gap", "first_group")}
+        keep = len(group_counts)
+        while keep > 1 and layout_height(group_counts[:keep], **spacing) > height:
+            keep -= 1
+        return {**spacing, "max_sections": keep, "compact": density == "compact"}
     if layout_height(group_counts) <= height:
         return default
     # 二分搜尋一個 0..1 的縮放係數，套在三個「可伸縮」的間距上。
