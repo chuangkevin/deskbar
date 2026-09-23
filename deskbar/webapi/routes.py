@@ -13,6 +13,8 @@ from deskbar.ui.theme import PALETTES
 from deskbar.ui.usagewidget import (
     STALE_AFTER_S,
     VERY_STALE_AFTER_S,
+    apply_hidden,
+    apply_order,
     billing_for,
     is_exhausted,
     visible_sections,
@@ -260,6 +262,7 @@ def register_routes(app: Flask, context: WebContext) -> None:
             out["cc_hidden"] = list(getattr(context.settings_provider, "cc_hidden", ()))
             out["billing_dates"] = dict(getattr(context.settings_provider, "billing_dates", {}))
             out["usage_order"] = list(getattr(context.settings_provider, "usage_order", ()))
+            out["usage_hidden"] = list(getattr(context.settings_provider, "usage_hidden", ()))
             out["usage_width"] = getattr(context.settings_provider, "usage_width",
                                          config.DEFAULT_USAGE_WIDTH)
             out["usage_density"] = getattr(context.settings_provider, "usage_density", "auto")
@@ -380,6 +383,12 @@ def register_routes(app: Flask, context: WebContext) -> None:
             elif k == "usage_order":
                 from deskbar.webapi.validation import validate_usage_order_payload
                 valid, err = validate_usage_order_payload(v)
+                if not valid:
+                    return jsonify({"error": err}), 400
+                staged[k] = tuple(key.strip() for key in v)
+            elif k == "usage_hidden":
+                from deskbar.webapi.validation import validate_usage_hidden_payload
+                valid, err = validate_usage_hidden_payload(v)
                 if not valid:
                     return jsonify({"error": err}), 400
                 staged[k] = tuple(key.strip() for key in v)
@@ -591,17 +600,28 @@ def register_routes(app: Flask, context: WebContext) -> None:
                 cc_aliases = dict(getattr(context.settings_provider, "cc_aliases", {}))
                 cc_hidden = list(getattr(context.settings_provider, "cc_hidden", ()))
                 billing_dates = dict(getattr(context.settings_provider, "billing_dates", {}))
+                usage_order = list(getattr(context.settings_provider, "usage_order", ()))
+                usage_hidden = list(getattr(context.settings_provider, "usage_hidden", ()))
         else:
             enabled_sources = list(config.VALID_USAGE_SOURCES)
             aliases, hidden = {}, []
             cc_aliases, cc_hidden = {}, []
             billing_dates = {}
+            usage_order = []
+            usage_hidden = []
 
         usage = snapshot.usage
+        raw_sections = visible_sections(usage, now, enabled_sources,
+                                        aliases, hidden,
+                                        cc_aliases, cc_hidden)
+        raw_sections = apply_order(raw_sections, usage_order)
+        include_hidden = request.args.get("include_hidden") == "1"
+        hidden_set = set(usage_hidden)
         sections = []
-        for title, groups, age_s, key in visible_sections(usage, now, enabled_sources,
-                                                          aliases, hidden,
-                                                          cc_aliases, cc_hidden):
+        for title, groups, age_s, key in raw_sections:
+            is_hidden = key in hidden_set
+            if not include_hidden and is_hidden:
+                continue
             stale = age_s > STALE_AFTER_S
             muted = age_s > VERY_STALE_AFTER_S
             billed = billing_for(key, usage, billing_dates, now)
@@ -621,6 +641,7 @@ def register_routes(app: Flask, context: WebContext) -> None:
                 "billing_at": billing_at,
                 "billing_days": billing_days,
                 "billing_source": billing_source,
+                "hidden": is_hidden,
                 "groups": [{
                     "label": label,
                     "pct": pct,

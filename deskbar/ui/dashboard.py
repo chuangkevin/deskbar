@@ -92,6 +92,7 @@ def _usage_draw_kwargs(settings) -> dict:
         "cc_aliases": getattr(settings, "cc_aliases", {}),
         "cc_hidden": getattr(settings, "cc_hidden", ()),
         "order": getattr(settings, "usage_order", ()),
+        "hidden": getattr(settings, "usage_hidden", ()),
         "columns": None,
         "density": density,
     }

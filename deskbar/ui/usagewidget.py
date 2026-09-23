@@ -403,6 +403,15 @@ def apply_order(sections, order) -> list:
     return out
 
 
+def apply_hidden(sections, hidden) -> list:
+    """純函數：濾掉 key 在 hidden 集合的 section。hidden 為 None 時不濾。"""
+    if hidden is None:
+        return list(sections)
+    hidden_set = set(k.strip() for k in hidden
+                     if isinstance(k, str) and not isinstance(k, bool) and k.strip())
+    return [s for s in sections if s[3] not in hidden_set]
+
+
 MIN_GROUP_STEP = 32       # 壓縮下限：字列 17px＋橫條 9px＋餘裕，再低會貼在一起
 MIN_SECTION_GAP = 10      # sep_gap + title_gap 合計的下限
 DEFAULT_HEIGHT = 480 - 6  # 右欄可用高度（螢幕 480，底下留一點邊；layout_height 已含 TITLE_Y 起點）
@@ -600,7 +609,8 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
            height: float = DEFAULT_HEIGHT,
            columns: int | None = 2, gap: float = 20,
            billing_dates: dict | None = None,
-           order=None, density: str = "auto") -> dict:
+           order=None, density: str = "auto",
+      hidden=None) -> dict:
     """畫可見 usage 區塊；未勾選、沒有資料或超過一天的來源完全不留痕跡。
 
     columns 是「最少欄數」：None 時由欄寬推導（max(1, w // 300)）。
@@ -613,6 +623,7 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
     sections = visible_sections(usage, now, enabled_sources, oa_aliases, oa_hidden,
                                 cc_aliases, cc_hidden)
     sections = apply_order(sections, order)
+    sections = apply_hidden(sections, hidden)
     if not sections:
         return {"columns": 0, "keys": []}
 

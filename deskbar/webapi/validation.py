@@ -152,6 +152,21 @@ def validate_usage_order_payload(value) -> tuple[bool, str | None]:
     return True, None
 
 
+def validate_usage_hidden_payload(value) -> tuple[bool, str | None]:
+    """usage_hidden：list[str]，上限 64 個、每個 strip 後 1–80 字；壞掉整批 400。"""
+    if not isinstance(value, list):
+        return False, "invalid usage_hidden"
+    if len(value) > _MAX_USAGE_ORDER:
+        return False, "invalid usage_hidden"
+    for key in value:
+        if not isinstance(key, str) or isinstance(key, bool):
+            return False, "invalid usage_hidden"
+        k = key.strip()
+        if not k or len(k) > _MAX_USAGE_ORDER_KEY_LEN:
+            return False, "invalid usage_hidden"
+    return True, None
+
+
 def validate_usage_width_payload(value) -> tuple[bool, str | None]:
     """usage_width：int 360–1100（bool 不算 int）；範圍外 400。"""
     lo, hi = _USAGE_WIDTH_RANGE
