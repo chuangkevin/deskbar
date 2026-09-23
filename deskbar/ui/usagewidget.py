@@ -11,6 +11,7 @@
 3. OPENAI 區：每個帳號一區（無資料時整區略過，不畫分隔線與標題）
 4. CURSOR 區：本期（帳單週期約一個月；無資料時整區略過）
 5. COMMANDCODE 區：5H / 本週（無資料時整區略過）
+6. OPENCODE GO 區：每把 key 一區，5H / 本週（無 key／無資料時整區略過）
 
 2026-09-11 起來源多到一欄放不下（5 區 9 列）：render() 會先算總高度，超過可用高度時
 把垂直間距等比例縮小（只縮間距，不縮字級、不縮長條），縮到底線仍放不下才裁掉最後幾區。
@@ -22,10 +23,11 @@ usage 資料完全被動接收：Mac agent POST 到 deskbar 的 /api/usage。
 
 下次付款日（2026-09-22）：visible_sections 回傳的每個 section 帶第 4 個元素
 key（claude / antigravity / openai:<account_id> / cursor / commandcode；
+commandcode:<account_id> / opencode / opencode:<account_id>；
 無帳號資料的舊 OPENAI 區用 openai）。billing_for(key, usage, billing_dates, now)
 決定每區的下次付款日：手動（手機設定頁填的每月固定日）優先於自動
-（cursor→cu_billing_at、commandcode→cc_billing_at）；
-兩者都沒有就不畫。
+（cursor→cu_billing_at、commandcode→cc_billing_at、
+opencode→該帳號 billing_at）；兩者都沒有就不畫。
 """
 from __future__ import annotations
 
@@ -53,7 +55,7 @@ BAR_Y_OFFSET = 19         # 文字列完整結束後再起橫條，避免字框�
 STALE_AFTER_S = 900       # fetched_at 超過這麼久沒更新，標題旁加「(N 分前)」
 VERY_STALE_AFTER_S = 3600 # 超過這麼久，整組轉 muted 灰（agent 可能已經停了）
 HIDE_AFTER_S = 24 * 60 * 60
-DEFAULT_SOURCES = ("claude", "antigravity", "openai", "cursor", "commandcode")
+DEFAULT_SOURCES = ("claude", "antigravity", "openai", "cursor", "commandcode", "opencode")
 
 
 def _text(surface, s, size, color, x, y, anchor="topleft", bold=False):
@@ -111,12 +113,26 @@ def _draw_group(surface, x0: float, w: float, y: float, label: str,
         pct_color = theme.C["usage_full"]
     else:
         pct_color = theme.C["text"]
-    _text(surface, label, 15, label_color, x0, y)
-    countdown = fmt_countdown(resets_at, now)
-    _text(surface, f"剩 {countdown}", 12, theme.C["muted"],
-          x0 + w - 52, y + 2, "topright")
     pct_label = f"{round(pct)}%" if pct is not None else "—"
+    _text(surface, label, 15, label_color, x0, y)
     _text(surface, pct_label, 17, pct_color, x0 + w, y - 1, "topright", bold=True)
+    label_img = theme.text_surface(label, 15, label_color)
+    pct_img = theme.text_surface(pct_label, 17, pct_color, bold=True)
+    pct_r = pct_img.get_rect(topright=(x0 + w, y - 1))
+    countdown = fmt_countdown(resets_at, now)
+    # 窄欄（自動加欄後可能 < 240px）：先算標籤右緣與百分比左緣的空隙，
+    # 剩餘時間 12px 放得下才畫，放不下就省略（標籤＋百分比必留，不重疊）。
+    # 經 _text 畫（測試 spy 才看得到；直接 blit 會繞過 _text）。
+    if w >= 240:
+        _text(surface, f"剩 {countdown}", 12, theme.C["muted"],
+              x0 + w - 52, y + 2, "topright")
+    else:
+        cd_img = theme.text_surface(f"剩 {countdown}", 12, theme.C["muted"])
+        cd_r = cd_img.get_rect(topright=(x0 + w - 52, y + 2))
+        label_right = x0 + label_img.get_width()
+        if cd_r.left >= label_right + 4 and cd_r.right <= pct_r.left - 4:
+            _text(surface, f"剩 {countdown}", 12, theme.C["muted"],
+                  x0 + w - 52, y + 2, "topright")
 
     bar_x = x0 + BAR_MARGIN
     bar_w = w - 2 * BAR_MARGIN
@@ -169,7 +185,8 @@ def next_monthly(date_str: str, today: date) -> date | None:
 def billing_for(key, usage, billing_dates: dict, now: datetime) -> tuple[date, str] | None:
     """回 (付款日, 來源 manual/auto)；手動優先，兩者都沒有回 None。
 
-    自動：cursor→cu_billing_at、commandcode→cc_billing_at
+    自動：cursor→cu_billing_at、commandcode→cc_billing_at、
+    opencode:<id>→該帳號 billing_at
     （取 .date()，用 now 的 tz）；其他 key 只看手動。"""
     manual = (billing_dates or {}).get(key) if isinstance(billing_dates, dict) else None
     if isinstance(manual, str) and manual.strip():
@@ -186,6 +203,12 @@ def billing_for(key, usage, billing_dates: dict, now: datetime) -> tuple[date, s
         elif isinstance(key, str) and key.startswith("commandcode:"):
             account_id = key[len("commandcode:"):]
             for account in getattr(usage, "cc_accounts", ()) or ():
+                if getattr(account, "account_id", None) == account_id:
+                    auto_dt = getattr(account, "billing_at", None)
+                    break
+        elif isinstance(key, str) and key.startswith("opencode:"):
+            account_id = key[len("opencode:"):]
+            for account in getattr(usage, "og_accounts", ()) or ():
                 if getattr(account, "account_id", None) == account_id:
                     auto_dt = getattr(account, "billing_at", None)
                     break
@@ -215,6 +238,9 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
     則依帳號自己的 ``fetched_at``，再退回 OA / 全域時間，以相容新 producer payload。
     多帳號 CommandCode 同理：依帳號自己的 ``fetched_at``，再退回 CC / 全域時間；
     ``cc_accounts`` 為空時退回舊的單帳號 ``cc_*`` 欄位。
+    OpenCode Go 同理：``og_accounts`` 每把 key 一區（標題 OPENCODE GO，多把時
+    `` · 2``、`` · 3`` 後綴），key 為 ``opencode:<sha12>``；依帳號自己的
+    ``fetched_at``，再退回 OG / 全域時間。無帳號時整區略過。
     """
     if usage is None:
         return []
@@ -237,6 +263,11 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
                    or getattr(usage, "cc_fetched_at", None) or usage.fetched_at)
         return (now - fetched).total_seconds() if fetched is not None else 0.0
 
+    def age_for_og_account(account):
+        fetched = (getattr(account, "fetched_at", None)
+                   or getattr(usage, "og_fetched_at", None) or usage.fetched_at)
+        return (now - fetched).total_seconds() if fetched is not None else 0.0
+
     aliases = oa_aliases or {}
     hidden = set(oa_hidden or ())
     cc_alias_map = cc_aliases or {}
@@ -257,6 +288,11 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
         if getattr(account, "name", ""):
             return f"COMMANDCODE · {account.name.upper()}"
         return "COMMANDCODE"
+
+    def og_title(account, index: int) -> str:
+        if index == 0:
+            return "OPENCODE GO"
+        return f"OPENCODE GO · {index + 1}"
 
     claude_groups = [
         ("5H SESSION", usage.session_pct, usage.session_resets_at,
@@ -328,6 +364,17 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
                     ("5H", cc_5h, getattr(usage, "cc_5h_resets_at", None), WINDOW_S["cc_5h"]),
                     ("本週", cc_weekly, getattr(usage, "cc_weekly_resets_at", None), WINDOW_S["cc_weekly"]),
                 ], cc_age, "commandcode"))
+
+    if "opencode" in enabled:
+        og_accounts = getattr(usage, "og_accounts", ()) or ()
+        for i, account in enumerate(og_accounts):
+            og_age = age_for_og_account(account)
+            if og_age < HIDE_AFTER_S:
+                sections.append((og_title(account, i), [
+                    ("5H", account.five_hour_pct, account.five_hour_resets_at, WINDOW_S["og_5h"]),
+                    ("本週", account.weekly_pct, account.weekly_resets_at, WINDOW_S["og_weekly"]),
+                    ("本月", account.monthly_pct, account.monthly_resets_at, WINDOW_S["og_monthly"]),
+                ], og_age, f"opencode:{account.account_id}"))
     return sections
 
 
@@ -393,33 +440,60 @@ def split_columns(sections, columns: int = 2) -> list[list]:
 
     切點選「各欄高度最平均」的那一個；高度用預設間距的
     ``layout_height([len(groups) ...])`` 算。``columns=1`` 或只有 1 個
-    section 時原樣回傳一欄；空 list 回 ``[]``。"""
+    section 時原樣回傳一欄；空 list 回 ``[]``。
+    columns > section 數時多出空欄無意義，切成 min(columns, len) 欄。"""
     sections = list(sections)
     if not sections:
         return []
     if columns <= 1 or len(sections) == 1:
         return [sections]
+    columns = min(columns, len(sections))
     counts = [len(groups) for _t, groups, _a, _k in sections]
 
     def height_of(part):
         return layout_height(part) if part else 0.0
 
-    best_cut, best_diff = 1, None
-    for cut in range(1, len(counts)):
-        diff = abs(height_of(counts[:cut]) - height_of(counts[cut:]))
-        if best_diff is None or diff < best_diff:
-            best_diff, best_cut = diff, cut
-    return [sections[:best_cut], sections[best_cut:]]
+    # N 欄：動態規劃找總高度最平均的保序切法（N-1 個切點）。
+    n = len(counts)
+    prefix = [0.0] * (n + 1)
+    for i, c in enumerate(counts):
+        prefix[i + 1] = prefix[i] + layout_height([c])
+    import math as _math
+    INF = _math.inf
+    # dp[k][i] = 前 i 個切成 k 欄時的最小「最大欄高」
+    dp = [[INF] * (n + 1) for _ in range(columns + 1)]
+    cut = [[0] * (n + 1) for _ in range(columns + 1)]
+    dp[0][0] = 0.0
+    for k in range(1, columns + 1):
+        for i in range(k, n + 1):
+            for j in range(k - 1, i):
+                cost = max(dp[k - 1][j], prefix[i] - prefix[j])
+                if cost < dp[k][i]:
+                    dp[k][i] = cost
+                    cut[k][i] = j
+    # 還原切點
+    bounds = []
+    k, i = columns, n
+    while k > 0:
+        bounds.append(i)
+        i = cut[k][i]
+        k -= 1
+    bounds.append(0)
+    bounds.reverse()
+    return [sections[bounds[i]:bounds[i + 1]] for i in range(columns)]
 
 
 def _render_column(surface, sections, now: datetime, x0: float, w: float,
                    height: float = DEFAULT_HEIGHT, usage=None,
-                   billing_dates: dict | None = None) -> None:
-    """畫一欄 usage 區塊（fit_layout → 逐區畫，含放不下時的裁區）。"""
+                   billing_dates: dict | None = None) -> list:
+    """畫一欄 usage 區塊（fit_layout → 逐區畫，含放不下時的裁區）。
+
+    回傳實際畫出的 section key 清單。"""
     if not sections:
-        return
+        return []
     layout = fit_layout([len(groups) for _t, groups, _a, _k in sections], height)
     sections = sections[:layout["max_sections"]]
+    drawn_keys = [key for _t, _g, _a, key in sections]
 
     inner_x = x0 + CARD_PAD_X
     inner_w = w - 2 * CARD_PAD_X
@@ -462,6 +536,19 @@ def _render_column(surface, sections, now: datetime, x0: float, w: float,
                         window_s=win)
             y += layout["group_step"]
         card_top = card_bottom + layout["sep_gap"]
+    return drawn_keys
+
+
+MAX_COLUMNS = 4   # 自動加欄上限：再多欄就太窄，沿用舊裁區行為
+
+
+def _columns_fit(cols, height: float = DEFAULT_HEIGHT) -> bool:
+    """每欄 fit_layout 都不用裁區（max_sections == 該欄區塊數）才算放得下。"""
+    for col in cols:
+        layout = fit_layout([len(groups) for _t, groups, _a, _k in col], height)
+        if layout["max_sections"] != len(col):
+            return False
+    return True
 
 
 def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
@@ -469,18 +556,33 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
            cc_aliases=None, cc_hidden=None,
            height: float = DEFAULT_HEIGHT,
            columns: int = 2, gap: float = 20,
-           billing_dates: dict | None = None) -> None:
+           billing_dates: dict | None = None) -> dict:
     """畫可見 usage 區塊；未勾選、沒有資料或超過一天的來源完全不留痕跡。
-    放不下時自動縮間距（見 fit_layout）。預設兩欄並排；只有一欄有內容時
-    不留空欄（split_columns 回幾欄就畫幾欄，欄寬照實際欄數算）。"""
+
+    columns 是「最少欄數」（預設 2）：先試 columns，某欄要裁區就加一欄重試，
+    到 MAX_COLUMNS（4）還放不下才沿用舊行為裁區。放得下就停在那一級。
+    只有一欄有內容時不留空欄（split_columns 回幾欄就畫幾欄，欄寬照實際欄數算）。
+    回傳 {"columns": 實際欄數, "keys": 畫出的 section key 清單}（舊呼叫端可忽略）。"""
     sections = visible_sections(usage, now, enabled_sources, oa_aliases, oa_hidden,
                                 cc_aliases, cc_hidden)
     if not sections:
-        return
+        return {"columns": 0, "keys": []}
 
-    cols = split_columns(sections, columns)
+    chosen = None
+    for c in range(max(1, columns), MAX_COLUMNS + 1):
+        cols = split_columns(sections, c)
+        if _columns_fit(cols, height):
+            chosen = cols
+            break
+    if chosen is None:
+        cols = split_columns(sections, MAX_COLUMNS)
+    else:
+        cols = chosen
     n = len(cols)
     col_w = (w - gap * (n - 1)) / n if n > 1 else w
+    drawn_keys = []
     for i, col in enumerate(cols):
-        _render_column(surface, col, now, x0 + i * (col_w + gap), col_w, height,
-                       usage, billing_dates)
+        drawn = _render_column(surface, col, now, x0 + i * (col_w + gap), col_w, height,
+                               usage, billing_dates)
+        drawn_keys.extend(drawn)
+    return {"columns": n, "keys": drawn_keys}

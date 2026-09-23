@@ -22,8 +22,8 @@ DEFAULT_SCENES = (
 VALID_VIEW_SPANS = {"half", "day", "week", "month"}
 VALID_VIEW_MODES = {"lanes", "agenda"}
 VALID_THEMES = {"dark", "light"}
-VALID_USAGE_SOURCES = ("claude", "antigravity", "openai", "cursor", "commandcode")
-VALID_BILLING_KEYS = ("claude", "antigravity", "cursor", "commandcode")
+VALID_USAGE_SOURCES = ("claude", "antigravity", "openai", "cursor", "commandcode", "opencode")
+VALID_BILLING_KEYS = ("claude", "antigravity", "cursor", "commandcode", "opencode")
 DEFAULT_PET_X, DEFAULT_PET_Y = 1660, 300
 
 
@@ -125,10 +125,12 @@ def normalize_billing_dates(value, default=None) -> dict[str, str]:
         v = val.strip()
         if not v:
             continue
-        if k in VALID_BILLING_KEYS or k.startswith("openai:") or k.startswith("commandcode:"):
+        if k in VALID_BILLING_KEYS or k.startswith("openai:") or k.startswith("commandcode:") or k.startswith("opencode:"):
             if k.startswith("openai:") and not k[len("openai:"):].strip():
                 continue
             if k.startswith("commandcode:") and not k[len("commandcode:"):].strip():
+                continue
+            if k.startswith("opencode:") and not k[len("opencode:"):].strip():
                 continue
             try:
                 _date.fromisoformat(v)

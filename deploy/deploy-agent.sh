@@ -7,7 +7,7 @@ AGENT_DIR="${AGENT_DIR:-$HOME/.deskbar-agent}"
 LABEL="com.deskbar.usagepush"
 LOG="${AGENT_LOG:-$HOME/Library/Logs/deskbar-usagepush.log}"
 WAIT_SEC="${AGENT_WAIT_SEC:-150}"
-FILES=(usage_push_demo.py openai_usage.py antigravity_usage.py cursor_usage.py commandcode_usage.py)
+FILES=(usage_push_demo.py openai_usage.py antigravity_usage.py cursor_usage.py commandcode_usage.py opencode_go_usage.py)
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 

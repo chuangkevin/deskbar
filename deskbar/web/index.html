@@ -229,7 +229,13 @@ async function loadPrefs(){
     const nm=String(ccAliases[id]||a.name||id.slice(0,8)||"CommandCode");
     return ["commandcode:"+id,"CommandCode · "+nm,true];
    }):[["commandcode","CommandCode",true]];
-   const billingRows=billingBase.concat(ccBilling).concat(oaAccounts.map(a=>{
+   const ogAccounts=Array.isArray(p.og_accounts_seen)?p.og_accounts_seen:[];
+   // OpenCode Go 自動付款日（monthly resetsAt）；有看到帳號就每帳號一列
+   const ogBilling=ogAccounts.length?ogAccounts.map(a=>{
+    const id=String(a.account_id||"");
+    return ["opencode:"+id,"OpenCode Go · "+id.slice(0,8),true];
+   }):[["opencode","OpenCode Go",true]];
+   const billingRows=billingBase.concat(ccBilling).concat(ogBilling).concat(oaAccounts.map(a=>{
     const id=String(a.account_id||"");
     const nm=String(oaAliases[id]||a.name||id.slice(0,8)||"OpenAI");
     return ["openai:"+id,"OpenAI · "+nm,false];
@@ -303,7 +309,7 @@ async function loadPrefs(){
   <fieldset class="usage-sources">
    <legend>AI 用量顯示</legend>
    <div class="usage-source-list">
-     ${[["claude","Claude Code"],["antigravity","Antigravity / Gemini"],["openai","OpenAI"],["cursor","Cursor"],["commandcode","CommandCode"]].map(([key,label])=>`<label>
+     ${[["claude","Claude Code"],["antigravity","Antigravity / Gemini"],["openai","OpenAI"],["cursor","Cursor"],["commandcode","CommandCode"],["opencode","OpenCode Go"]].map(([key,label])=>`<label>
      <input type="checkbox" class="p_us" value="${key}" ${(p.usage_sources||[]).includes(key)?"checked":""}>${label}</label>`).join("")}
    </div>
    <div class="hint">超過 24 小時未更新會自動隱藏</div>

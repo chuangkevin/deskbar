@@ -7,7 +7,7 @@ from flask import Flask, Response, jsonify, request
 
 from deskbar import auth, config
 from deskbar.alarms import _is_valid_date_str
-from deskbar.claudeusage import CcAccount, OaAccount, UsageInfo, fmt_countdown, over_pace, pace_pct
+from deskbar.claudeusage import CcAccount, OaAccount, OgAccount, UsageInfo, fmt_countdown, over_pace, pace_pct
 from deskbar.presence import PresenceState
 from deskbar.ui.theme import PALETTES
 from deskbar.ui.usagewidget import (
@@ -35,6 +35,7 @@ from deskbar.webapi.validation import (
     _valid_resets_at,
     validate_cc_accounts_payload,
     validate_oa_accounts_payload,
+    validate_og_accounts_payload,
     validate_work_sessions_payload,
 )
 from deskbar.work_sessions import snapshot_from_payload, utc_now
@@ -267,6 +268,10 @@ def register_routes(app: Flask, context: WebContext) -> None:
             {"account_id": account.account_id, "name": account.name}
             for account in getattr(usage, "cc_accounts", ())
         ]
+        out["og_accounts_seen"] = [
+            {"account_id": account.account_id, "name": account.name}
+            for account in getattr(usage, "og_accounts", ())
+        ]
         return jsonify(out)
 
     @app.post("/api/prefs")
@@ -378,9 +383,10 @@ def register_routes(app: Flask, context: WebContext) -> None:
                         return jsonify({"error": "billing_dates has invalid key"}), 400
                     bk = bkey.strip()
                     valid = (bk in config.VALID_USAGE_SOURCES and bk != "openai") \
-                        or bk in ("claude", "antigravity", "cursor", "commandcode") \
+                        or bk in ("claude", "antigravity", "cursor", "commandcode", "opencode") \
                         or (bk.startswith("openai:") and bk[len("openai:"):].strip()) \
-                        or (bk.startswith("commandcode:") and bk[len("commandcode:"):].strip())
+                        or (bk.startswith("commandcode:") and bk[len("commandcode:"):].strip()) \
+                        or (bk.startswith("opencode:") and bk[len("opencode:"):].strip())
                     if not valid:
                         return jsonify({"error": "billing_dates has invalid key"}), 400
                     if not isinstance(bval, str):
@@ -648,6 +654,9 @@ def register_routes(app: Flask, context: WebContext) -> None:
         valid_cc_accounts, cc_accounts_error = validate_cc_accounts_payload(d.get("cc_accounts"))
         if not valid_cc_accounts:
             return jsonify({"error": cc_accounts_error}), 400
+        valid_og_accounts, og_accounts_error = validate_og_accounts_payload(d.get("og_accounts"))
+        if not valid_og_accounts:
+            return jsonify({"error": og_accounts_error}), 400
 
         fetched_at = _parse_dt(d.get("fetched_at")) \
             if d.get("fetched_at") is not None else datetime.now(_USAGE_TZ)
@@ -695,6 +704,28 @@ def register_routes(app: Flask, context: WebContext) -> None:
                 ))
             return tuple(accounts)
 
+        def _parse_og_accounts(items):
+            if not items:
+                return ()
+            accounts = []
+            for item in items:
+                fetched = _parse_dt(item.get("fetched_at"))
+                if fetched is not None and fetched.tzinfo is None:
+                    fetched = fetched.replace(tzinfo=_USAGE_TZ)
+                accounts.append(OgAccount(
+                    account_id=item["account_id"].strip(),
+                    name=item.get("name", "") if isinstance(item.get("name", ""), str) else "",
+                    five_hour_pct=_clamp_pct(item.get("five_hour_pct")),
+                    five_hour_resets_at=_parse_dt(item.get("five_hour_resets_at")),
+                    weekly_pct=_clamp_pct(item.get("weekly_pct")),
+                    weekly_resets_at=_parse_dt(item.get("weekly_resets_at")),
+                    monthly_pct=_clamp_pct(item.get("monthly_pct")),
+                    monthly_resets_at=_parse_dt(item.get("monthly_resets_at")),
+                    billing_at=_parse_dt(item.get("billing_at")),
+                    fetched_at=fetched,
+                ))
+            return tuple(accounts)
+
         info = UsageInfo(
             session_pct=_clamp_pct(d.get("session_pct")),
             session_resets_at=_parse_dt(d.get("session_resets_at")),
@@ -724,6 +755,8 @@ def register_routes(app: Flask, context: WebContext) -> None:
             cc_fetched_at=_optional_fetched("cc_fetched_at"),
             cc_billing_at=_parse_dt(d.get("cc_billing_at")),
             cu_billing_at=_parse_dt(d.get("cu_billing_at")),
+            og_accounts=_parse_og_accounts(d.get("og_accounts")),
+            og_fetched_at=_optional_fetched("og_fetched_at"),
         )
         context.usage_state.set_usage(info)
         return "", 204
