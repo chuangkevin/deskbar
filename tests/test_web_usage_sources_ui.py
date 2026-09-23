@@ -199,3 +199,10 @@ def test_oa_accounts_seen_post_is_ignored_without_writing_settings(prefs_client)
     assert not hasattr(prefs_client._settings, "oa_accounts_seen")
     assert prefs_client._settings.oa_aliases == {}
     assert prefs_client._saved == []
+
+
+def test_row_buttons_never_wrap_vertically_on_phone():
+    """2026-09-23：手機寬度下「上牆」被輸入框擠成直排；按鈕固定寬、不換行。"""
+    content = _html()
+    assert ".row>button{flex:0 0 auto;white-space:nowrap}" in content
+    assert ".row>input[type=text]{flex:1 1 auto;min-width:0}" in content
