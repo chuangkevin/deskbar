@@ -260,7 +260,9 @@ def cc_payload_fields(parsed: dict | None, now: datetime) -> dict:
             value = float(raw)
         except (TypeError, ValueError):
             return None
-        return value
+        # 超額時 used/cap 會 >100（實測 100.2%），Pi 端 _valid_pct 只收 0–100，
+        # 一個帳號超標就會讓整包推送 400、全部來源一起停更。
+        return max(0.0, min(100.0, value))
 
     def resets(key):
         raw = parsed.get(key)

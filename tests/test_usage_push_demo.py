@@ -61,3 +61,18 @@ def test_openai_activity_mtime_discovers_dynamic_codex_wal_artifacts(tmp_path):
     rotated_wal.touch()
     _set_mtime(rotated_wal, 2500.0)
     assert demo._oa_activity_mtime_changed(paths, glob_patterns) is True
+
+
+def test_cc_accounts_payload_clamps_overused_pct_to_valid_range():
+    """超額帳號 used/cap 會 >100；推出去必須壓在 0–100，否則 Pi 拒收整包。"""
+    from datetime import datetime, timezone
+
+    demo = _load_demo_module()
+    fields = demo.cc_accounts_payload_fields(
+        [{"account_id": "a1", "name": "over", "five_hour_pct": -1.0, "weekly_pct": 100.2155}],
+        datetime(2026, 9, 23, tzinfo=timezone.utc),
+    )
+    account = fields["cc_accounts"][0]
+    assert account["weekly_pct"] == 100.0
+    assert account["five_hour_pct"] == 0.0
+    assert fields["cc_weekly_pct"] == 100.0
