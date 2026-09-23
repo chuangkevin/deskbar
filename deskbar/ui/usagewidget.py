@@ -10,7 +10,7 @@
 2. ANTIGRAVITY · GEMINI 區：5H / 本週（無資料時整區略過，不畫分隔線與標題）
 3. OPENAI 區：每個帳號一區（無資料時整區略過，不畫分隔線與標題）
 4. CURSOR 區：本期（帳單週期約一個月；無資料時整區略過）
-5. COMMANDCODE 區：5H / 本週（無資料時整區略過）
+5. CC（CommandCode）區：5H / 本週（無資料時整區略過）
 6. OPENCODE GO 區：每把 key 一區，5H / 本週（無 key／無資料時整區略過）
 
 2026-09-11 起來源多到一欄放不下（5 區 9 列）：render() 會先算總高度，超過可用高度時
@@ -282,12 +282,13 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
         return "OPENAI"
 
     def cc_title(account):
+        # 2026-09-23 Kevin：前綴 COMMANDCODE 太長改成 CC（例：CC · ks）
         alias = cc_alias_map.get(account.account_id, "")
         if alias:
-            return f"COMMANDCODE · {alias}"
+            return f"CC · {alias}"
         if getattr(account, "name", ""):
-            return f"COMMANDCODE · {account.name.upper()}"
-        return "COMMANDCODE"
+            return f"CC · {account.name.upper()}"
+        return "CC"
 
     def og_title(account, index: int) -> str:
         if index == 0:
@@ -360,7 +361,7 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
             cc_5h = getattr(usage, "cc_5h_pct", None)
             cc_weekly = getattr(usage, "cc_weekly_pct", None)
             if (cc_5h is not None or cc_weekly is not None) and cc_age < HIDE_AFTER_S:
-                sections.append(("COMMANDCODE", [
+                sections.append(("CC", [
                     ("5H", cc_5h, getattr(usage, "cc_5h_resets_at", None), WINDOW_S["cc_5h"]),
                     ("本週", cc_weekly, getattr(usage, "cc_weekly_resets_at", None), WINDOW_S["cc_weekly"]),
                 ], cc_age, "commandcode"))
@@ -376,6 +377,30 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
                     ("本月", account.monthly_pct, account.monthly_resets_at, WINDOW_S["og_monthly"]),
                 ], og_age, f"opencode:{account.account_id}"))
     return sections
+
+
+def apply_order(sections, order) -> list:
+    """純函數：右欄 section 排序。order 裡的 key 依 order 順序排前面；
+    不在 order 的區塊照原本順序接在後面；order 裡不存在的 key 忽略。"""
+    sections = list(sections)
+    if not order:
+        return sections
+    wanted = [k.strip() for k in order
+              if isinstance(k, str) and not isinstance(k, bool) and k.strip()]
+    by_key: dict[str, list] = {}
+    for section in sections:
+        by_key.setdefault(section[3], []).append(section)
+    out = []
+    used = set()
+    for key in wanted:
+        for section in by_key.get(key, []):
+            if id(section) not in used:
+                out.append(section)
+                used.add(id(section))
+    for section in sections:
+        if id(section) not in used:
+            out.append(section)
+    return out
 
 
 MIN_GROUP_STEP = 32       # 壓縮下限：字列 17px＋橫條 9px＋餘裕，再低會貼在一起
@@ -401,27 +426,37 @@ def layout_height(group_counts, *, group_step=GROUP_STEP, sep_gap=SECTION_SEP_GA
     return bottom
 
 
-def fit_layout(group_counts, height: float = DEFAULT_HEIGHT) -> dict:
+def _scaled(k):
+    """0..1 縮放係數套在三個可伸縮間距上（0＝最緊）。"""
+    return {
+        "group_step": max(MIN_GROUP_STEP, round(GROUP_STEP * k)),
+        "sep_gap": max(MIN_SECTION_GAP // 2, round(SECTION_SEP_GAP * k)),
+        "title_gap": max(MIN_SECTION_GAP - MIN_SECTION_GAP // 2, round(SECTION_TITLE_GAP * k)),
+        "first_group": max(18, round(SECTION_FIRST_GROUP * k)),
+    }
+
+
+def fit_layout(group_counts, height: float = DEFAULT_HEIGHT, density: str = "auto") -> dict:
     """純函數：放得下就用預設間距；放不下就等比例縮間距（不縮字級／橫條），
-    縮到下限還放不下就回 max_sections 讓呼叫端裁掉最後幾區。"""
+    縮到下限還放不下就回 max_sections 讓呼叫端裁掉最後幾區。
+
+    density：auto＝現在的行為；normal＝預設間距（呼叫端負責加欄而不是壓縮，
+    這裡直接回預設間距＋全區）；compact＝直接用最緊間距 scaled(0)。"""
     default = {"group_step": GROUP_STEP, "sep_gap": SECTION_SEP_GAP,
                "title_gap": SECTION_TITLE_GAP, "first_group": SECTION_FIRST_GROUP,
                "max_sections": len(group_counts), "compact": False}
+    if density == "compact":
+        return {**_scaled(0.0), "max_sections": len(group_counts), "compact": True}
+    if density == "normal":
+        return default
     if layout_height(group_counts) <= height:
         return default
     # 二分搜尋一個 0..1 的縮放係數，套在三個「可伸縮」的間距上。
-    def scaled(k):
-        return {
-            "group_step": max(MIN_GROUP_STEP, round(GROUP_STEP * k)),
-            "sep_gap": max(MIN_SECTION_GAP // 2, round(SECTION_SEP_GAP * k)),
-            "title_gap": max(MIN_SECTION_GAP - MIN_SECTION_GAP // 2, round(SECTION_TITLE_GAP * k)),
-            "first_group": max(18, round(SECTION_FIRST_GROUP * k)),
-        }
     lo, hi = 0.0, 1.0
-    best = scaled(0.0)
+    best = _scaled(0.0)
     for _ in range(12):
         mid = (lo + hi) / 2
-        cand = scaled(mid)
+        cand = _scaled(mid)
         if layout_height(group_counts, **cand) <= height:
             best, lo = cand, mid
         else:
@@ -485,13 +520,15 @@ def split_columns(sections, columns: int = 2) -> list[list]:
 
 def _render_column(surface, sections, now: datetime, x0: float, w: float,
                    height: float = DEFAULT_HEIGHT, usage=None,
-                   billing_dates: dict | None = None) -> list:
+                   billing_dates: dict | None = None,
+                   density: str = "auto") -> list:
     """畫一欄 usage 區塊（fit_layout → 逐區畫，含放不下時的裁區）。
 
     回傳實際畫出的 section key 清單。"""
     if not sections:
         return []
-    layout = fit_layout([len(groups) for _t, groups, _a, _k in sections], height)
+    layout = fit_layout([len(groups) for _t, groups, _a, _k in sections], height,
+                        density=density)
     sections = sections[:layout["max_sections"]]
     drawn_keys = [key for _t, _g, _a, key in sections]
 
@@ -526,7 +563,7 @@ def _render_column(surface, sections, now: datetime, x0: float, w: float,
             _text(surface, stale_label, 16, theme.C["muted"],
                   inner_x + inner_w - right_used, title_y, "topright")
             right_used += theme.font(16).size(stale_label)[0] + 8
-        # 標題太長（例：COMMANDCODE · KEVIN202511180YSI）會撞到右邊的付款日／過期字樣，
+        # 標題太長（例：CC · KEVIN202511180YSI）會撞到右邊的付款日／過期字樣，
         # 超過可用寬度就截斷加「…」；要好看的名字請在手機設定頁填別名。
         _text(surface, fit_title(title, inner_w - right_used, 14), 14, theme.C["muted"], inner_x, title_y)
         y = title_y + layout["first_group"]
@@ -542,36 +579,48 @@ def _render_column(surface, sections, now: datetime, x0: float, w: float,
 MAX_COLUMNS = 4   # 自動加欄上限：再多欄就太窄，沿用舊裁區行為
 
 
-def _columns_fit(cols, height: float = DEFAULT_HEIGHT) -> bool:
+def _columns_fit(cols, height: float = DEFAULT_HEIGHT, density: str = "auto") -> bool:
     """每欄 fit_layout 都不用裁區（max_sections == 該欄區塊數）才算放得下。"""
     for col in cols:
-        layout = fit_layout([len(groups) for _t, groups, _a, _k in col], height)
+        layout = fit_layout([len(groups) for _t, groups, _a, _k in col], height,
+                            density=density)
         if layout["max_sections"] != len(col):
             return False
     return True
+
+
+def min_columns_for_width(width: int) -> int:
+    """右欄寬度對應的起始欄數：每 300px 一欄，至少 1 欄。"""
+    return max(1, int(width) // 300)
 
 
 def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
            enabled_sources=None, oa_aliases=None, oa_hidden=None,
            cc_aliases=None, cc_hidden=None,
            height: float = DEFAULT_HEIGHT,
-           columns: int = 2, gap: float = 20,
-           billing_dates: dict | None = None) -> dict:
+           columns: int | None = 2, gap: float = 20,
+           billing_dates: dict | None = None,
+           order=None, density: str = "auto") -> dict:
     """畫可見 usage 區塊；未勾選、沒有資料或超過一天的來源完全不留痕跡。
 
-    columns 是「最少欄數」（預設 2）：先試 columns，某欄要裁區就加一欄重試，
-    到 MAX_COLUMNS（4）還放不下才沿用舊行為裁區。放得下就停在那一級。
+    columns 是「最少欄數」：None 時由欄寬推導（max(1, w // 300)）。
+    先試 columns，某欄要裁區就加一欄重試，到 MAX_COLUMNS（4）還放不下才
+    沿用舊行為裁區。放得下就停在那一級。density normal 時 fit_layout 不壓縮、
+    靠加欄放下；compact 直接用最緊間距。
+    order（usage_order）：apply_order 先排好再切欄。
     只有一欄有內容時不留空欄（split_columns 回幾欄就畫幾欄，欄寬照實際欄數算）。
     回傳 {"columns": 實際欄數, "keys": 畫出的 section key 清單}（舊呼叫端可忽略）。"""
     sections = visible_sections(usage, now, enabled_sources, oa_aliases, oa_hidden,
                                 cc_aliases, cc_hidden)
+    sections = apply_order(sections, order)
     if not sections:
         return {"columns": 0, "keys": []}
 
+    min_cols = min_columns_for_width(w) if columns is None else max(1, columns)
     chosen = None
-    for c in range(max(1, columns), MAX_COLUMNS + 1):
+    for c in range(min_cols, MAX_COLUMNS + 1):
         cols = split_columns(sections, c)
-        if _columns_fit(cols, height):
+        if _columns_fit(cols, height, density=density):
             chosen = cols
             break
     if chosen is None:
@@ -583,6 +632,6 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
     drawn_keys = []
     for i, col in enumerate(cols):
         drawn = _render_column(surface, col, now, x0 + i * (col_w + gap), col_w, height,
-                               usage, billing_dates)
+                               usage, billing_dates, density=density)
         drawn_keys.extend(drawn)
     return {"columns": n, "keys": drawn_keys}

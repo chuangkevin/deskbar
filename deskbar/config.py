@@ -24,6 +24,11 @@ VALID_VIEW_MODES = {"lanes", "agenda"}
 VALID_THEMES = {"dark", "light"}
 VALID_USAGE_SOURCES = ("claude", "antigravity", "openai", "cursor", "commandcode", "opencode")
 VALID_BILLING_KEYS = ("claude", "antigravity", "cursor", "commandcode", "opencode")
+VALID_USAGE_DENSITIES = ("auto", "normal", "compact")
+DEFAULT_USAGE_WIDTH = 600
+MIN_USAGE_WIDTH, MAX_USAGE_WIDTH = 360, 1100
+MAX_USAGE_ORDER = 64
+MAX_USAGE_ORDER_KEY_LEN = 80
 DEFAULT_PET_X, DEFAULT_PET_Y = 1660, 300
 
 
@@ -140,6 +145,47 @@ def normalize_billing_dates(value, default=None) -> dict[str, str]:
     return out
 
 
+def normalize_usage_order(value, default=None) -> tuple[str, ...]:
+    """右欄 section 排序：保序去重；非字串／空字串／超長整批退回預設。
+
+    不存在的 key 不在這裡擋（key 來去是動態的）——渲染端忽略即可。
+    """
+    if default is None:
+        default = ()
+    if not isinstance(value, (list, tuple)):
+        return tuple(default)
+    if len(value) > MAX_USAGE_ORDER:
+        return tuple(default)
+    out = []
+    seen = set()
+    for key in value:
+        if not isinstance(key, str) or isinstance(key, bool):
+            return tuple(default)
+        k = key.strip()
+        if not k or len(k) > MAX_USAGE_ORDER_KEY_LEN:
+            return tuple(default)
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
+    return tuple(out)
+
+
+def normalize_usage_width(value, default=DEFAULT_USAGE_WIDTH) -> int:
+    """右欄寬度 360–1100；型別錯或範圍外退回預設。"""
+    if not isinstance(value, int) or isinstance(value, bool):
+        return default
+    if not (MIN_USAGE_WIDTH <= value <= MAX_USAGE_WIDTH):
+        return default
+    return value
+
+
+def normalize_usage_density(value, default="auto") -> str:
+    """右欄密度 auto/normal/compact；非法退回預設。"""
+    if isinstance(value, str) and value in VALID_USAGE_DENSITIES:
+        return value
+    return default
+
+
 def config_dir() -> Path:
     d = Path(os.environ.get("DESKBAR_CONFIG_DIR", Path.home() / ".config" / "deskbar"))
     d.mkdir(parents=True, exist_ok=True)
@@ -208,6 +254,9 @@ class Settings:
     cc_aliases: dict[str, str] = field(default_factory=dict)  # CommandCode account_id -> 使用者別名
     cc_hidden: tuple[str, ...] = ()      # 不顯示的 CommandCode account_id；新帳號預設顯示
     billing_dates: dict[str, str] = field(default_factory=dict)  # 來源 key -> 每月固定日 YYYY-MM-DD
+    usage_order: tuple[str, ...] = ()    # 右欄 section key 排序（空＝原本順序）
+    usage_width: int = DEFAULT_USAGE_WIDTH  # 右欄寬度 360–1100
+    usage_density: str = "auto"          # 右欄密度 auto/normal/compact
 
     def ensure_account(self, email: str) -> AccountCfg:
         if email not in self.accounts:
@@ -328,6 +377,9 @@ def load_settings() -> Settings:
         cc_aliases = normalize_cc_aliases(raw.get("cc_aliases", {}))
         cc_hidden = normalize_cc_hidden(raw.get("cc_hidden", ()))
         billing_dates = normalize_billing_dates(raw.get("billing_dates", {}))
+        usage_order = normalize_usage_order(raw.get("usage_order", ()))
+        usage_width = normalize_usage_width(raw.get("usage_width", DEFAULT_USAGE_WIDTH))
+        usage_density = normalize_usage_density(raw.get("usage_density", "auto"))
         pet_enabled = raw.get("pet_enabled", True)
         if not isinstance(pet_enabled, bool):
             pet_enabled = True
@@ -375,6 +427,9 @@ def load_settings() -> Settings:
             cc_aliases=cc_aliases,
             cc_hidden=cc_hidden,
             billing_dates=billing_dates,
+            usage_order=usage_order,
+            usage_width=usage_width,
+            usage_density=usage_density,
         )
     except (OSError, ValueError, KeyError, TypeError):
         return Settings()
@@ -419,6 +474,9 @@ def save_settings(s: Settings) -> None:
         "cc_aliases": normalize_cc_aliases(s.cc_aliases),
         "cc_hidden": list(normalize_cc_hidden(s.cc_hidden)),
         "billing_dates": normalize_billing_dates(s.billing_dates),
+        "usage_order": list(normalize_usage_order(s.usage_order)),
+        "usage_width": normalize_usage_width(s.usage_width),
+        "usage_density": normalize_usage_density(s.usage_density),
         "pet_enabled": s.pet_enabled,
         "pet_x": int(s.pet_x),
         "pet_y": int(s.pet_y),

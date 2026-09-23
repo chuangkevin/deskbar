@@ -10,6 +10,10 @@ _USAGE_FETCHED_FIELDS = ("fetched_at", "claude_fetched_at", "ag_fetched_at", "oa
 _MAX_OA_ACCOUNTS = 8
 _MAX_CC_ACCOUNTS = 8
 _MAX_OG_ACCOUNTS = 8
+_MAX_USAGE_ORDER = 64
+_MAX_USAGE_ORDER_KEY_LEN = 80
+_USAGE_WIDTH_RANGE = (360, 1100)
+_VALID_USAGE_DENSITIES = ("auto", "normal", "compact")
 
 # 手機網頁可調的裝置偏好（2026-07-27 需求：「那些設定也應該要可以在手機
 # 設定頁調整」）。theme 刻意不開放——theme.set_theme 會清渲染快取，只能由
@@ -131,6 +135,38 @@ def validate_og_accounts_payload(value) -> tuple[bool, str | None]:
 
 def _parse_dt(v):
     return None if v is None else datetime.fromisoformat(v.replace("Z", "+00:00"))
+
+
+def validate_usage_order_payload(value) -> tuple[bool, str | None]:
+    """usage_order：list[str]，上限 64 個、每個 strip 後 1–80 字；壞掉整批 400。"""
+    if not isinstance(value, list):
+        return False, "invalid usage_order"
+    if len(value) > _MAX_USAGE_ORDER:
+        return False, "invalid usage_order"
+    for key in value:
+        if not isinstance(key, str) or isinstance(key, bool):
+            return False, "invalid usage_order"
+        k = key.strip()
+        if not k or len(k) > _MAX_USAGE_ORDER_KEY_LEN:
+            return False, "invalid usage_order"
+    return True, None
+
+
+def validate_usage_width_payload(value) -> tuple[bool, str | None]:
+    """usage_width：int 360–1100（bool 不算 int）；範圍外 400。"""
+    lo, hi = _USAGE_WIDTH_RANGE
+    if not isinstance(value, int) or isinstance(value, bool):
+        return False, "invalid usage_width"
+    if not (lo <= value <= hi):
+        return False, "invalid usage_width"
+    return True, None
+
+
+def validate_usage_density_payload(value) -> tuple[bool, str | None]:
+    """usage_density：auto/normal/compact 三選一。"""
+    if not isinstance(value, str) or value not in _VALID_USAGE_DENSITIES:
+        return False, "invalid usage_density"
+    return True, None
 
 
 def _to_float(v):

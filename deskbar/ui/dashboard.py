@@ -20,6 +20,12 @@ from deskbar.weather import code_text
 PANEL_W, TL_X0, TL_X1 = 400, 420, 1280
 TL_AREA = Rect(TL_X0, 52, TL_X1 - TL_X0, 368)
 USAGE_X0, USAGE_W = TL_X1 + 20, 600      # 右欄見常數（右緣仍留 20px）
+# 預設版面快照：測試對照用（Rect 是 frozen，apply_usage_width 用 global 重新綁定；
+# app.py 都是在函式內 from ... import，呼叫時讀到當下值即可）
+_DEFAULT_TL_X1 = TL_X1
+_DEFAULT_USAGE_X0 = USAGE_X0
+_DEFAULT_USAGE_W = USAGE_W
+_DEFAULT_TL_AREA = Rect(TL_AREA.x, TL_AREA.y, TL_AREA.w, TL_AREA.h)
 SPAN_LABELS = {"half": "半天", "day": "日", "week": "週", "month": "月"}
 # 寬度鈕／模式鈕改放中欄頂帶右側（原本在畫面最右側，現在中欄變窄，兩顆鈕改貼中欄右界，
 # 右欄完全不放任何頂帶元素）。四顆鈕一律由 TL_X1 推導，保持原本相對位置。
@@ -32,6 +38,36 @@ TOPBAR_GAP = 16                          # 頂帶固定區塊之間的最小留�
 # 中欄內容的滑動過場區域：x 避開左欄分隔線(400)與右界線（見 TL_X1），y 從頂帶以下開始
 # ——過場只滑「內容」，左右欄與頂列按鈕是 chrome，釘死不動（2026-07-30 實機回報）。
 CENTER_SLIDE_AREA = Rect(PANEL_W + 2, 52, TL_X1 - PANEL_W - 2, 480 - 52)
+_DEFAULT_CENTER_SLIDE_AREA = Rect(CENTER_SLIDE_AREA.x, CENTER_SLIDE_AREA.y,
+                                  CENTER_SLIDE_AREA.w, CENTER_SLIDE_AREA.h)
+_DEFAULT_MODE_BTN = Rect(MODE_BTN.x, MODE_BTN.y, MODE_BTN.w, MODE_BTN.h)
+_DEFAULT_SPAN_BTN = Rect(SPAN_BTN.x, SPAN_BTN.y, SPAN_BTN.w, SPAN_BTN.h)
+_DEFAULT_CENTER_BTN = Rect(CENTER_BTN.x, CENTER_BTN.y, CENTER_BTN.w, CENTER_BTN.h)
+_DEFAULT_WORK_BTN = Rect(WORK_BTN.x, WORK_BTN.y, WORK_BTN.w, WORK_BTN.h)
+
+
+def apply_usage_width(width: int) -> dict:
+    """右欄寬度生效：重算 TL_X1／USAGE_X0／USAGE_W／TL_AREA／CENTER_SLIDE_AREA／
+    頂帶四顆鈕（照現有由 TL_X1 推導的公式）。
+
+    Rect 是 frozen，直接用 global 重新綁定成新物件（app.py 都是在函式內
+    from ... import，呼叫時讀到當下值）。超出 360–1100 的值夾回範圍。
+    回傳 {"tl_x1": ..., "usage_x0": ..., "usage_w": ...}。
+    """
+    from deskbar import config as _config
+    w = _config.normalize_usage_width(width)
+    global TL_X1, USAGE_X0, USAGE_W
+    global TL_AREA, CENTER_SLIDE_AREA, MODE_BTN, SPAN_BTN, CENTER_BTN, WORK_BTN
+    TL_X1 = 1920 - 20 - w - 20
+    USAGE_X0 = TL_X1 + 20
+    USAGE_W = w
+    TL_AREA = Rect(TL_X0, 52, TL_X1 - TL_X0, 368)
+    CENTER_SLIDE_AREA = Rect(PANEL_W + 2, 52, TL_X1 - PANEL_W - 2, 480 - 52)
+    MODE_BTN = Rect(TL_X1 - 112, 2, 110, 48)
+    SPAN_BTN = Rect(TL_X1 - 230, 2, 110, 48)
+    CENTER_BTN = Rect(TL_X1 - 348, 2, 110, 48)
+    WORK_BTN = Rect(TL_X1 - 486, 2, 130, 48)
+    return {"tl_x1": TL_X1, "usage_x0": USAGE_X0, "usage_w": USAGE_W}
 # 2026-07-27：頂欄整日行程膠囊（_render_allday／_layout_allday_chips）已移除——
 # 整日事件已在 agenda 模式的日欄與 weekgrid 的格子內顯示徽章，頂帶空間讓給窗口
 # 標籤／按鈕。迫近脈動（imminent_events/_pulse_t/_pulse_color）改用
@@ -44,6 +80,21 @@ def _text(surface, s, size, color, x, y, anchor="topleft"):
     r = img.get_rect(**{anchor: (x, y)})
     surface.blit(img, r)
     return r
+
+
+def _usage_draw_kwargs(settings) -> dict:
+    """右欄繪製共用參數：排序／寬度推導欄數／密度，全部由 settings 來。"""
+    density = getattr(settings, "usage_density", "auto")
+    if density not in ("auto", "normal", "compact"):
+        density = "auto"
+    return {
+        "billing_dates": getattr(settings, "billing_dates", {}),
+        "cc_aliases": getattr(settings, "cc_aliases", {}),
+        "cc_hidden": getattr(settings, "cc_hidden", ()),
+        "order": getattr(settings, "usage_order", ()),
+        "columns": None,
+        "density": density,
+    }
 
 
 def _chip_btn(surface, label, rect: Rect, action, hits, size=22):
@@ -154,9 +205,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources, getattr(settings, "oa_aliases", {}),
                            getattr(settings, "oa_hidden", ()),
-                           billing_dates=getattr(settings, "billing_dates", {}),
-                           cc_aliases=getattr(settings, "cc_aliases", {}),
-                           cc_hidden=getattr(settings, "cc_hidden", ()))
+                           **_usage_draw_kwargs(settings))
         return _finish(surface, snap, settings, now, hits)
     if center == "notes":
         from deskbar.ui import notesview
@@ -168,9 +217,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources, getattr(settings, "oa_aliases", {}),
                            getattr(settings, "oa_hidden", ()),
-                           billing_dates=getattr(settings, "billing_dates", {}),
-                           cc_aliases=getattr(settings, "cc_aliases", {}),
-                           cc_hidden=getattr(settings, "cc_hidden", ()))
+                           **_usage_draw_kwargs(settings))
         return _finish(surface, snap, settings, now, hits)
     if center == "sessions":
         from deskbar.ui import worksessionwidget
@@ -185,9 +232,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources, getattr(settings, "oa_aliases", {}),
                            getattr(settings, "oa_hidden", ()),
-                           billing_dates=getattr(settings, "billing_dates", {}),
-                           cc_aliases=getattr(settings, "cc_aliases", {}),
-                           cc_hidden=getattr(settings, "cc_hidden", ()))
+                           **_usage_draw_kwargs(settings))
         return _finish(surface, snap, settings, now, hits)
     if center == "scene":
         from deskbar.ui import scenes
@@ -203,9 +248,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
         usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                            settings.usage_sources, getattr(settings, "oa_aliases", {}),
                            getattr(settings, "oa_hidden", ()),
-                           billing_dates=getattr(settings, "billing_dates", {}),
-                           cc_aliases=getattr(settings, "cc_aliases", {}),
-                           cc_hidden=getattr(settings, "cc_hidden", ()))
+                           **_usage_draw_kwargs(settings))
         return _finish(surface, snap, settings, now, hits)
 
     lane_emails = [e for e in settings.accounts if settings.accounts[e].calendars] \
@@ -287,9 +330,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
     usagewidget.render(surface, snap.usage, now, USAGE_X0, USAGE_W,
                        settings.usage_sources, getattr(settings, "oa_aliases", {}),
                        getattr(settings, "oa_hidden", ()),
-                       billing_dates=getattr(settings, "billing_dates", {}),
-                           cc_aliases=getattr(settings, "cc_aliases", {}),
-                           cc_hidden=getattr(settings, "cc_hidden", ()))
+                       **_usage_draw_kwargs(settings))
     return _finish(surface, snap, settings, now, hits)
 
 

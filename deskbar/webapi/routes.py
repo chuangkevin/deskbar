@@ -259,6 +259,10 @@ def register_routes(app: Flask, context: WebContext) -> None:
             out["cc_aliases"] = dict(getattr(context.settings_provider, "cc_aliases", {}))
             out["cc_hidden"] = list(getattr(context.settings_provider, "cc_hidden", ()))
             out["billing_dates"] = dict(getattr(context.settings_provider, "billing_dates", {}))
+            out["usage_order"] = list(getattr(context.settings_provider, "usage_order", ()))
+            out["usage_width"] = getattr(context.settings_provider, "usage_width",
+                                         config.DEFAULT_USAGE_WIDTH)
+            out["usage_density"] = getattr(context.settings_provider, "usage_density", "auto")
         usage = context.usage_state.snapshot().usage if context.usage_state is not None else None
         out["oa_accounts_seen"] = [
             {"account_id": account.account_id, "name": account.name}
@@ -373,6 +377,24 @@ def register_routes(app: Flask, context: WebContext) -> None:
                 staged[k] = tuple(hidden)
             elif k == "cc_accounts_seen":
                 continue
+            elif k == "usage_order":
+                from deskbar.webapi.validation import validate_usage_order_payload
+                valid, err = validate_usage_order_payload(v)
+                if not valid:
+                    return jsonify({"error": err}), 400
+                staged[k] = tuple(key.strip() for key in v)
+            elif k == "usage_width":
+                from deskbar.webapi.validation import validate_usage_width_payload
+                valid, err = validate_usage_width_payload(v)
+                if not valid:
+                    return jsonify({"error": err}), 400
+                staged[k] = v
+            elif k == "usage_density":
+                from deskbar.webapi.validation import validate_usage_density_payload
+                valid, err = validate_usage_density_payload(v)
+                if not valid:
+                    return jsonify({"error": err}), 400
+                staged[k] = v
             elif k == "billing_dates":
                 from datetime import date as _date
                 if not isinstance(v, dict):
@@ -449,6 +471,14 @@ def register_routes(app: Flask, context: WebContext) -> None:
             context.on_save(context.settings_provider)
         if context.usage_state is not None:
             context.usage_state.bump()   # 叫醒 render 迴圈：亮度/睡眠等改動即時上畫面
+        if "usage_width" in staged:
+            try:
+                from deskbar.ui import dashboard as _dashboard
+                _dashboard.apply_usage_width(staged["usage_width"])
+            except Exception:
+                pass
+            if context.usage_state is not None:
+                context.usage_state.bump()  # 版面常數換了，強制整個畫面重畫
         if staged.keys() & {"weather_lat", "weather_lon", "weather_label",
                             "weather_auto_locate", "weather_metar_station"}:
             try:

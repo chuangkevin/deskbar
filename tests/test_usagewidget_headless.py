@@ -576,19 +576,20 @@ def _cc_usage(**kw):
 
 
 def test_commandcode_section_has_5h_and_weekly_rows():
+    # 2026-09-23 Kevin：前綴 COMMANDCODE 太長改成 CC
     sections = usagewidget.visible_sections(_cc_usage(), NOW, ("claude", "commandcode"))
     titles = [t for t, _g, _a, _k in sections]
-    assert titles[-1] == "COMMANDCODE"
-    rows = [g for t, g, _a, _k in sections if t == "COMMANDCODE"][0]
+    assert titles[-1] == "CC"
+    rows = [g for t, g, _a, _k in sections if t == "CC"][0]
     assert [r[0] for r in rows] == ["5H", "本週"]
     assert rows[1][1] == 71.2
 
 
 def test_commandcode_section_skipped_when_not_enabled_or_no_data():
     titles = [t for t, _g, _a, _k in usagewidget.visible_sections(_cc_usage(), NOW, ("claude",))]
-    assert "COMMANDCODE" not in titles
+    assert "CC" not in titles and not any(t.startswith("CC ·") for t in titles)
     titles = [t for t, _g, _a, _k in usagewidget.visible_sections(_usage(), NOW, ("claude", "commandcode"))]
-    assert "COMMANDCODE" not in titles
+    assert "CC" not in titles
 
 
 def test_fit_layout_keeps_default_spacing_when_it_fits():
@@ -683,6 +684,6 @@ def test_render_with_billing_dates_draws_label_in_title_row():
 
 def test_fit_title_truncates_long_titles_only():
     assert usagewidget.fit_title("CLAUDE CODE", 10_000) == "CLAUDE CODE"
-    short = usagewidget.fit_title("COMMANDCODE · KEVIN202511180YSI", 150)
-    assert short.endswith("…") and len(short) < len("COMMANDCODE · KEVIN202511180YSI")
+    short = usagewidget.fit_title("CC · KEVIN202511180YSI", 150)
+    assert short.endswith("…") and len(short) < len("CC · KEVIN202511180YSI")
     assert usagewidget.theme.font(14).size(short)[0] <= 150

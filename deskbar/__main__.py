@@ -60,6 +60,8 @@ def _fake_data(state: AppState, settings) -> None:
 
 def main() -> None:
     settings = config.load_settings()
+    from deskbar.ui import dashboard as _dashboard
+    _dashboard.apply_usage_width(settings.usage_width)  # 右欄寬度→中欄右界等版面常數
     from deskbar.ui import theme
     theme.set_theme(settings.theme)   # 一定要在 App._init_display()／pygame.init() 之前
     state = AppState()
