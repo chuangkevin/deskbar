@@ -51,6 +51,8 @@ sys.exit(0)
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
     env["DESKBAR_TEST_LOG"] = str(log_file)
     env["DESKBAR_TEST_LAUNCHCTL_LOADED"] = "1" if launchctl_loaded else "0"
+    # make deploy 會接著跑 deploy-agent；指到不存在的目錄讓它略過，不碰這台 Mac 真的 agent
+    env["AGENT_DIR"] = str(tmp_path / "no-agent")
     return log_file, env
 
 

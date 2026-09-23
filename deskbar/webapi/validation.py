@@ -40,7 +40,11 @@ def _valid_pct(v) -> bool:
         return False
     if not isinstance(v, (int, float)):
         return False
-    return 0 <= v <= 100
+    return True
+
+
+def _clamp_pct(v):
+    return None if v is None else max(0.0, min(100.0, float(v)))
 
 
 def _valid_resets_at(v) -> bool:

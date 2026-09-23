@@ -200,7 +200,6 @@ def test_post_usage_non_dict_body_returns_400(alarm_store):
 @pytest.mark.parametrize("oa_accounts", [
     "not-a-list",
     [{"account_id": ""}],
-    [{"account_id": "acct", "weekly_pct": 101}],
     [{"account_id": str(i)} for i in range(9)],
 ])
 def test_post_usage_invalid_openai_accounts_return_400(alarm_store, oa_accounts):
@@ -225,15 +224,54 @@ def test_post_usage_pct_bool_returns_400(alarm_store, field):
     assert client.post("/api/usage", json=payload).status_code == 400
 
 
-@pytest.mark.parametrize("field,value", [
-    ("session_pct", -1), ("weekly_pct", 101), ("fable_pct", 1000),
-    ("ag_5h_pct", -0.1), ("ag_weekly_pct", 100.1),
-    ("oa_weekly_pct", 101),
+# 2026-09-23：上游超額時 used/cap 會 >100（CommandCode 實測 100.2%）。以前整包 400，
+# 一個來源超標就讓全部來源停更 50 分鐘；改成數字超出範圍就壓回 0–100 照收。
+# 型別錯（字串、bool、日期壞掉）是我們自己的 bug，仍然整包 400。
+@pytest.mark.parametrize("field,value,expected", [
+    ("session_pct", -1, 0.0), ("weekly_pct", 101, 100.0), ("fable_pct", 1000, 100.0),
+    ("ag_5h_pct", -0.1, 0.0), ("ag_weekly_pct", 100.1, 100.0),
+    ("oa_weekly_pct", 101, 100.0), ("cc_5h_pct", -5, 0.0), ("cc_weekly_pct", 100.2155, 100.0),
+    ("cu_pct", 250, 100.0),
 ])
-def test_post_usage_pct_out_of_range_returns_400(alarm_store, field, value):
+def test_post_usage_pct_out_of_range_is_clamped(alarm_store, field, value, expected):
     state = AppState()
     client = create_app(alarm_store, usage_state=state).test_client()
     payload = dict(VALID_PAYLOAD, **{field: value})
+    assert client.post("/api/usage", json=payload).status_code == 204
+    assert getattr(state.snapshot().usage, field) == expected
+
+
+def test_post_usage_overused_account_does_not_block_other_sources(alarm_store):
+    """今天的事故重現：CommandCode 一個帳號 100.2%，Claude 與其他帳號仍要照常更新。"""
+    state = AppState()
+    client = create_app(alarm_store, usage_state=state).test_client()
+    payload = dict(
+        VALID_PAYLOAD,
+        session_pct=55.0,
+        cc_weekly_pct=100.2155,
+        oa_accounts=[{"account_id": "oa1", "name": "K", "weekly_pct": 100.5}],
+        cc_accounts=[
+            {"account_id": "cc1", "name": "over", "five_hour_pct": -1, "weekly_pct": 100.2155},
+            {"account_id": "cc2", "name": "ok", "five_hour_pct": 3.3, "weekly_pct": 1.33},
+        ],
+    )
+    assert client.post("/api/usage", json=payload).status_code == 204
+    usage = state.snapshot().usage
+    assert usage.session_pct == 55.0
+    assert usage.cc_weekly_pct == 100.0
+    assert usage.oa_accounts[0].weekly_pct == 100.0
+    by_id = {a.account_id: a for a in usage.cc_accounts}
+    assert by_id["cc1"].weekly_pct == 100.0
+    assert by_id["cc1"].five_hour_pct == 0.0
+    assert by_id["cc2"].weekly_pct == 1.33
+    assert by_id["cc2"].five_hour_pct == 3.3
+
+
+@pytest.mark.parametrize("bad", ["42", True])
+def test_post_usage_account_pct_wrong_type_still_returns_400(alarm_store, bad):
+    state = AppState()
+    client = create_app(alarm_store, usage_state=state).test_client()
+    payload = dict(VALID_PAYLOAD, cc_accounts=[{"account_id": "cc1", "weekly_pct": bad}])
     assert client.post("/api/usage", json=payload).status_code == 400
 
 
