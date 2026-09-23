@@ -28,7 +28,7 @@ API key 取得順序：
 2. 本機檔 ~/.deskbar-agent/commandcode.key（純文字一行）
 3. 透過 ssh 從 New API sqlite 唯讀取出：
    ssh -o BatchMode=yes -o ConnectTimeout=8 rpi-minicpm-jump python3 -
-   SQL: select id, name, key from channels where base_url like '%commandcode%' and status = 1 limit 1
+   SQL: select id, name, key from channels where base_url like '%commandcode%' and status = 1（所有 channel，依 id 排序）
    成功後寫入快取 ~/.deskbar-agent/newapi_commandcode_key.json（0600）；ssh 失敗時讀快取
 """
 from __future__ import annotations
@@ -55,26 +55,27 @@ _MAX_KEYS = 8
 
 
 def _newapi_remote_script(db_path: str) -> str:
-    """遠端唯讀腳本：從 New API sqlite 取出 CommandCode channel 的 key（純讀取，絕不 UPDATE）。"""
+    """遠端唯讀腳本：從 New API sqlite 取出「所有」啟用中 CommandCode channel 的 key（純讀取，絕不 UPDATE）。
+    2026-09-23 起不再只讀第一個 channel——另開 channel 加帳號也要自動出現在 deskbar。"""
     return f"""
 import json
 import sqlite3
 
-key = None
+keys = []
 try:
     conn = sqlite3.connect("file:{db_path}?mode=ro", uri=True)
     try:
         cursor = conn.execute(
-            "select id, name, key from channels where base_url like '%commandcode%' and status = 1 limit 1"
+            "select id, name, key from channels where base_url like '%commandcode%' and status = 1 order by id"
         )
-        row = cursor.fetchone()
-        if row and len(row) >= 3 and isinstance(row[2], str):
-            key = row[2].strip()
+        for row in cursor.fetchall():
+            if row and len(row) >= 3 and isinstance(row[2], str) and row[2].strip():
+                keys.append(row[2].strip())
     finally:
         conn.close()
 except Exception:
     pass
-print(json.dumps({{"key": key}}))
+print(json.dumps({{"keys": keys}}))
 """
 
 

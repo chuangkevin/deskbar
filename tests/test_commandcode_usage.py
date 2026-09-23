@@ -303,3 +303,36 @@ def test_fetch_account_uses_whoami_identity():
     assert res is not None
     assert res["account_id"] == "user_real"
     assert res["name"] == "kevin202511180ysi"
+
+
+def test_newapi_remote_script_reads_keys_from_every_enabled_commandcode_channel(tmp_path):
+    """2026-09-23 Kevin：New API 另開 CommandCode channel 也要自動出現，不能只讀第一個。"""
+    import sqlite3
+    import subprocess
+
+    db = tmp_path / "one-api.db"
+    conn = sqlite3.connect(db)
+    conn.execute("create table channels (id integer, name text, key text, base_url text, status integer)")
+    conn.executemany("insert into channels values (?, ?, ?, ?, ?)", [
+        (22, "commandcode-goat x3", "k1\nk2\nk3", "https://api.commandcode.ai", 1),
+        (30, "commandcode-new", "k4", "https://api.commandcode.ai/", 1),
+        (31, "commandcode-off", "k-disabled", "https://api.commandcode.ai", 2),
+        (5, "other", "k-other", "https://api.example.com", 1),
+        (32, "commandcode-dup", "k2", "https://api.commandcode.ai", 1),
+    ])
+    conn.commit()
+    conn.close()
+
+    m = _load()
+    out = subprocess.run([sys.executable, "-"], input=m._newapi_remote_script(str(db)),
+                         capture_output=True, text=True, check=True).stdout
+    keys = m._flatten_key_items(json.loads(out)["keys"])
+    assert keys == ["k1", "k2", "k3", "k4"]
+
+
+def test_newapi_remote_script_stays_read_only():
+    m = _load()
+    script = m._newapi_remote_script("/tmp/x.db").lower()
+    assert "mode=ro" in script
+    for word in ("update ", "insert ", "delete ", "drop "):
+        assert word not in script
