@@ -43,9 +43,11 @@ struct UsageMenuView: View {
                     .font(.caption)
                     .foregroundStyle(isMuted ? palette.muted.color : Color.secondary)
                 if let age = ageText(ageS: section.ageS, stale: section.stale) {
+                    // 超過 15 分鐘沒更新轉紅，跟 rpi 上的 Slack 停更告警同一條線
+                    let overdue = !isMuted && (section.ageS ?? 0) >= 15 * 60
                     Text(age)
                         .font(.caption2)
-                        .foregroundStyle(isMuted ? palette.muted.color : Color.secondary)
+                        .foregroundStyle(isMuted ? palette.muted.color : (overdue ? Color.red : Color.secondary))
                 }
                 Spacer()
                 if let billing = section.billingText {
