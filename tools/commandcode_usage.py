@@ -49,6 +49,8 @@ DEFAULT_CACHE_PATH = Path.home() / ".deskbar-agent" / "newapi_commandcode_key.js
 USAGE_URL = "https://api.commandcode.ai/alpha/billing/credits"
 SUBSCRIPTIONS_URL = "https://api.commandcode.ai/alpha/billing/subscriptions"
 WHOAMI_URL = "https://api.commandcode.ai/alpha/whoami"
+# CommandCode 前面的 Cloudflare 會擋沒有 User-Agent 的請求（403 error 1010，2026-09-23 實測）
+USER_AGENT = "deskbar-commandcode/1.0"
 _MAX_KEYS = 8
 
 
@@ -338,7 +340,7 @@ def fetch_account(key: str, http: Any = None) -> dict | None:
 
     回 {"account_id", "name", "five_hour_pct", "five_hour_resets_at",
         "weekly_pct", "weekly_resets_at", "period_end", "monthly_credits"}；
-    whoami 失敗就用 key 的前 8 碼當 account_id、name 同；
+    whoami 失敗（拿不到真的 account_id）回 None，避免用 key 前綴生出幽靈帳號；
     credits 401/403 或非 200 回 None。
     """
     if not isinstance(key, str) or not key.strip():
@@ -350,8 +352,9 @@ def fetch_account(key: str, http: Any = None) -> dict | None:
     headers = {
         "Authorization": f"Bearer {key}",
         "Accept": "application/json",
+        "User-Agent": USER_AGENT,
     }
-    identity: dict[str, Any] = {"account_id": key[:8], "name": key[:8]}
+    identity: dict[str, Any] = {"account_id": None, "name": ""}
     try:
         whoami_response = get(WHOAMI_URL, headers=headers, timeout=15)
         if getattr(whoami_response, "status_code", None) == 200:
@@ -382,6 +385,11 @@ def fetch_account(key: str, http: Any = None) -> dict | None:
     except (ValueError, TypeError):
         print("[CommandCode] 抓取失敗：回應不是合法 JSON")
         return None
+    if identity["account_id"] is None:
+        print("[CommandCode] whoami 失敗，略過這把 key（避免產生假帳號）")
+        return None
+    if not identity["name"]:
+        identity["name"] = identity["account_id"]
     result = parse_usage(data)
     result["account_id"] = identity["account_id"]
     result["name"] = identity["name"]

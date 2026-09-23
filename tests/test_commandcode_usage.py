@@ -41,14 +41,21 @@ class _Resp:
 
 
 class _HTTP:
-    def __init__(self, resp, sub_resp=None):
+    def __init__(self, resp, sub_resp=None, whoami_resp=None):
         self.resp, self.calls = resp, []
         self.sub_resp = sub_resp if sub_resp is not None else _Resp(500, {})
+        # whoami 預設回合法身分（既有測試不斷言 account_id，不受影響）
+        if whoami_resp is not None:
+            self.whoami_resp = whoami_resp
+        else:
+            self.whoami_resp = _Resp(200, {"user": {"id": "user_test", "userName": "test-user"}})
 
     def get(self, url, **kw):
         self.calls.append((url, kw))
         if "subscriptions" in url:
             return self.sub_resp
+        if "whoami" in url:
+            return self.whoami_resp
         return self.resp
 
 
@@ -260,3 +267,39 @@ def test_fetch_usage_subscriptions_bad_json_keeps_credits(tmp_path):
     assert res is not None
     assert res["period_end"] is None
     assert abs(res["weekly_pct"] - 71.2057) < 0.01
+
+
+# ---------------------------------------------------------------- fetch_account identity / UA
+
+def test_fetch_account_sends_user_agent():
+    cc = _load()
+    http = _HTTP(_Resp(200, REAL))
+    res = cc.fetch_account("test-key", http=http)
+    assert res is not None
+    urls = {url for url, _ in http.calls}
+    assert cc.WHOAMI_URL in urls
+    assert cc.USAGE_URL in urls
+    assert cc.SUBSCRIPTIONS_URL in urls
+    for url, kw in http.calls:
+        assert kw["headers"]["User-Agent"] == cc.USER_AGENT
+
+
+def test_fetch_account_returns_none_when_whoami_fails(capsys):
+    cc = _load()
+    http = _HTTP(_Resp(200, REAL), whoami_resp=_Resp(403, {"error": "forbidden"}))
+    res = cc.fetch_account("user_zjMkey1234567890", http=http)
+    assert res is None
+    out = capsys.readouterr().out
+    assert "[CommandCode] whoami 失敗，略過這把 key（避免產生假帳號）" in out
+
+
+def test_fetch_account_uses_whoami_identity():
+    cc = _load()
+    http = _HTTP(
+        _Resp(200, REAL),
+        whoami_resp=_Resp(200, {"user": {"id": "user_real", "userName": "kevin202511180ysi"}}),
+    )
+    res = cc.fetch_account("test-key", http=http)
+    assert res is not None
+    assert res["account_id"] == "user_real"
+    assert res["name"] == "kevin202511180ysi"
