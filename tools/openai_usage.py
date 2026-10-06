@@ -419,10 +419,25 @@ def _fetch_newapi_usage(http=None) -> list[dict]:
             continue
         channel_id = channel.get("id")
         try:
-            response = client.get(f"{base}/api/channel/{channel_id}/codex/usage", headers=headers, timeout=30)
-            if response.status_code != 200:
-                continue
-            payload = response.json().get("data", {})
+            usage_url = f"{base}/api/channel/{channel_id}/codex/usage"
+            response = client.get(usage_url, headers=headers, timeout=30)
+            body = response.json() if response.status_code == 200 else {}
+            if response.status_code != 200 or (isinstance(body, dict) and body.get("success") is False):
+                refresh = client.post(f"{base}/api/channel/{channel_id}/codex/refresh",
+                                      headers=headers, timeout=30)
+                try:
+                    refresh_body = refresh.json() if refresh.status_code == 200 else {}
+                except Exception:
+                    refresh_body = {}
+                if refresh.status_code != 200 or not isinstance(refresh_body, dict) or refresh_body.get("success") is not True:
+                    continue
+                response = client.get(usage_url, headers=headers, timeout=30)
+                if response.status_code != 200:
+                    continue
+                body = response.json()
+                if isinstance(body, dict) and body.get("success") is False:
+                    continue
+            payload = body.get("data", {})
             account_id = payload.get("account_id")
             email = payload.get("email")
             rate_limit = payload.get("rate_limit") or {}

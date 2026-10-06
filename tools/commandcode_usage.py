@@ -26,57 +26,23 @@
 API key 取得順序：
 1. 環境變數 COMMANDCODE_API_KEY
 2. 本機檔 ~/.deskbar-agent/commandcode.key（純文字一行）
-3. 透過 ssh 從 New API sqlite 唯讀取出：
-   ssh -o BatchMode=yes -o ConnectTimeout=8 rpi-minicpm-jump python3 -
-   SQL: select id, name, key from channels where base_url like '%commandcode%' and status = 1（所有 channel，依 id 排序）
-   成功後寫入快取 ~/.deskbar-agent/newapi_commandcode_key.json（0600）；ssh 失敗時讀快取
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
-import subprocess
 from typing import Any
 
 import requests
 
-NEWAPI_SSH_HOST = "rpi-minicpm-jump"
-NEWAPI_DB_PATH = "/opt/newapi/data/one-api.db"
 DEFAULT_KEY_PATH = Path.home() / ".deskbar-agent" / "commandcode.key"
-DEFAULT_CACHE_PATH = Path.home() / ".deskbar-agent" / "newapi_commandcode_key.json"
 USAGE_URL = "https://api.commandcode.ai/alpha/billing/credits"
 SUBSCRIPTIONS_URL = "https://api.commandcode.ai/alpha/billing/subscriptions"
 WHOAMI_URL = "https://api.commandcode.ai/alpha/whoami"
 # CommandCode 前面的 Cloudflare 會擋沒有 User-Agent 的請求（403 error 1010，2026-09-23 實測）
 USER_AGENT = "deskbar-commandcode/1.0"
 _MAX_KEYS = 8
-
-
-def _newapi_remote_script(db_path: str) -> str:
-    """遠端唯讀腳本：從 New API sqlite 取出「所有」啟用中 CommandCode channel 的 key（純讀取，絕不 UPDATE）。
-    2026-09-23 起不再只讀第一個 channel——另開 channel 加帳號也要自動出現在 deskbar。"""
-    return f"""
-import json
-import sqlite3
-
-keys = []
-try:
-    conn = sqlite3.connect("file:{db_path}?mode=ro", uri=True)
-    try:
-        cursor = conn.execute(
-            "select id, name, key from channels where base_url like '%commandcode%' and status = 1 order by id"
-        )
-        for row in cursor.fetchall():
-            if row and len(row) >= 3 and isinstance(row[2], str) and row[2].strip():
-                keys.append(row[2].strip())
-    finally:
-        conn.close()
-except Exception:
-    pass
-print(json.dumps({{"keys": keys}}))
-"""
 
 
 def _split_key_text(text: Any) -> list[str]:
@@ -96,61 +62,14 @@ def _split_key_text(text: Any) -> list[str]:
     return parts
 
 
-def _flatten_key_items(items: Any) -> list[str]:
-    """快取 list 可能是多行字串混雜：逐項再拆一次，去重保序。"""
-    out: list[str] = []
-    seen: set[str] = set()
-    if not isinstance(items, list):
-        return out
-    for item in items:
-        for key in _split_key_text(item) if isinstance(item, str) else []:
-            if key not in seen:
-                seen.add(key)
-                out.append(key)
-                if len(out) >= _MAX_KEYS:
-                    return out
-    return out
-
-
-def _read_cached_keys(c_path: Path) -> list[str]:
-    """讀快取：新格式 {"keys": [...]}，舊格式 {"key": "..."} 相容（都要再拆行）。"""
-    try:
-        if not c_path.is_file():
-            return []
-        data = json.loads(c_path.read_text(encoding="utf-8"))
-    except (OSError, TypeError, ValueError):
-        return []
-    if not isinstance(data, dict):
-        return []
-    keys = _flatten_key_items(data.get("keys"))
-    if keys:
-        return keys
-    return _split_key_text(data.get("key"))
-
-
-def _write_cached_keys(c_path: Path, keys: list[str]) -> None:
-    try:
-        c_path.parent.mkdir(parents=True, exist_ok=True)
-        iso = datetime.now(timezone.utc).isoformat()
-        c_path.write_text(json.dumps({"keys": keys, "fetched_at": iso}), encoding="utf-8")
-        c_path.chmod(0o600)
-    except OSError:
-        pass
-
-
 def load_api_keys(
     env: dict | None = None,
     key_path: Path | str | None = None,
-    runner: Any = None,
-    cache_path: Path | str | None = None,
-    ssh_host: str = NEWAPI_SSH_HOST,
-    db_path: str = NEWAPI_DB_PATH,
 ) -> list[str]:
-    """讀 CommandCode 的全部 API key，依序：環境變數 -> 本機檔 -> ssh 查 New API -> 讀快取。
+    """讀 CommandCode 的全部 API key，依序：環境變數 -> 本機檔。
 
     - 環境變數 COMMANDCODE_API_KEY 可用逗號或換行放多把
     - 本機檔 ~/.deskbar-agent/commandcode.key 每行一把
-    - ssh 唯讀 New API：key 欄位按換行拆、去空行去重
     """
     env_dict = os.environ if env is None else env
     key = env_dict.get("COMMANDCODE_API_KEY")
@@ -167,61 +86,18 @@ def load_api_keys(
     except OSError:
         pass
 
-    c_path = DEFAULT_CACHE_PATH if cache_path is None else Path(cache_path).expanduser()
-    run_cmd = subprocess.run if runner is None else runner
-    command = [
-        "ssh",
-        "-o", "BatchMode=yes",
-        "-o", "ConnectTimeout=8",
-        ssh_host,
-        "python3", "-",
-    ]
-    ssh_keys: list[str] = []
-    try:
-        result = run_cmd(
-            command,
-            input=_newapi_remote_script(db_path),
-            capture_output=True,
-            text=True,
-            timeout=8,
-            check=False,
-        )
-        if getattr(result, "returncode", 1) == 0:
-            data = json.loads(result.stdout)
-            if isinstance(data, dict):
-                raw = data.get("key")
-                if raw is None:
-                    raw = data.get("keys")
-                if isinstance(raw, list):
-                    ssh_keys = _flatten_key_items(raw)
-                else:
-                    ssh_keys = _split_key_text(raw)
-    except Exception:
-        ssh_keys = []
-
-    if ssh_keys:
-        _write_cached_keys(c_path, ssh_keys)
-        return ssh_keys
-
-    return _read_cached_keys(c_path)
+    print("[CommandCode] 略過用量來源：找不到 API key")
+    return []
 
 
 def load_api_key(
     env: dict | None = None,
     key_path: Path | str | None = None,
-    runner: Any = None,
-    cache_path: Path | str | None = None,
-    ssh_host: str = NEWAPI_SSH_HOST,
-    db_path: str = NEWAPI_DB_PATH,
 ) -> str | None:
     """讀 CommandCode 的 API key（第一把，給舊呼叫者用）。"""
     keys = load_api_keys(
         env=env,
         key_path=key_path,
-        runner=runner,
-        cache_path=cache_path,
-        ssh_host=ssh_host,
-        db_path=db_path,
     )
     return keys[0] if keys else None
 
@@ -411,20 +287,12 @@ def fetch_accounts(
     http: Any = None,
     env: dict | None = None,
     key_path: Path | str | None = None,
-    runner: Any = None,
-    cache_path: Path | str | None = None,
-    ssh_host: str = NEWAPI_SSH_HOST,
-    db_path: str = NEWAPI_DB_PATH,
 ) -> list[dict]:
     """逐把 key 呼叫 fetch_account，失敗的略過；回傳順序照 keys。"""
     if keys is None:
         keys = load_api_keys(
             env=env,
             key_path=key_path,
-            runner=runner,
-            cache_path=cache_path,
-            ssh_host=ssh_host,
-            db_path=db_path,
         )
     accounts: list[dict] = []
     for key in keys or []:
@@ -444,22 +312,13 @@ def fetch_usage(
     http: Any = None,
     env: dict | None = None,
     key_path: Path | str | None = None,
-    runner: Any = None,
-    cache_path: Path | str | None = None,
-    ssh_host: str = NEWAPI_SSH_HOST,
-    db_path: str = NEWAPI_DB_PATH,
 ) -> dict | None:
     """抓 CommandCode 用量（第一把 key；相容舊呼叫者）＝ fetch_account(第一把 key)。"""
     keys = load_api_keys(
         env=env,
         key_path=key_path,
-        runner=runner,
-        cache_path=cache_path,
-        ssh_host=ssh_host,
-        db_path=db_path,
     )
     if not keys:
-        print("[CommandCode] 抓取失敗：找不到 API key")
         return None
     try:
         return fetch_account(keys[0], http=http)

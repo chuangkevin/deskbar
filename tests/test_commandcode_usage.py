@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import importlib.util
-import json
 from pathlib import Path
 import sys
 
@@ -57,20 +56,6 @@ class _HTTP:
         if "whoami" in url:
             return self.whoami_resp
         return self.resp
-
-
-class _FakeRunner:
-    def __init__(self, returncode=0, stdout="", raises=False):
-        self.returncode = returncode
-        self.stdout = stdout
-        self.raises = raises
-        self.calls = []
-
-    def __call__(self, command, **kwargs):
-        self.calls.append((command, kwargs))
-        if self.raises:
-            raise RuntimeError("ssh failed")
-        return self
 
 
 # ---------------------------------------------------------------- parse_usage
@@ -145,47 +130,20 @@ def test_load_api_key_from_env(tmp_path):
     key_file = tmp_path / "commandcode.key"
     key_file.write_text("file-key", encoding="utf-8")
     env = {"COMMANDCODE_API_KEY": "env-key"}
-    runner = _FakeRunner(returncode=0, stdout=json.dumps({"key": "ssh-key"}))
-    assert cc.load_api_key(env=env, key_path=key_file, runner=runner, cache_path=tmp_path / "cache.json") == "env-key"
-    assert len(runner.calls) == 0
+    assert cc.load_api_key(env=env, key_path=key_file) == "env-key"
 
 
 def test_load_api_key_from_local_file(tmp_path):
     cc = _load()
     key_file = tmp_path / "commandcode.key"
     key_file.write_text("  local-key-from-file  \n", encoding="utf-8")
-    runner = _FakeRunner(returncode=0, stdout=json.dumps({"key": "ssh-key"}))
-    assert cc.load_api_key(env={}, key_path=key_file, runner=runner, cache_path=tmp_path / "cache.json") == "local-key-from-file"
-    assert len(runner.calls) == 0
+    assert cc.load_api_key(env={}, key_path=key_file) == "local-key-from-file"
 
 
-def test_load_api_key_from_ssh_success_writes_cache(tmp_path):
+def test_load_api_key_all_missing_returns_none_and_logs(tmp_path, capsys):
     cc = _load()
-    cache_path = tmp_path / "cache.json"
-    runner = _FakeRunner(returncode=0, stdout=json.dumps({"key": "ssh-retrieved-key"}))
-    assert not cache_path.exists()
-    assert cc.load_api_key(env={}, key_path=tmp_path / "missing.key", runner=runner, cache_path=cache_path) == "ssh-retrieved-key"
-    assert len(runner.calls) == 1
-    assert cache_path.exists()
-    saved = json.loads(cache_path.read_text(encoding="utf-8"))
-    assert saved["keys"] == ["ssh-retrieved-key"]   # 多帳號後快取存 keys 清單
-    assert "fetched_at" in saved
-    # Check permissions 0600
-    assert (cache_path.stat().st_mode & 0o777) == 0o600
-
-
-def test_load_api_key_from_ssh_failure_reads_cache(tmp_path):
-    cc = _load()
-    cache_path = tmp_path / "cache.json"
-    cache_path.write_text(json.dumps({"key": "cached-fallback-key", "fetched_at": "2026-09-22T00:00:00Z"}), encoding="utf-8")
-    runner = _FakeRunner(raises=True)
-    assert cc.load_api_key(env={}, key_path=tmp_path / "missing.key", runner=runner, cache_path=cache_path) == "cached-fallback-key"
-
-
-def test_load_api_key_all_missing_returns_none(tmp_path):
-    cc = _load()
-    runner = _FakeRunner(returncode=1, stdout="")
-    assert cc.load_api_key(env={}, key_path=tmp_path / "missing.key", runner=runner, cache_path=tmp_path / "missing-cache.json") is None
+    assert cc.load_api_key(env={}, key_path=tmp_path / "missing.key") is None
+    assert capsys.readouterr().out.count("找不到 API key") == 1
 
 
 # ---------------------------------------------------------------- fetch_usage
@@ -303,36 +261,3 @@ def test_fetch_account_uses_whoami_identity():
     assert res is not None
     assert res["account_id"] == "user_real"
     assert res["name"] == "kevin202511180ysi"
-
-
-def test_newapi_remote_script_reads_keys_from_every_enabled_commandcode_channel(tmp_path):
-    """2026-09-23 Kevin：New API 另開 CommandCode channel 也要自動出現，不能只讀第一個。"""
-    import sqlite3
-    import subprocess
-
-    db = tmp_path / "one-api.db"
-    conn = sqlite3.connect(db)
-    conn.execute("create table channels (id integer, name text, key text, base_url text, status integer)")
-    conn.executemany("insert into channels values (?, ?, ?, ?, ?)", [
-        (22, "commandcode-goat x3", "k1\nk2\nk3", "https://api.commandcode.ai", 1),
-        (30, "commandcode-new", "k4", "https://api.commandcode.ai/", 1),
-        (31, "commandcode-off", "k-disabled", "https://api.commandcode.ai", 2),
-        (5, "other", "k-other", "https://api.example.com", 1),
-        (32, "commandcode-dup", "k2", "https://api.commandcode.ai", 1),
-    ])
-    conn.commit()
-    conn.close()
-
-    m = _load()
-    out = subprocess.run([sys.executable, "-"], input=m._newapi_remote_script(str(db)),
-                         capture_output=True, text=True, check=True).stdout
-    keys = m._flatten_key_items(json.loads(out)["keys"])
-    assert keys == ["k1", "k2", "k3", "k4"]
-
-
-def test_newapi_remote_script_stays_read_only():
-    m = _load()
-    script = m._newapi_remote_script("/tmp/x.db").lower()
-    assert "mode=ro" in script
-    for word in ("update ", "insert ", "delete ", "drop "):
-        assert word not in script

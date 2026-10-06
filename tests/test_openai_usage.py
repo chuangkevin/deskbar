@@ -407,6 +407,55 @@ def test_newapi_usage_failure_does_not_block_other_channels(tmp_path, monkeypatc
     assert [row["account_id"] for row in result] == ["good"]
 
 
+def test_newapi_usage_refreshes_once_then_retries_usage(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_NEWAPI_ADMIN_TOKEN", "test-token")
+    config = _write_json(tmp_path / "accounts.json", [{"format": "newapi-usage-api"}])
+    class Response:
+        def __init__(self, status_code, body): self.status_code, self.body = status_code, body
+        def json(self): return self.body
+    class HTTP:
+        def __init__(self): self.calls = []
+        def get(self, url, **kwargs):
+            self.calls.append(("GET", url))
+            if "/usage" not in url:
+                return Response(200, {"data": {"items": [{"id": 21, "type": 57, "status": 1}]}})
+            if sum(1 for method, path in self.calls if method == "GET" and "/usage" in path) == 1:
+                return Response(500, {})
+            return Response(200, {"success": True, "data": {"account_id": "a21", "email": "refresh@example.com",
+                "plan_type": "pro", "rate_limit": {"primary_window": {
+                    "limit_window_seconds": 604800, "used_percent": 40, "reset_at": 456}}}})
+        def post(self, url, **kwargs):
+            self.calls.append(("POST", url))
+            return Response(200, {"success": True})
+    http = HTTP()
+    result = fetch_all_usage(config_path=config, http=http)
+    assert result[0]["used_pct"] == 40
+    assert [method for method, _ in http.calls].count("POST") == 1
+    assert [method for method, path in http.calls if method == "GET" and "/usage" in path].__len__() == 2
+
+
+def test_newapi_usage_refresh_failure_skips_without_retry(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_NEWAPI_ADMIN_TOKEN", "test-token")
+    config = _write_json(tmp_path / "accounts.json", [{"format": "newapi-usage-api"}])
+    class Response:
+        def __init__(self, status_code, body): self.status_code, self.body = status_code, body
+        def json(self): return self.body
+    class HTTP:
+        def __init__(self): self.calls = []
+        def get(self, url, **kwargs):
+            self.calls.append(("GET", url))
+            if "/usage" in url:
+                return Response(500, {})
+            return Response(200, {"data": {"items": [{"id": 22, "type": 57, "status": 1}]}})
+        def post(self, url, **kwargs):
+            self.calls.append(("POST", url))
+            return Response(200, {"success": False})
+    http = HTTP()
+    assert fetch_all_usage(config_path=config, http=http) == []
+    assert [method for method, _ in http.calls].count("POST") == 1
+    assert sum(method == "GET" and "/usage" in path for method, path in http.calls) == 1
+
+
 def test_newapi_usage_missing_token_returns_empty(tmp_path, monkeypatch):
     monkeypatch.delenv("DESKBAR_NEWAPI_ADMIN_TOKEN", raising=False)
     monkeypatch.setattr(openai_usage, "NEWAPI_ADMIN_TOKEN_PATH", tmp_path / "missing.token")
