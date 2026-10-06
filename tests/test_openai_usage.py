@@ -1,7 +1,6 @@
 """OpenAI Codex responses header 解析與抓取工具測試。"""
 import base64
 import json
-import subprocess
 
 import tools.openai_usage as openai_usage
 from tools.openai_usage import (
@@ -11,113 +10,6 @@ from tools.openai_usage import (
     load_credentials,
     parse_codex_headers,
 )
-
-
-def test_list_credentials_reads_newapi_channels_via_ssh_runner(tmp_path, monkeypatch):
-    access_a = _fake_jwt({
-        "https://api.openai.com/auth": {"chatgpt_account_id": "acc-newapi-a"},
-        "https://api.openai.com/profile": {"email": "kevin.codex@example.com"},
-    })
-    access_b = _fake_jwt({
-        "https://api.openai.com/auth": {"chatgpt_account_id": "acc-newapi-b"},
-        "https://api.openai.com/profile": {"email": "kevin.other@example.com"},
-    })
-    stdout = json.dumps([
-        {"channel_id": 10, "name": "codex-main", "access": access_a},
-        {"channel_id": 11, "name": "codex-backup", "access": access_b},
-    ])
-    calls = []
-
-    class FakeResult:
-        def __init__(self):
-            self.returncode = 0
-            self.stdout = stdout
-            self.stderr = ""
-
-    def runner(command, **kwargs):
-        calls.append((command, kwargs))
-        return FakeResult()
-
-    config = _write_json(tmp_path / "openai_accounts.json", [{"format": "newapi-sqlite-ssh"}])
-    cache_path = tmp_path / "newapi_codex_tokens.json"
-    monkeypatch.setattr(openai_usage, "CODEX_AUTH_PATH", tmp_path / "missing-codex.json")
-    monkeypatch.setattr(openai_usage, "OPENCODE_AUTH_PATH", tmp_path / "missing-opencode.json")
-
-    credentials = list_credentials(config_path=config, newapi_runner=runner, newapi_cache_path=cache_path)
-
-    assert len(credentials) == 2
-    assert [item["name"] for item in credentials] == ["kevin.codex", "kevin.other"]
-    assert all(item["source"].startswith("newapi:") for item in credentials)
-    assert calls and calls[0][0][0] == "ssh"
-    assert isinstance(calls[0][1].get("input"), str)
-    cached = json.loads(cache_path.read_text(encoding="utf-8"))
-    assert len(cached) == 2
-    assert "refresh" not in cached[0]
-    assert "refresh" not in cached[1]
-
-
-def test_newapi_credentials_fall_back_to_cache_when_ssh_fails(tmp_path):
-    access = _fake_jwt({
-        "https://api.openai.com/auth": {"chatgpt_account_id": "acc-cached"},
-        "https://api.openai.com/profile": {"email": "cached@example.com"},
-    })
-    cached_rows = [{
-        "access": access,
-        "account_id": "acc-cached",
-        "name": "cached",
-        "source": "newapi:rpi:channel/7",
-    }]
-    cache_path = _write_json(tmp_path / "newapi_codex_tokens.json", cached_rows)
-
-    def runner(command, **kwargs):
-        raise subprocess.TimeoutExpired("ssh", 15)
-
-    from tools.openai_usage import _read_newapi_credentials
-    credentials = _read_newapi_credentials(runner=runner, cache_path=cache_path)
-
-    assert [item["account_id"] for item in credentials] == ["acc-cached"]
-
-
-def test_newapi_remote_script_is_read_only():
-    script = openai_usage._newapi_remote_script("/tmp/one-api.db", 57)
-
-    assert "mode=ro" in script
-    assert "update" not in script.lower()
-    assert "refresh_token" not in script
-
-
-def test_list_credentials_dedupes_newapi_against_local(tmp_path, monkeypatch):
-    access = _fake_jwt({
-        "https://api.openai.com/auth": {"chatgpt_account_id": "acc-dup"},
-        "https://api.openai.com/profile": {"email": "dup@example.com"},
-    })
-    codex = _write_json(tmp_path / "codex.json", {
-        "tokens": {"access_token": access, "account_id": "acc-dup"},
-    })
-    stdout = json.dumps([
-        {"channel_id": 5, "name": "newapi-dup", "access": access},
-    ])
-
-    def runner(command, **kwargs):
-        class FakeResult:
-            returncode = 0
-            stdout = stdout
-            stderr = ""
-        return FakeResult()
-
-    config = _write_json(tmp_path / "openai_accounts.json", [
-        {"auth": str(codex), "format": "codex"},
-        {"format": "newapi-sqlite-ssh"},
-    ])
-
-    credentials = list_credentials(
-        config_path=config,
-        newapi_runner=runner,
-        newapi_cache_path=tmp_path / "newapi_codex_tokens.json",
-    )
-
-    assert len(credentials) == 1
-    assert credentials[0]["source"] == str(codex)
 
 
 REAL_HEADERS = {
@@ -444,34 +336,165 @@ def test_fetch_usage_missing_auth_file_returns_none(tmp_path):
     assert fetch_usage(auth_path=tmp_path / "missing-auth.json", http=object()) is None
 
 
-def test_newapi_reader_keeps_disabled_channels_and_flags_them(tmp_path):
-    """2026-09-22 Kevin：通道停用（額度用完）時 deskbar 還是要顯示額度，只是不能用。"""
-    import json as _json
-    from tools import openai_usage as ou
+def test_newapi_usage_filters_channel_and_maps_windows(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_NEWAPI_ADMIN_TOKEN", "test-token")
+    config = _write_json(tmp_path / "accounts.json", [{"format": "newapi-usage-api"}])
+    calls = []
 
-    script = ou._newapi_remote_script("/x.db", 57)
-    assert "status = 1" not in script, "must not filter disabled channels out"
-    assert "select id, name, key, status from channels" in script
+    class Response:
+        status_code = 200
+        def __init__(self, data): self.data = data
+        def json(self): return {"data": self.data}
 
-    def fake_jwt(claims):
-        import base64
-        seg = lambda o: base64.urlsafe_b64encode(_json.dumps(o).encode()).decode().rstrip("=")
-        return f"{seg({'alg':'none'})}.{seg(claims)}.sig"
+    class HTTP:
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            if url.endswith("/api/channel/?p=1&page_size=100"):
+                return Response({"items": [
+                    {"id": 13, "type": 57, "status": 1},
+                    {"id": 14, "type": 57, "status": 2},
+                    {"id": 15, "type": 99, "status": 1},
+                ]})
+            return Response({"account_id": "acc-13", "email": "interagent.dev01@example.com",
+                             "plan_type": "pro", "rate_limit": {
+                                 "primary_window": {"limit_window_seconds": 604800, "used_percent": 40, "reset_at": 1791580397},
+                                 "secondary_window": {"limit_window_seconds": 18000, "used_percent": 12, "reset_at": 1790000000},
+                             }})
 
-    rows = [
-        {"channel_id": 11, "name": "acct3", "status": 2,
-         "access": fake_jwt({"https://api.openai.com/auth": {"chatgpt_account_id": "acc-3"}, "https://api.openai.com/profile": {"email": "c@x"}})},
-        {"channel_id": 13, "name": "acct2", "status": 1,
-         "access": fake_jwt({"https://api.openai.com/auth": {"chatgpt_account_id": "acc-2"}, "https://api.openai.com/profile": {"email": "i@x"}})},
-    ]
+    results = fetch_all_usage(config_path=config, http=HTTP())
+    assert len(results) == 1
+    assert results[0] == {"account_id": "acc-13", "name": "interagent.dev01", "used_pct": 40,
+                          "resets_at_epoch": 1791580397, "plan": "pro"}
+    assert all(call[1]["headers"] == {"Authorization": "Bearer test-token", "New-Api-User": "1"} for call in calls)
 
-    class Done:
-        returncode = 0
-        stdout = _json.dumps(rows)
-        stderr = ""
 
-    creds = ou._read_newapi_credentials(runner=lambda *a, **k: Done(), cache_path=tmp_path / "cache.json")
-    by_id = {c["account_id"]: c for c in creds}
-    assert set(by_id) == {"acc-3", "acc-2"}, "disabled channel still listed"
-    assert by_id["acc-3"]["channel_enabled"] is False
-    assert by_id["acc-2"]["channel_enabled"] is True
+def test_newapi_usage_null_secondary_has_no_five_hour(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_NEWAPI_ADMIN_TOKEN", "test-token")
+    config = _write_json(tmp_path / "accounts.json", [{"format": "newapi-usage-api"}])
+    class Response:
+        status_code = 200
+        def __init__(self, data): self.data = data
+        def json(self): return {"data": self.data}
+    class HTTP:
+        def get(self, url, **kwargs):
+            if "/usage" not in url:
+                return Response({"items": [{"id": 1, "type": 57, "status": 1}]})
+            return Response({"account_id": "acc", "email": "user@example.com", "rate_limit": {
+                "primary_window": {"limit_window_seconds": 604800, "used_percent": 75, "reset_at": 123},
+                "secondary_window": None,
+            }})
+    result = fetch_all_usage(config_path=config, http=HTTP())[0]
+    assert result["used_pct"] == 75
+    assert result["resets_at_epoch"] == 123
+    assert result["plan"] is None
+    assert not any("five_hour" in key for key in result)
+
+
+def test_newapi_usage_failure_does_not_block_other_channels(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_NEWAPI_ADMIN_TOKEN", "test-token")
+    config = _write_json(tmp_path / "accounts.json", [{"format": "newapi-usage-api"}])
+    class Response:
+        def __init__(self, status_code, data): self.status_code, self.data = status_code, data
+        def json(self): return {"data": self.data}
+    class HTTP:
+        def get(self, url, **kwargs):
+            if "/usage" not in url:
+                return Response(200, {"items": [{"id": 1, "type": 57, "status": 1}, {"id": 2, "type": 57, "status": 1}]})
+            if "/1/" in url: return Response(500, {})
+            return Response(200, {"account_id": "good", "email": "good@example.com", "rate_limit": {
+                "primary_window": {"limit_window_seconds": 604800, "used_percent": 75, "reset_at": 123}}})
+    result = fetch_all_usage(config_path=config, http=HTTP())
+    assert [row["account_id"] for row in result] == ["good"]
+
+
+def test_newapi_usage_missing_token_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.delenv("DESKBAR_NEWAPI_ADMIN_TOKEN", raising=False)
+    monkeypatch.setattr(openai_usage, "NEWAPI_ADMIN_TOKEN_PATH", tmp_path / "missing.token")
+    config = _write_json(tmp_path / "accounts.json", [{"format": "newapi-usage-api"}])
+    assert fetch_all_usage(config_path=config, http=object()) == []
+
+
+def test_newapi_usage_end_to_end_oa_accounts(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from tools.usage_push_demo import oa_payload_fields
+
+    monkeypatch.setenv("DESKBAR_NEWAPI_ADMIN_TOKEN", "test-token")
+    config = _write_json(tmp_path / "accounts.json", [{"format": "newapi-usage-api"}])
+    class Response:
+        status_code = 200
+        def __init__(self, data): self.data = data
+        def json(self): return {"data": self.data}
+    class HTTP:
+        def get(self, url, **kwargs):
+            if "/usage" not in url:
+                return Response({"items": [{"id": 8, "type": 57, "status": 1}]})
+            return Response({"account_id": "acc-8", "email": "user@example.com", "plan_type": "pro",
+                             "rate_limit": {"primary_window": {"limit_window_seconds": 604800,
+                                "used_percent": 40, "reset_at": 1791580397}, "secondary_window": None}})
+
+    accounts = oa_payload_fields(fetch_all_usage(config_path=config, http=HTTP()), datetime.now(timezone.utc))["oa_accounts"]
+    assert len(accounts) == 1
+    assert accounts[0]["account_id"] == "acc-8"
+    assert accounts[0]["weekly_pct"] == 40
+    assert isinstance(accounts[0]["weekly_resets_at"], str)
+    assert accounts[0]["weekly_resets_at"]
+
+
+def test_fetch_all_usage_dedupes_account_preferring_successful_newapi(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_NEWAPI_ADMIN_TOKEN", "test-token")
+    token = _fake_jwt({"https://api.openai.com/auth": {"chatgpt_account_id": "same-account"},
+                       "https://api.openai.com/profile": {"email": "local@example.com"}})
+    local_auth = _write_json(tmp_path / "codex.json", {"tokens": {"access_token": token,
+                                                                    "account_id": "same-account"}})
+    config = _write_json(tmp_path / "accounts.json", [
+        {"auth": str(local_auth), "format": "codex"}, {"format": "newapi-usage-api"}])
+    class Response:
+        def __init__(self, status_code, data=None, headers=None):
+            self.status_code, self.data, self.headers = status_code, data or {}, headers or {}
+        def json(self): return {"data": self.data}
+        def iter_content(self, chunk_size=8192): return iter(())
+        def close(self): pass
+    class HTTP:
+        def post(self, *args, **kwargs): return Response(401)
+        def get(self, url, **kwargs):
+            if "/usage" not in url:
+                return Response(200, {"items": [{"id": 9, "type": 57, "status": 1}]})
+            return Response(200, {"account_id": "same-account", "email": "api@example.com",
+                "plan_type": "pro", "rate_limit": {"primary_window": {
+                    "limit_window_seconds": 604800, "used_percent": 40, "reset_at": 321}}})
+    result = fetch_all_usage(config_path=config, http=HTTP())
+    assert len(result) == 1
+    assert result[0]["account_id"] == "same-account"
+    assert result[0]["used_pct"] == 40
+    assert result[0]["resets_at_epoch"] == 321
+
+
+def test_fetch_all_usage_dedupes_local_and_newapi_preferring_first_success(tmp_path, monkeypatch):
+    monkeypatch.setenv("DESKBAR_NEWAPI_ADMIN_TOKEN", "test-token")
+    token = _fake_jwt({"https://api.openai.com/auth": {"chatgpt_account_id": "same-account"},
+                       "https://api.openai.com/profile": {"email": "local@example.com"}})
+    auth = _write_json(tmp_path / "codex.json", {"tokens": {"access_token": token,
+                                                                "account_id": "same-account"}})
+    config = _write_json(tmp_path / "accounts.json", [
+        {"auth": str(auth), "format": "codex"}, {"format": "newapi-usage-api"}])
+    class Response:
+        def __init__(self, status_code, data=None, headers=None):
+            self.status_code, self.data, self.headers = status_code, data or {}, headers or {}
+        def json(self): return {"data": self.data}
+        def iter_content(self, chunk_size=8192): return iter(())
+        def close(self): pass
+    class HTTP:
+        def post(self, *args, **kwargs):
+            return Response(200, headers={"x-codex-primary-used-percent": "76",
+                                          "x-codex-primary-reset-at": "456"})
+        def get(self, url, **kwargs):
+            if "/usage" not in url:
+                return Response(200, {"items": [{"id": 9, "type": 57, "status": 1}]})
+            return Response(200, {"account_id": "same-account", "email": "api@example.com",
+                "plan_type": "pro", "rate_limit": {"primary_window": {
+                    "limit_window_seconds": 604800, "used_percent": 40, "reset_at": 321}}})
+    result = fetch_all_usage(config_path=config, http=HTTP())
+    assert len(result) == 1
+    assert result[0]["name"] == "local"
+    assert result[0]["used_pct"] == 76.0
+    assert result[0]["resets_at_epoch"] == 456

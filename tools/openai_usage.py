@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
+import os
+import re
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -39,11 +43,8 @@ _CREDENTIAL_FORMATS = {
     "opencode": ("access", "accountId", "openai"),
 }
 
-NEWAPI_SSH_HOST = "rpi-minicpm-jump"
-NEWAPI_DB_PATH = "/opt/newapi/data/one-api.db"
 NEWAPI_CHANNEL_TYPE_CODEX = 57
-NEWAPI_SSH_TIMEOUT_SECONDS = 15
-NEWAPI_TOKEN_CACHE_PATH = Path.home() / ".deskbar-agent" / "newapi_codex_tokens.json"
+NEWAPI_ADMIN_TOKEN_PATH = Path.home() / ".deskbar-agent" / "newapi_admin.token"
 
 
 def _header_map(headers) -> dict[str, object]:
@@ -175,115 +176,7 @@ def _read_credential(path, auth_format: str) -> dict | None:
     }
 
 
-def _newapi_remote_script(db_path: str, channel_type: int) -> str:
-    """遠端唯讀腳本：從 New API sqlite 取出 Codex channel 的 access token（純讀取，絕不 UPDATE）。"""
-    return f'''
-import json
-import sqlite3
-
-rows = []
-try:
-    conn = sqlite3.connect("file:{db_path}?mode=ro", uri=True)
-    try:
-        # 不看 status：通道被手動停用（額度用完先關掉）時額度還是要顯示在 deskbar 上，
-        # 只是那條路不能用。2026-09-22 Kevin：「能不能出現在 deskbar？但不要可以用」。
-        cursor = conn.execute(
-            "select id, name, key, status from channels where type = {channel_type}"
-        )
-        for channel_id, name, key, status in cursor.fetchall():
-            try:
-                data = json.loads(key)
-                tokens = data.get("tokens") if isinstance(data, dict) else None
-                access = tokens.get("access_token") if isinstance(tokens, dict) else None
-                if not isinstance(access, str) or not access:
-                    access = data.get("access_token") if isinstance(data, dict) else None
-                if not isinstance(access, str) or not access:
-                    continue
-                rows.append({{"channel_id": channel_id, "name": name, "access": access, "status": status}})
-            except (TypeError, ValueError):
-                continue
-    finally:
-        conn.close()
-except Exception:
-    pass
-print(json.dumps(rows))
-'''
-
-
-def _read_newapi_cached(cache_path) -> list[dict]:
-    try:
-        data = json.loads(Path(cache_path).expanduser().read_text(encoding="utf-8"))
-    except (OSError, TypeError, ValueError):
-        return []
-    return data if isinstance(data, list) else []
-
-
-def _write_newapi_cache(cache_path, credentials: list[dict]) -> None:
-    try:
-        cache = Path(cache_path).expanduser()
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps(credentials), encoding="utf-8")
-        cache.chmod(0o600)
-    except (OSError, TypeError, ValueError):
-        pass
-
-
-def _read_newapi_credentials(host=NEWAPI_SSH_HOST, db_path=NEWAPI_DB_PATH,
-                            runner=subprocess.run, cache_path=NEWAPI_TOKEN_CACHE_PATH) -> list[dict]:
-    """從 rpi 上的 New API 讀 Codex channel 憑證；失敗時退回上次快取，任何例外不外拋。"""
-    command = [
-        "ssh",
-        "-o", "BatchMode=yes",
-        "-o", f"ConnectTimeout={NEWAPI_SSH_TIMEOUT_SECONDS}",
-        host,
-        "python3", "-",
-    ]
-    try:
-        result = runner(
-            command,
-            input=_newapi_remote_script(db_path, NEWAPI_CHANNEL_TYPE_CODEX),
-            capture_output=True,
-            text=True,
-            timeout=NEWAPI_SSH_TIMEOUT_SECONDS,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"ssh exit {result.returncode}")
-        rows = json.loads(result.stdout)
-        if not isinstance(rows, list):
-            raise TypeError("newapi output is not a list")
-        credentials = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            access = row.get("access")
-            channel_id = row.get("channel_id")
-            if not isinstance(access, str) or not access:
-                continue
-            account_id = _account_id_from_jwt(access)
-            if not account_id:
-                continue
-            claims = _jwt_payload(access)
-            name = _name_from_jwt_claims(claims, account_id) if claims is not None else account_id[:8]
-            credentials.append({
-                "access": access,
-                "account_id": account_id,
-                "name": name,
-                "source": f"newapi:{host}:channel/{channel_id}",
-                # New API channel status: 1 = enabled, 2 = manually disabled, 3 = auto-disabled.
-                # Kept so the bar can still show the quota of a channel that is switched off.
-                "channel_enabled": row.get("status", 1) == 1,
-            })
-        print(f"[OpenAI] New API 憑證 {len(credentials)} 筆")
-        _write_newapi_cache(cache_path, credentials)
-        return credentials
-    except Exception:
-        cached = _read_newapi_cached(cache_path)
-        print("[OpenAI] New API 憑證抓取失敗，改用快取")
-        return cached
-
-
-def _configured_auth_sources(config_path) -> list[tuple[Path, str]] | None:
+def _configured_auth_sources(config_path) -> list[tuple[Path | None, str]] | None:
     path = OPENAI_ACCOUNTS_CONFIG_PATH if config_path is None else Path(config_path).expanduser()
     try:
         entries = json.loads(path.read_text(encoding="utf-8"))
@@ -296,26 +189,28 @@ def _configured_auth_sources(config_path) -> list[tuple[Path, str]] | None:
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        is_newapi = entry.get("newapi") is True or entry.get("format") == "newapi-sqlite-ssh"
-        if is_newapi:
-            sources.append((None, "newapi-sqlite-ssh"))
+        auth_format = entry.get("format")
+        if auth_format == "newapi-usage-api":
+            sources.append((None, auth_format))
             continue
         auth_path = entry.get("auth")
         if not isinstance(auth_path, str) or not auth_path:
+            print(f"[OpenAI] 未知來源格式：{auth_format or '未指定'}")
             continue
-        auth_format = entry.get("format")
         if not isinstance(auth_format, str) or not auth_format:
             auth_format = _guess_auth_format(auth_path)
+        elif auth_format not in _CREDENTIAL_FORMATS:
+            print(f"[OpenAI] 未知來源格式：{auth_format}")
+            continue
         sources.append((Path(auth_path).expanduser(), auth_format))
     return sources
 
 
-def list_credentials(config_path=None, newapi_runner=None, newapi_cache_path=None) -> list[dict]:
+def list_credentials(config_path=None) -> list[dict]:
     """列出所有可用 OpenAI credentials；壞來源只跳過，不中斷整體流程。
 
-    設定清單項目支援 `{"auth": "<路徑>", "format": "codex|opencode"}`，
-    以及 `{"format": "newapi-sqlite-ssh"}`（或 `{"newapi": true}`），
-    從 New API 的 sqlite 讀 Codex 憑證。清單順序決定優先：
+    設定清單項目支援 `{"auth": "<路徑>", "format": "codex|opencode"}`。
+    清單順序決定優先：
     同一個 account_id 先出現的來源贏。
     """
     sources = _configured_auth_sources(config_path)
@@ -328,15 +223,7 @@ def list_credentials(config_path=None, newapi_runner=None, newapi_cache_path=Non
     credentials = []
     seen_account_ids = set()
     for path, auth_format in sources:
-        if auth_format == "newapi-sqlite-ssh":
-            runner = subprocess.run if newapi_runner is None else newapi_runner
-            cache = (NEWAPI_TOKEN_CACHE_PATH if newapi_cache_path is None
-                     else newapi_cache_path)
-            for credential in _read_newapi_credentials(runner=runner, cache_path=cache):
-                if credential["account_id"] in seen_account_ids:
-                    continue
-                seen_account_ids.add(credential["account_id"])
-                credentials.append(credential)
+        if auth_format == "newapi-usage-api":
             continue
         credential = _read_credential(path, auth_format)
         if credential is None:
@@ -385,7 +272,45 @@ def _drain_response(response) -> None:
             close()
 
 
-def _fetch_usage_headers(access: str, account_id: str, http=None) -> dict | None:
+def _diagnostic_source(source) -> str:
+    """Only expose a source kind or a validated New API host/channel identifier."""
+    if not isinstance(source, str):
+        return "local"
+    host_label = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    if len(source) <= 300 and re.fullmatch(
+            rf"newapi:{host_label}(?:\.{host_label})*:channel/[0-9]{{1,10}}", source):
+        return source
+    if source in {"codex", "opencode", "local"}:
+        return source
+    parts = Path(source).parts
+    if ".codex" in parts or "codex.json" in parts:
+        return "codex"
+    if "opencode" in parts or "opencode.json" in parts:
+        return "opencode"
+    return "local"
+
+
+def _usage_diagnostic(account_id, source, round_id, status, outcome, accepted, error=None):
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "pid": os.getpid(),
+        "round_id": round_id,
+        "account_sha12": hashlib.sha256(account_id.encode()).hexdigest()[:12]
+        if isinstance(account_id, str) else None,
+        "source": _diagnostic_source(source),
+        "http_status": status if type(status) is int and 100 <= status <= 599 else None,
+        "outcome": outcome,
+        "usage_headers_accepted": accepted,
+    }
+    if error is not None:
+        record["exception_type"] = type(error).__name__
+    print("[OpenAI] usage " + json.dumps(record, sort_keys=True))
+
+
+def _fetch_usage_headers(access: str, account_id: str, http=None, *, source=None,
+                         round_id=None) -> dict | None:
+    round_id = round_id if isinstance(round_id, str) and re.fullmatch(r"[0-9a-f]{32}", round_id) else uuid4().hex
+    status_code = None
     try:
         headers = {
             "Authorization": f"Bearer {access}",
@@ -402,6 +327,7 @@ def _fetch_usage_headers(access: str, account_id: str, http=None) -> dict | None
         post = getattr(client, "post", None)
         if post is None:
             if not callable(client):
+                _usage_diagnostic(account_id, source, round_id, None, "rejected", False)
                 return None
             post = client
         response = post(
@@ -411,18 +337,18 @@ def _fetch_usage_headers(access: str, account_id: str, http=None) -> dict | None
             stream=True,
             timeout=30,
         )
-        _drain_response(response)
         status_code = getattr(response, "status_code", None)
+        _drain_response(response)
         parsed = parse_codex_headers(getattr(response, "headers", {}))
         has_valid_usage = _valid_usage_pct(parsed.get("used_pct"))
         if status_code != 200:
             if not has_valid_usage:
-                print(f"[OpenAI] 抓取失敗：HTTP {status_code}")
+                _usage_diagnostic(account_id, source, round_id, status_code, "rejected", False)
                 return None
-            print(f"[OpenAI] HTTP {status_code}，改用回應 header 的用量")
+        _usage_diagnostic(account_id, source, round_id, status_code, "accepted", has_valid_usage)
         return parsed
     except Exception as error:
-        print(f"[OpenAI] 抓取失敗：{type(error).__name__}")
+        _usage_diagnostic(account_id, source, round_id, status_code, "exception", False, error)
         return None
 
 
@@ -442,12 +368,13 @@ def fetch_usage(auth_path=None, http=None) -> dict | None:
     return _fetch_usage_headers(access, account_id, http=http)
 
 
-def fetch_usage_for(credential: dict, http=None) -> dict | None:
+def fetch_usage_for(credential: dict, http=None, *, round_id=None) -> dict | None:
     access = credential.get("access") if isinstance(credential, dict) else None
     account_id = credential.get("account_id") if isinstance(credential, dict) else None
     if not isinstance(access, str) or not access or not isinstance(account_id, str):
         return None
-    parsed = _fetch_usage_headers(access, account_id, http=http)
+    parsed = _fetch_usage_headers(access, account_id, http=http,
+                                  source=credential.get("source"), round_id=round_id)
     if parsed is None:
         return None
     parsed = dict(parsed)
@@ -457,10 +384,93 @@ def fetch_usage_for(credential: dict, http=None) -> dict | None:
     return parsed
 
 
+def _newapi_admin_token() -> str | None:
+    token = os.environ.get("DESKBAR_NEWAPI_ADMIN_TOKEN")
+    if token:
+        return token.strip() or None
+    try:
+        token = NEWAPI_ADMIN_TOKEN_PATH.expanduser().read_text(encoding="utf-8").strip()
+        return token or None
+    except OSError:
+        return None
+
+
+def _fetch_newapi_usage(http=None) -> list[dict]:
+    token = _newapi_admin_token()
+    if not token:
+        print("[OpenAI] New API usage 略過：未設定 admin token")
+        return []
+    client = requests if http is None else http
+    headers = {"Authorization": f"Bearer {token}", "New-Api-User": "1"}
+    base = os.environ.get("DESKBAR_NEWAPI_BASE", "https://newapi.sisihome.org").rstrip("/")
+    try:
+        response = client.get(f"{base}/api/channel/?p=1&page_size=100", headers=headers, timeout=30)
+        if response.status_code != 200:
+            print(f"[OpenAI] New API channels HTTP {response.status_code}")
+            return []
+        data = response.json().get("data", {})
+        channels = data.get("items", []) if isinstance(data, dict) else []
+    except Exception:
+        print("[OpenAI] New API channels request failed")
+        return []
+    results = []
+    for channel in channels:
+        if not isinstance(channel, dict) or channel.get("type") != NEWAPI_CHANNEL_TYPE_CODEX or channel.get("status") != 1:
+            continue
+        channel_id = channel.get("id")
+        try:
+            response = client.get(f"{base}/api/channel/{channel_id}/codex/usage", headers=headers, timeout=30)
+            if response.status_code != 200:
+                continue
+            payload = response.json().get("data", {})
+            account_id = payload.get("account_id")
+            email = payload.get("email")
+            rate_limit = payload.get("rate_limit") or {}
+            windows = [rate_limit.get("primary_window"), rate_limit.get("secondary_window")]
+            week = next((w for w in windows if isinstance(w, dict) and w.get("limit_window_seconds") == 604800), None)
+            if not isinstance(account_id, str) or not account_id or not isinstance(email, str):
+                continue
+            result = {
+                "account_id": account_id,
+                "name": email.split("@", 1)[0],
+                "used_pct": week.get("used_percent") if week else None,
+                "resets_at_epoch": week.get("reset_at") if week else None,
+                "plan": payload.get("plan_type"),
+            }
+            results.append(result)
+        except Exception:
+            print(f"[OpenAI] New API usage channel {channel_id} failed")
+    # Keep account ordering by first occurrence, but prefer the first usable usage value.
+    by_account = {}
+    for result in results:
+        account_id = result.get("account_id")
+        current = by_account.get(account_id)
+        if current is None or (current.get("used_pct") is None and result.get("used_pct") is not None):
+            by_account[account_id] = result
+    return list(by_account.values())
+
+
 def fetch_all_usage(config_path=None, http=None) -> list[dict]:
     results = []
-    for credential in list_credentials(config_path=config_path):
-        parsed = fetch_usage_for(credential, http=http)
+    round_id = uuid4().hex
+    sources = _configured_auth_sources(config_path)
+    if sources is None:
+        sources = [(CODEX_AUTH_PATH, "codex"), (OPENCODE_AUTH_PATH, "opencode")]
+    for path, auth_format in sources:
+        if auth_format == "newapi-usage-api":
+            results.extend(_fetch_newapi_usage(http=http))
+            continue
+        credential = _read_credential(path, auth_format)
+        if credential is None:
+            continue
+        parsed = fetch_usage_for(credential, http=http, round_id=round_id)
         if parsed is not None:
             results.append(parsed)
-    return results
+    by_account = {}
+    for result in results:
+        account_id = result.get("account_id")
+        if account_id not in by_account:
+            by_account[account_id] = result
+        elif by_account[account_id].get("used_pct") is None and result.get("used_pct") is not None:
+            by_account[account_id] = result
+    return list(by_account.values())
