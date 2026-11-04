@@ -687,3 +687,27 @@ def test_fit_title_truncates_long_titles_only():
     short = usagewidget.fit_title("CC · KEVIN202511180YSI", 150)
     assert short.endswith("…") and len(short) < len("CC · KEVIN202511180YSI")
     assert usagewidget.theme.font(14).size(short)[0] <= 150
+
+
+def test_claude_5h_group_skipped_when_no_data():
+    """2026-11-04 Claude 取消 5 小時限額，API five_hour 回 null：CLAUDE CODE 區只剩本週／FABLE。"""
+    sections = usagewidget.visible_sections(_usage(session_pct=None), NOW, ("claude",))
+    claude = [s for s in sections if s[3] == "claude"][0]
+    assert [g[0] for g in claude[1]] == ["本週", "FABLE"]
+
+
+def test_antigravity_argon_group_shown_when_present():
+    """2026-11-04 Antigravity 多了 Gemini 4 Argon 獨立週額度：同一張卡第三條。"""
+    usage = _usage(ag_5h_pct=0.0, ag_weekly_pct=0.1)
+    usage = UsageInfo(**{**usage.__dict__, "ag_argon_pct": 3.0,
+                         "ag_argon_resets_at": NOW + timedelta(days=6)})
+    sections = usagewidget.visible_sections(usage, NOW, ("antigravity",))
+    ag = [s for s in sections if s[3] == "antigravity"][0]
+    assert [g[0] for g in ag[1]] == ["5H", "本週", "ARGON 本週"]
+    assert ag[1][2][1] == 3.0
+
+
+def test_antigravity_argon_group_skipped_when_absent():
+    sections = usagewidget.visible_sections(_usage(ag_5h_pct=0.0, ag_weekly_pct=0.1), NOW, ("antigravity",))
+    ag = [s for s in sections if s[3] == "antigravity"][0]
+    assert [g[0] for g in ag[1]] == ["5H", "本週"]

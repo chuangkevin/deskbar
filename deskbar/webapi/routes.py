@@ -789,6 +789,8 @@ def register_routes(app: Flask, context: WebContext) -> None:
             ag_5h_resets_at=_parse_dt(d.get("ag_5h_resets_at")),
             ag_weekly_pct=_clamp_pct(d.get("ag_weekly_pct")),
             ag_weekly_resets_at=_parse_dt(d.get("ag_weekly_resets_at")),
+            ag_argon_pct=_clamp_pct(d.get("ag_argon_pct")),
+            ag_argon_resets_at=_parse_dt(d.get("ag_argon_resets_at")),
             oa_weekly_pct=_clamp_pct(d.get("oa_weekly_pct")),
             oa_weekly_resets_at=_parse_dt(d.get("oa_weekly_resets_at")),
             claude_fetched_at=_optional_fetched("claude_fetched_at"),

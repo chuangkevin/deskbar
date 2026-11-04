@@ -142,6 +142,8 @@ _AG_LATEST: dict = {
     "ag_5h_resets_at": None,
     "ag_weekly_pct": None,
     "ag_weekly_resets_at": None,
+    "ag_argon_pct": None,
+    "ag_argon_resets_at": None,
 }
 
 _CU_LOCK = threading.Lock()
@@ -630,11 +632,18 @@ def ag_payload_fields(parsed: dict | None, now: datetime) -> dict:
         else None
     )
 
+    rem_ar = parsed.get("gemini_argon_remaining")
+    ref_ar = parsed.get("gemini_argon_refresh_min")
+
     return {
         "ag_5h_pct": ag_5h_pct,
         "ag_5h_resets_at": ag_5h_resets_at,
         "ag_weekly_pct": ag_weekly_pct,
         "ag_weekly_resets_at": ag_weekly_resets_at,
+        "ag_argon_pct": (100 - rem_ar) if rem_ar is not None else None,
+        "ag_argon_resets_at": (
+            (now + timedelta(minutes=ref_ar)).isoformat() if ref_ar is not None else None
+        ),
     }
 
 
@@ -687,6 +696,8 @@ def warm_ag_from_cache(cached: dict | None) -> None:
         "ag_5h_resets_at": cached.get("ag_5h_resets_at"),
         "ag_weekly_pct": cached.get("ag_weekly_pct"),
         "ag_weekly_resets_at": cached.get("ag_weekly_resets_at"),
+        "ag_argon_pct": cached.get("ag_argon_pct"),
+        "ag_argon_resets_at": cached.get("ag_argon_resets_at"),
     }
     if "ag_fetched_at" in cached:
         fields["ag_fetched_at"] = cached.get("ag_fetched_at")

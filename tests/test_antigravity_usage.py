@@ -108,3 +108,19 @@ def test_module_has_no_undefined_module_references():
 
     assert not missing_references, f"Found undefined module references: {missing_references}"
 
+
+
+def test_parse_argon_weekly_block():
+    """2026-11 面板新增 GEMINI 4 ARGON 區塊（只有週額度），不可影響 GEMINI MODELS 解析。"""
+    text = (
+        "GEMINI MODELS\n  Weekly Limit Remaining\n    [███] 99.89%\n    Refreshes in 148h 12m\n"
+        "  Five Hour Limit Remaining\n    [███] 100.00%\n    Quota available\n\n"
+        "CLAUDE AND GPT MODELS\n  Weekly Limit Remaining\n[███] 100.00%\nQuota available\n\n"
+        "GEMINI 4 ARGON\n  For paid Pro plans, Argon quota is separate.\n\n"
+        "  Gemini 4 Argon Weekly Limit\n[███] 87.50%\nRefreshes in 10h 0m\n\n  │Within each group"
+    )
+    res = parse_usage_panel(text)
+    assert res["gemini_weekly_remaining"] == 99.89
+    assert res["gemini_5h_remaining"] == 100.0
+    assert res["gemini_argon_remaining"] == 87.5
+    assert res["gemini_argon_refresh_min"] == 600

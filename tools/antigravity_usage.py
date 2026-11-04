@@ -53,6 +53,26 @@ def _parse_refresh_minutes(s: str) -> int | None:
     return d * 1440 + h * 60 + mins
 
 
+def _parse_argon(text: str, res: dict) -> None:
+    """GEMINI 4 ARGON 區塊（2026-11 新增，獨立週額度）：只有 Weekly Limit 一條。"""
+    try:
+        idx = text.find("ARGON")
+        if idx == -1:
+            return
+        sub = text[idx:]
+        end = sub.find("│")
+        if end != -1:
+            sub = sub[:end]
+        p_m = re.search(r'\]\s*(\d+\.\d+)%', sub)
+        if p_m:
+            res["gemini_argon_remaining"] = float(p_m.group(1))
+        r_m = re.search(r'Refreshes\s+in\s+([^\n\r]+)', sub)
+        if r_m:
+            res["gemini_argon_refresh_min"] = _parse_refresh_minutes(r_m.group(1))
+    except Exception:
+        pass
+
+
 def parse_usage_panel(text: str) -> dict[str, float | int | None]:
     """純函數：解析 /usage TUI 去掉 ANSI 之後的純文字。
 
@@ -69,10 +89,13 @@ def parse_usage_panel(text: str) -> dict[str, float | int | None]:
         "gemini_5h_refresh_min": None,
         "gemini_weekly_remaining": None,
         "gemini_weekly_refresh_min": None,
+        "gemini_argon_remaining": None,
+        "gemini_argon_refresh_min": None,
     }
     if not text or not isinstance(text, str):
         return res
 
+    _parse_argon(text, res)
     try:
         idx = text.find("GEMINI MODELS")
         if idx == -1:
@@ -147,6 +170,11 @@ def _terminate_pty_child(pid: int, fd: int) -> None:
             time.sleep(0.05)
 
 
+def _argon_complete(output: bytes) -> bool:
+    idx = output.find(b"ARGON")
+    return idx != -1 and re.search(rb"\d+\.\d+%", output[idx:]) is not None
+
+
 def fetch_usage_text(timeout_s: float = DEFAULT_FETCH_TIMEOUT_S) -> str | None:
     """使用 pty.fork() 執行 agy 並發送 /usage 命令，取得純文字輸出。
 
@@ -183,7 +211,7 @@ def fetch_usage_text(timeout_s: float = DEFAULT_FETCH_TIMEOUT_S) -> str | None:
 
     try:
         # 必須設定 terminal winsize，否則 agy TUI 不會進行渲染
-        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 80, 120, 0, 0))
 
         # 開機等待：最多佔預算 40%，且至少留 1 秒給 /usage 收發
         boot_budget = min(budget * 0.4, max(0.0, budget - 1.0))
@@ -224,9 +252,11 @@ def fetch_usage_text(timeout_s: float = DEFAULT_FETCH_TIMEOUT_S) -> str | None:
                     output.extend(chunk)
                 except OSError:
                     break
-            # 已收到 usage panel 關鍵片段即可結束，避免空等到 deadline 後誤判逾時
+            # 已收到 usage panel 關鍵片段即可結束，避免空等到 deadline 後誤判逾時；
+            # 面板後段（GEMINI 4 ARGON）會晚幾個 chunk 到，多讀到安靜 0.8 秒或 Argon 有百分比為止
             if b"GEMINI MODELS" in output and b"Refreshes" in output:
-                break
+                if not ready or _argon_complete(output):
+                    break
 
         # 牆鐘用盡且未湊齊 panel → 失敗／空結果（不回傳半套、不合成 0%）
         if _remaining() <= 0 and not (

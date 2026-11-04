@@ -6,7 +6,7 @@
 只有一欄有內容時不留空欄。
 
 各區內容：
-1. CLAUDE CODE 區：5H SESSION / 本週 / FABLE（FABLE 無資料時略過）
+1. CLAUDE CODE 區：5H SESSION / 本週 / FABLE（5H、FABLE 無資料時略過）
 2. ANTIGRAVITY · GEMINI 區：5H / 本週（無資料時整區略過，不畫分隔線與標題）
 3. OPENAI 區：每個帳號一區（無資料時整區略過，不畫分隔線與標題）
 4. CURSOR 區：本期（帳單週期約一個月；無資料時整區略過）
@@ -295,11 +295,12 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
             return "OPENCODE GO"
         return f"OPENCODE GO · {index + 1}"
 
-    claude_groups = [
-        ("5H SESSION", usage.session_pct, usage.session_resets_at,
-         WINDOW_S["session"]),
-        ("本週", usage.weekly_pct, usage.weekly_resets_at, WINDOW_S["weekly"]),
-    ]
+    # 2026-11-04 Kevin：Claude 已取消 5 小時限額，API 的 five_hour 變 null——無資料就略過
+    claude_groups = []
+    if usage.session_pct is not None:
+        claude_groups.append(("5H SESSION", usage.session_pct, usage.session_resets_at,
+                              WINDOW_S["session"]))
+    claude_groups.append(("本週", usage.weekly_pct, usage.weekly_resets_at, WINDOW_S["weekly"]))
     if usage.fable_pct is not None:
         claude_groups.append(("FABLE", usage.fable_pct, usage.fable_resets_at,
                               WINDOW_S["fable"]))
@@ -309,13 +310,20 @@ def visible_sections(usage, now: datetime, enabled_sources=None, oa_aliases=None
     if "claude" in enabled and claude_age < HIDE_AFTER_S:
         sections.append(("CLAUDE CODE", claude_groups, claude_age, "claude"))
 
-    has_ag = (usage.ag_5h_pct is not None or usage.ag_weekly_pct is not None)
+    ag_argon_pct = getattr(usage, "ag_argon_pct", None)
+    has_ag = (usage.ag_5h_pct is not None or usage.ag_weekly_pct is not None
+              or ag_argon_pct is not None)
     ag_age = age_for("ag_fetched_at", fallback_to_global=False)
     if "antigravity" in enabled and has_ag and ag_age < HIDE_AFTER_S:
-        sections.append(("ANTIGRAVITY · GEMINI", [
+        ag_groups = [
             ("5H", usage.ag_5h_pct, usage.ag_5h_resets_at, WINDOW_S["ag_5h"]),
             ("本週", usage.ag_weekly_pct, usage.ag_weekly_resets_at, WINDOW_S["ag_weekly"]),
-        ], ag_age, "antigravity"))
+        ]
+        if ag_argon_pct is not None:
+            # 2026-11-04 Kevin：Gemini 4 Argon 是獨立週額度，跟 Gemini 共用同一張卡
+            ag_groups.append(("ARGON 本週", ag_argon_pct,
+                              getattr(usage, "ag_argon_resets_at", None), WINDOW_S["ag_argon"]))
+        sections.append(("ANTIGRAVITY · GEMINI", ag_groups, ag_age, "antigravity"))
 
     if "openai" in enabled:
         oa_accounts = getattr(usage, "oa_accounts", ())

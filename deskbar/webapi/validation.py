@@ -4,8 +4,8 @@ from zoneinfo import ZoneInfo
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _USAGE_TZ = ZoneInfo("Asia/Taipei")
-_PCT_FIELDS = ("session_pct", "weekly_pct", "fable_pct", "ag_5h_pct", "ag_weekly_pct", "oa_weekly_pct", "cu_pct", "cc_5h_pct", "cc_weekly_pct")
-_RESETS_FIELDS = ("session_resets_at", "weekly_resets_at", "fable_resets_at", "ag_5h_resets_at", "ag_weekly_resets_at", "oa_weekly_resets_at", "cu_resets_at", "cc_5h_resets_at", "cc_weekly_resets_at", "cc_billing_at", "cu_billing_at")
+_PCT_FIELDS = ("session_pct", "weekly_pct", "fable_pct", "ag_5h_pct", "ag_weekly_pct", "ag_argon_pct", "oa_weekly_pct", "cu_pct", "cc_5h_pct", "cc_weekly_pct")
+_RESETS_FIELDS = ("session_resets_at", "weekly_resets_at", "fable_resets_at", "ag_5h_resets_at", "ag_weekly_resets_at", "ag_argon_resets_at", "oa_weekly_resets_at", "cu_resets_at", "cc_5h_resets_at", "cc_weekly_resets_at", "cc_billing_at", "cu_billing_at")
 _USAGE_FETCHED_FIELDS = ("fetched_at", "claude_fetched_at", "ag_fetched_at", "oa_fetched_at", "cu_fetched_at", "cc_fetched_at", "og_fetched_at")
 _MAX_OA_ACCOUNTS = 8
 _MAX_CC_ACCOUNTS = 8

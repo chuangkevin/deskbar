@@ -182,6 +182,8 @@ def test_ag_payload_fields_all_none_input():
         "ag_5h_resets_at",
         "ag_weekly_pct",
         "ag_weekly_resets_at",
+        "ag_argon_pct",
+        "ag_argon_resets_at",
     }
     assert all(val is None for val in res.values())
 
@@ -191,6 +193,8 @@ def test_ag_payload_fields_all_none_input():
         "ag_5h_resets_at",
         "ag_weekly_pct",
         "ag_weekly_resets_at",
+        "ag_argon_pct",
+        "ag_argon_resets_at",
     }
     assert all(val is None for val in res_empty.values())
 
@@ -414,6 +418,8 @@ def test_refresh_antigravity_async_keeps_old_value_on_failure(monkeypatch):
         "ag_5h_resets_at": "2026-08-04T12:00:00+00:00",
         "ag_weekly_pct": 20.0,
         "ag_weekly_resets_at": "2026-08-10T12:00:00+00:00",
+        "ag_argon_pct": 5.0,
+        "ag_argon_resets_at": "2026-08-10T12:00:00+00:00",
     }
     with demo._AG_LOCK:
         demo._AG_LATEST.update(initial_ag)
@@ -674,6 +680,8 @@ def test_warm_ag_from_cache_none_and_empty_safe_noop():
         "ag_5h_resets_at": None,
         "ag_weekly_pct": None,
         "ag_weekly_resets_at": None,
+        "ag_argon_pct": None,
+        "ag_argon_resets_at": None,
     }
 
     demo.warm_ag_from_cache({})
@@ -682,6 +690,8 @@ def test_warm_ag_from_cache_none_and_empty_safe_noop():
         "ag_5h_resets_at": None,
         "ag_weekly_pct": None,
         "ag_weekly_resets_at": None,
+        "ag_argon_pct": None,
+        "ag_argon_resets_at": None,
     }
 
 
