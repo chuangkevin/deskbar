@@ -345,8 +345,14 @@ def test_touch_up_triggers_page_settle_and_flips_page(tmp_path, monkeypatch):
     # 中欄實際寬度是 CENTER_SLIDE_AREA.w（1118），門檻＝25%＝279.5px，
     # 所以拖曳量要用實際寬度算，不能寫死魔術數字（原本寫 250 以為門檻是
     # 800*0.25=200，實機上根本不到門檻、正確行為是彈回，測試因此紅掉）。
-    drag_px = int(CENTER_SLIDE_AREA.w * PAGE_FLIP_RATIO) + 20
+    # 右欄寬度現在跟著內容變（render 時才定），中欄實際寬度最寬到 1920-402-20-360-20
+    # ＝1118 以上；用上限 1500 算，保證一定超過 25% 門檻。
+    drag_px = int(1500 * PAGE_FLIP_RATIO) + 20
     app._drag_last = (start_x - drag_px, 100)
+
+    # 右欄寬度依內容在 render 時才定；先定好再拖，band 與放手時的中欄寬才一致
+    from deskbar.ui import dashboard
+    dashboard._fit_usage_width(app.state.snapshot(), app.settings, NOW)
 
     # 模擬拖曳中的一幀
     app._render_page_drag_band()
@@ -448,7 +454,9 @@ def test_page_settle_finish_invalidates_rot_cache_for_next_full_rebuild(tmp_path
     app._rot_angle = angle
 
     start_x = TL_X0 + 300
-    drag_px = int(CENTER_SLIDE_AREA.w * PAGE_FLIP_RATIO) + 20
+    # 右欄寬度現在跟著內容變（render 時才定），中欄實際寬度最寬到 1920-402-20-360-20
+    # ＝1118 以上；用上限 1500 算，保證一定超過 25% 門檻。
+    drag_px = int(1500 * PAGE_FLIP_RATIO) + 20
     app._drag_start = (start_x, 100)
     app._drag_last = (start_x - drag_px, 100)
     app._render_page_drag_band()

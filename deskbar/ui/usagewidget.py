@@ -611,6 +611,43 @@ def _columns_fit(cols, height: float = DEFAULT_HEIGHT, density: str = "auto") ->
     return True
 
 
+def plan_columns(sections, height: float = DEFAULT_HEIGHT, min_cols: int = 1,
+                 density: str = "auto") -> list:
+    """從 min_cols 欄起試，每欄都不用裁區就停；到 MAX_COLUMNS 還放不下就用最多欄。"""
+    for c in range(max(1, min_cols), MAX_COLUMNS + 1):
+        cols = split_columns(sections, c)
+        if _columns_fit(cols, height, density=density):
+            return cols
+    return split_columns(sections, MAX_COLUMNS)
+
+
+# 一欄卡片實際需要的寬度（用 theme 字型量過）：最長的標題列
+# 「CC · kevin20251118」144＋「付款 11/22」60＋間距 16＝220px，最長的數據列
+# 「ARGON 本週」91＋「剩 6d 23h」＋「100%」40＋間距＝201px；再加卡片左右留白
+# 各 10px＝240px，取 250 留邊。右欄寬度＝欄數 × 250 ＋欄距，內容少就窄，
+# 把寬度還給中間行事曆。標題太長本來就會被 fit_title 加省略號。
+COL_NATURAL_W = 250
+COL_GAP = 20
+
+
+def natural_width(usage, now: datetime, enabled_sources=None, oa_aliases=None,
+                  oa_hidden=None, cc_aliases=None, cc_hidden=None,
+                  height: float = DEFAULT_HEIGHT, order=None,
+                  density: str = "auto", hidden=None, columns=None,
+                  **_ignored) -> int:
+    """右欄「剛好夠用」的寬度（px）：依實際要畫的卡片算出欄數，欄數 × 250 ＋欄距。
+    沒有任何卡片回 COL_NATURAL_W。與 render() 共用 plan_columns，欄數一定一致。"""
+    sections = visible_sections(usage, now, enabled_sources, oa_aliases, oa_hidden,
+                                cc_aliases, cc_hidden)
+    sections = apply_order(sections, order)
+    sections = apply_hidden(sections, hidden)
+    if not sections:
+        return COL_NATURAL_W
+    min_cols = 1 if columns is None else max(1, columns)
+    n = len(plan_columns(sections, height, min_cols, density))
+    return n * COL_NATURAL_W + (n - 1) * COL_GAP
+
+
 def min_columns_for_width(width: int) -> int:
     """右欄寬度對應的起始欄數：每 300px 一欄，至少 1 欄。"""
     return max(1, int(width) // 300)
@@ -644,16 +681,7 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
     # 2026-11-18：以前用 min_columns_for_width(w) 直接起算（寬 600 → 起手 2 欄），
     # 右欄只有 4 張卡、一欄放得下也硬切成兩列，畫面右半一片空。
     min_cols = 1 if columns is None else max(1, columns)
-    chosen = None
-    for c in range(min_cols, MAX_COLUMNS + 1):
-        cols = split_columns(sections, c)
-        if _columns_fit(cols, height, density=density):
-            chosen = cols
-            break
-    if chosen is None:
-        cols = split_columns(sections, MAX_COLUMNS)
-    else:
-        cols = chosen
+    cols = plan_columns(sections, height, min_cols, density)
     n = len(cols)
     col_w = (w - gap * (n - 1)) / n if n > 1 else w
     drawn_keys = []

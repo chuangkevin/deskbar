@@ -367,3 +367,35 @@ def test_fixed_density_reports_overflow_so_render_adds_a_column():
         layout = u.fit_layout(counts, u.DEFAULT_HEIGHT, density=density)
         assert layout["max_sections"] < len(counts), density
     assert u.fit_layout([3, 1], u.DEFAULT_HEIGHT, density="compact")["max_sections"] == 2
+
+
+# ---------------------------------------------------------------- 右欄寬度跟著內容（2026-11-18）
+
+
+def test_natural_width_one_column_when_content_fits():
+    usage = _usage_with_cc([_cc_account("a", "a"), _cc_account("b", "b")])
+    w = usagewidget.natural_width(usage, NOW, ("commandcode",))
+    assert w == usagewidget.COL_NATURAL_W == 250
+
+
+def test_natural_width_grows_with_columns():
+    usage = _usage_with_cc([_cc_account(f"c{i}", f"n{i}") for i in range(8)])
+    w = usagewidget.natural_width(usage, NOW, ("commandcode",), density="normal")
+    n = (w + usagewidget.COL_GAP) // (usagewidget.COL_NATURAL_W + usagewidget.COL_GAP)
+    assert n >= 2
+    assert w == n * 250 + (n - 1) * 20
+
+
+def test_dashboard_render_narrows_right_column_to_content(restore_layout):
+    """內容少：右欄 600 → 250，中欄右界跟著從 1280 右移到 1630，行事曆變寬。"""
+    from deskbar.store import AppState
+    state = AppState()
+    state.set_usage(_usage_with_cc([_cc_account("a", "a"), _cc_account("b", "b")]))
+    snap = state.snapshot()
+    settings = Settings(usage_sources=["commandcode"])
+    dashboard.apply_usage_width(600)
+    assert dashboard.USAGE_W == 600
+    surf = pygame.Surface((1920, 480))
+    dashboard.render(surf, snap, settings, NOW)
+    assert dashboard.USAGE_W == 250
+    assert dashboard.TL_X1 == 1920 - 20 - 250 - 20

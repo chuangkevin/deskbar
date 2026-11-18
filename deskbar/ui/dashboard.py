@@ -56,6 +56,11 @@ def apply_usage_width(width: int) -> dict:
     """
     from deskbar import config as _config
     w = _config.normalize_usage_width(width)
+    return _set_usage_width(w)
+
+
+def _set_usage_width(w: int) -> dict:
+    """把右欄寬度 w（不再夾範圍）寫進版面常數；apply_usage_width 與自動寬度共用。"""
     global TL_X1, USAGE_X0, USAGE_W
     global TL_AREA, CENTER_SLIDE_AREA, MODE_BTN, SPAN_BTN, CENTER_BTN, WORK_BTN
     TL_X1 = 1920 - 20 - w - 20
@@ -68,6 +73,25 @@ def apply_usage_width(width: int) -> dict:
     CENTER_BTN = Rect(TL_X1 - 348, 2, 110, 48)
     WORK_BTN = Rect(TL_X1 - 486, 2, 130, 48)
     return {"tl_x1": TL_X1, "usage_x0": USAGE_X0, "usage_w": USAGE_W}
+def _fit_usage_width(snap, settings, now) -> None:
+    """右欄寬度「內容多少就多寬」：settings.usage_width 是上限（預設 600），
+    實際寬度＝卡片剛好需要的欄數 × 250 ＋欄距（一欄 250px）。
+    內容少（一欄放得下）右欄就窄，多出來的寬度還給中間行事曆；
+    內容多才加欄、加寬，最寬到 usage_width。2026-11-18：以前固定吃 600，
+    右欄只有四張卡也占 600px，行事曆被壓縮。"""
+    from deskbar import config as _config
+    ceiling = _config.normalize_usage_width(getattr(settings, "usage_width", USAGE_W))
+    usage = getattr(snap, "usage", None)
+    kw = _usage_draw_kwargs(settings)
+    need = usagewidget.natural_width(
+        usage, now, getattr(settings, "usage_sources", None),
+        getattr(settings, "oa_aliases", {}), getattr(settings, "oa_hidden", ()),
+        **kw) if usage is not None else usagewidget.COL_NATURAL_W
+    w = min(need, ceiling)
+    if w != USAGE_W:
+        _set_usage_width(w)
+
+
 # 2026-07-27：頂欄整日行程膠囊（_render_allday／_layout_allday_chips）已移除——
 # 整日事件已在 agenda 模式的日欄與 weekgrid 的格子內顯示徽章，頂帶空間讓給窗口
 # 標籤／按鈕。迫近脈動（imminent_events/_pulse_t/_pulse_color）改用
@@ -165,6 +189,7 @@ def render(surface, snap, settings, now: datetime, clock_anim=None, anchor=None,
           linear_page=0, notes_page=0, sedentary=False,
           scene_ui=None) -> list[Hit]:
     hits: list[Hit] = []
+    _fit_usage_width(snap, settings, now)
     tz = now.tzinfo
     span = settings.view_span
     anchor_or_now = anchor if anchor is not None else now
