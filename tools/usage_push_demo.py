@@ -672,6 +672,11 @@ def is_unusable_antigravity_fields(fields: dict | None) -> bool:
         fields.get("ag_5h_resets_at") is None
         and fields.get("ag_weekly_resets_at") is None
     )
+    # Gemini 4 Argon 是獨立週額度：5H／週都沒用過（0%、agy 不顯示重置時間）時，
+    # Argon 帶著百分比與重置時間就是真資料，不能整包當成解析失敗丟掉
+    # （2026-11-18：新帳號 5H／週全 0%，只有 Argon 有值，被誤判成「無效」→ 卡片消失）。
+    if fields.get("ag_argon_resets_at") is not None:
+        return False
     return pcts_empty and resets_missing
 
 

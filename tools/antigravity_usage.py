@@ -26,7 +26,15 @@ from datetime import datetime, timedelta
 
 import requests
 
-AGY_BIN = os.environ.get("DESKBAR_AGY_BIN", "/Users/kevin/.local/bin/agy")
+AGY_BIN = os.environ.get(
+    "DESKBAR_AGY_BIN", os.path.join(os.path.expanduser("~"), ".local", "bin", "agy"))
+# agy 1.5.x 起，在沒信任過的資料夾啟動會先跳「Do you trust the contents of this
+# project?」。固定在一個專屬的空資料夾啟動，並在對話框出現時按 Enter（預設就是
+# Yes），否則後面送的 /usage 會被對話框吃掉，永遠抓不到面板（2026-11-18 實證）。
+AGY_CWD = os.environ.get(
+    "DESKBAR_AGY_CWD", os.path.join(os.path.expanduser("~"), ".deskbar-agent", "agy-cwd"))
+TRUST_PROMPT = b"Do you trust"
+READY_MARK = b"for shortcuts"
 # 整次 pty 抓取的牆鐘上界；逾時必須失敗離開，不可無限佔住 publisher single-flight。
 # 60s 高於 agy /usage 文件所述常見約 45s 執行時間，同時保持有界、不阻塞 Deskbar 主迴圈。
 DEFAULT_FETCH_TIMEOUT_S = 60.0
@@ -194,8 +202,16 @@ def fetch_usage_text(timeout_s: float = DEFAULT_FETCH_TIMEOUT_S) -> str | None:
     output = bytearray()
     deadline = time.monotonic() + budget
     try:
+        try:
+            os.makedirs(AGY_CWD, exist_ok=True)
+        except OSError:
+            pass
         pid, fd = pty.fork()
         if pid == 0:
+            try:
+                os.chdir(AGY_CWD)
+            except OSError:
+                pass
             os.execv(AGY_BIN, [AGY_BIN])
     except Exception:
         return None
@@ -216,6 +232,8 @@ def fetch_usage_text(timeout_s: float = DEFAULT_FETCH_TIMEOUT_S) -> str | None:
         # 開機等待：最多佔預算 40%，且至少留 1 秒給 /usage 收發
         boot_budget = min(budget * 0.4, max(0.0, budget - 1.0))
         boot_start = time.monotonic()
+        trust_answered = False
+        ready_from = 0   # 信任對話框按完 Enter 之後，才開始找「? for shortcuts」
         while time.monotonic() - boot_start < boot_budget:
             _ensure_time()
             wait = min(0.5, _remaining())
@@ -230,6 +248,14 @@ def fetch_usage_text(timeout_s: float = DEFAULT_FETCH_TIMEOUT_S) -> str | None:
                     output.extend(chunk)
                 except OSError:
                     break
+                if not trust_answered and TRUST_PROMPT in output:
+                    os.write(fd, b"\r")
+                    trust_answered = True
+                    ready_from = len(output)
+                    continue
+            # 主畫面就緒（輸入列出現）就不用空等滿開機預算
+            if READY_MARK in output[ready_from:]:
+                break
 
         _ensure_time()
         os.write(fd, b"/usage")

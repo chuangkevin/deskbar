@@ -323,6 +323,29 @@ def test_min_columns_for_width():
     assert usagewidget.min_columns_for_width(360) == 1
 
 
+def test_render_columns_none_stays_one_column_when_content_fits():
+    """寬 600、只有兩張小卡：columns=None 要排成一欄，不能因為寬度就切兩列
+    （2026-11-18 實機：右半一片空卻分兩列）。"""
+    usage = _usage_with_cc([_cc_account("a", "a"), _cc_account("b", "b")])
+    surf = pygame.Surface((1920, 480))
+    surf.fill(theme.C["bg"])
+    res = usagewidget.render(surf, usage, NOW, 1300, 600, ("commandcode",),
+                             columns=None)
+    assert res["columns"] == 1
+    assert len(res["keys"]) == 2
+
+
+def test_render_columns_none_adds_columns_when_content_overflows():
+    """內容一欄放不下才加欄。"""
+    usage = _usage_with_cc([_cc_account(f"c{i}", f"n{i}") for i in range(8)])
+    surf = pygame.Surface((1920, 480))
+    surf.fill(theme.C["bg"])
+    res = usagewidget.render(surf, usage, NOW, 1300, 600, ("commandcode",),
+                             columns=None, density="normal")
+    assert res["columns"] >= 2
+    assert len(res["keys"]) == 8
+
+
 def test_density_normal_never_compacts_and_compact_always_compacts():
     counts = [3, 2, 2]
     normal = usagewidget.fit_layout(counts, density="normal")

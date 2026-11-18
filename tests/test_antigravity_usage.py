@@ -124,3 +124,29 @@ def test_parse_argon_weekly_block():
     assert res["gemini_5h_remaining"] == 100.0
     assert res["gemini_argon_remaining"] == 87.5
     assert res["gemini_argon_refresh_min"] == 600
+
+
+def test_fetch_usage_text_answers_trust_prompt(tmp_path, monkeypatch):
+    """agy 1.5.x 在沒信任過的資料夾會先問 Do you trust；沒回 Enter 的話
+    後面送的 /usage 會被吃掉、永遠逾時（2026-11-18 實證）。"""
+    import sys
+    from tools import antigravity_usage
+    fake = tmp_path / "fake_agy"
+    fake.write_text(
+        "#!" + sys.executable + "\n"
+        "import sys\n"
+        "print('Do you trust the contents of this project?', flush=True)\n"
+        "sys.stdin.readline()\n"            # 等第一個 Enter（信任）
+        "print('? for shortcuts', flush=True)\n"
+        "sys.stdin.readline()\n"            # 等 /usage + Enter
+        "print('GEMINI MODELS')\n"
+        "print('Weekly Limit [####] 94.04%')\n"
+        "print('Refreshes in 1h 29m', flush=True)\n"
+        "import time; time.sleep(2)\n"
+    )
+    fake.chmod(0o755)
+    monkeypatch.setattr(antigravity_usage, "AGY_BIN", str(fake))
+    monkeypatch.setattr(antigravity_usage, "AGY_CWD", str(tmp_path / "cwd"))
+    text = antigravity_usage.fetch_usage_text(timeout_s=20)
+    assert text and "GEMINI MODELS" in text
+    assert (tmp_path / "cwd").is_dir()

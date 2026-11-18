@@ -149,32 +149,47 @@ def probe_ble_once(mac: str, runner=subprocess.run) -> tuple[bool, int | None]:
         _PROBE_LOCK.release()
 
 
+_UNHEALTHY_MARKERS = ("Can't init device", "Can't read local name", "timed out",
+                      "Network is down")
+
+
 def adapter_healthy(runner=subprocess.run) -> bool:
-    """跑 `hciconfig hci0`，讀得到就是活著。逾時、指令不存在、rc != 0、
-    或輸出含 "Can't init device" 都視為不健康。任何例外都回 False，不拋出。
+    """藍牙控制器活著嗎？逾時、指令不存在、rc != 0、輸出含卡死字樣、或 hci0 是 DOWN 都視為不健康。
+    任何例外都回 False，不拋出。
 
     2026-08-05 實機事故：Pi Zero 2W 控制器卡死時，hciconfig hci0 會輸出
     "Can't init device ..." 或超時不回應。
+    2026-11-18 實機事故（私人行事曆被收起來的根因）：控制器卡死後 `hciconfig hci0`
+    仍然 rc=0、畫面照樣印出「UP RUNNING」，真正的症狀只出現在 `hciconfig hci0 name`
+    （"Can't read local name on hci0: Connection timed out (110)"）；kernel 同時狂刷
+    "Opcode 0x2005 failed: -110"。舊版只看前者，所以一直被當成健康、從不進復原流程，
+    BLE 掃描整個早上都失敗。現在多送一個要實際跟晶片對話的指令（讀本機名稱）。
     """
     try:
-        proc = runner(["hciconfig", "hci0"], capture_output=True, text=True, timeout=5)
-        if proc.returncode != 0:
-            return False
-        stdout = getattr(proc, "stdout", "") or ""
-        stderr = getattr(proc, "stderr", "") or ""
-        out = stdout + stderr
-        if "Can't init device" in out:
-            return False
+        for cmd in (["hciconfig", "hci0"], ["hciconfig", "hci0", "name"]):
+            proc = runner(cmd, capture_output=True, text=True, timeout=5)
+            if proc.returncode != 0:
+                return False
+            stdout = getattr(proc, "stdout", "") or ""
+            stderr = getattr(proc, "stderr", "") or ""
+            out = stdout + stderr
+            if any(m in out for m in _UNHEALTHY_MARKERS):
+                return False
+            if re.search(r"^\s*DOWN\b", out, re.MULTILINE):
+                return False
         return True
     except Exception:
         return False
 
 
 def try_recover_adapter(runner=subprocess.run) -> bool:
-    """兩段式復原，回傳是否成功：
+    """三段式復原，回傳是否成功：
     1. sudo -n systemctl restart bluetooth；等 3 秒後重新檢查 adapter_healthy()
     2. 還是不健康 → sudo -n hciconfig hci0 reset；再等 3 秒重新檢查
-    兩段都失敗回 False。任何例外都吞掉回 False，不得拋出。
+    3. 還是不健康 → 停 bluetooth、重載 hci_uart 驅動（會重新啟動晶片並重灌韌體）、
+       再啟 bluetooth。2026-11-18 實證：晶片卡死時 HCI_Reset（0x0c03）本身也逾時，
+       前兩段都無效，只有重載驅動能救回來（不必重開機）。
+    三段都失敗回 False。任何例外都吞掉回 False，不得拋出。
 
     2026-08-05 實機事故經驗：當 BCM43438 控制器 tx timeout 時，嘗試透過重啟服務
     或重置 hci0 復原硬體鎖定狀態。
@@ -191,6 +206,24 @@ def try_recover_adapter(runner=subprocess.run) -> bool:
 
         try:
             runner(["sudo", "-n", "hciconfig", "hci0", "reset"],
+                   capture_output=True, text=True, timeout=10)
+        except Exception:
+            pass
+        _time.sleep(3)
+        if adapter_healthy(runner=runner):
+            return True
+
+        for cmd in (["sudo", "-n", "systemctl", "stop", "bluetooth"],
+                    ["sudo", "-n", "rmmod", "hci_uart"],
+                    ["sudo", "-n", "modprobe", "hci_uart"]):
+            try:
+                runner(cmd, capture_output=True, text=True, timeout=15)
+            except Exception:
+                pass
+            _time.sleep(1)
+        _time.sleep(5)
+        try:
+            runner(["sudo", "-n", "systemctl", "start", "bluetooth"],
                    capture_output=True, text=True, timeout=10)
         except Exception:
             pass

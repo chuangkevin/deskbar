@@ -836,6 +836,21 @@ def test_is_unusable_antigravity_fields_shape():
     )
 
 
+def test_is_unusable_antigravity_fields_argon_only_is_usable():
+    """5H／週都 0% 且沒重置時間，但 Gemini 4 Argon 有值 → 真資料（2026-11-18 新帳號）。"""
+    demo = _load_usage_push_demo()
+    assert not demo.is_unusable_antigravity_fields(
+        {
+            "ag_5h_pct": 0.0,
+            "ag_5h_resets_at": None,
+            "ag_weekly_pct": 0.0,
+            "ag_weekly_resets_at": None,
+            "ag_argon_pct": 1.01,
+            "ag_argon_resets_at": "2026-11-25T10:23:46+08:00",
+        }
+    )
+
+
 def test_ag_worker_rejects_all_zero_no_reset_preserves_cache(tmp_path, monkeypatch, capsys):
     """全 0% 且無重置時間不得覆寫記憶體／磁碟快取，也不更新 ag_fetched_at。"""
     demo = _load_usage_push_demo()

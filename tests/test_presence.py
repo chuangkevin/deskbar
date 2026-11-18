@@ -402,6 +402,18 @@ def test_adapter_healthy_cases():
         return Result(0, stdout="Can't init device hci0: Device or resource busy\n")
     assert presence.adapter_healthy(runner=runner_cant_init_rc0) is False
 
+    # 2026-11-18 實機：hciconfig hci0 一切正常，但讀本機名稱逾時（晶片卡死）→ False
+    def runner_wedged(cmd, **kwargs):
+        if cmd[-1] == "name":
+            return Result(0, stdout="Can't read local name on hci0: Connection timed out (110)\n")
+        return Result(0, stdout="hci0:\tType: Primary  Bus: UART\n\tUP RUNNING\n")
+    assert presence.adapter_healthy(runner=runner_wedged) is False
+
+    # hci0 是 DOWN → False
+    def runner_down(cmd, **kwargs):
+        return Result(0, stdout="hci0:\tType: Primary  Bus: UART\n\tDOWN \n")
+    assert presence.adapter_healthy(runner=runner_down) is False
+
     # 逾時 → False
     def runner_timeout(cmd, **kwargs):
         raise subprocess.TimeoutExpired(cmd="hciconfig", timeout=5)
@@ -468,6 +480,22 @@ def test_try_recover_adapter_cases(monkeypatch):
         return Result(0)
 
     assert presence.try_recover_adapter(runner=runner_both_fail) is False
+
+    # 3b. 前兩段都沒用、重載 hci_uart 驅動後才活 → True（2026-11-18 實證）
+    calls_reload = []
+    def runner_reload_ok(cmd, **kwargs):
+        calls_reload.append(cmd)
+        if cmd[0] == "hciconfig":
+            reloaded = any(c[:4] == ["sudo", "-n", "modprobe", "hci_uart"] for c in calls_reload)
+            if reloaded:
+                return Result(0, stdout="hci0: UP RUNNING")
+            return Result(1, stdout="Can't init device")
+        return Result(0)
+
+    assert presence.try_recover_adapter(runner=runner_reload_ok) is True
+    flat = [" ".join(c) for c in calls_reload]
+    assert any("rmmod hci_uart" in c for c in flat)
+    assert any("modprobe hci_uart" in c for c in flat)
 
     # 4. 任何例外 → False 不拋出
     def runner_raises(cmd, **kwargs):

@@ -626,7 +626,7 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
       hidden=None) -> dict:
     """畫可見 usage 區塊；未勾選、沒有資料或超過一天的來源完全不留痕跡。
 
-    columns 是「最少欄數」：None 時由欄寬推導（max(1, w // 300)）。
+    columns 是「最少欄數」：None 時從 1 欄開始、放不下才加（不再依欄寬預先分欄）。
     先試 columns，某欄要裁區就加一欄重試，到 MAX_COLUMNS（4）還放不下才
     沿用舊行為裁區。放得下就停在那一級。density normal 時 fit_layout 不壓縮、
     靠加欄放下；compact 直接用最緊間距。
@@ -640,7 +640,10 @@ def render(surface, usage, now: datetime, x0: float = 1540, w: float = 360,
     if not sections:
         return {"columns": 0, "keys": []}
 
-    min_cols = min_columns_for_width(w) if columns is None else max(1, columns)
+    # columns=None（dashboard 預設）：從 1 欄開始，放不下才加欄。
+    # 2026-11-18：以前用 min_columns_for_width(w) 直接起算（寬 600 → 起手 2 欄），
+    # 右欄只有 4 張卡、一欄放得下也硬切成兩列，畫面右半一片空。
+    min_cols = 1 if columns is None else max(1, columns)
     chosen = None
     for c in range(min_cols, MAX_COLUMNS + 1):
         cols = split_columns(sections, c)
