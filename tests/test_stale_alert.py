@@ -150,3 +150,54 @@ def test_naive_fetched_at_is_treated_as_utc():
     state, messages = m.evaluate(payload, NOW, {})
     assert state["problems"] == ["stale"]
     assert "20 分鐘沒更新" in messages[0]
+
+
+def _run_main(mod, tmp_path, monkeypatch, fetch_results, send_results):
+    """fetch_results／send_results 依序被取用；回傳 (exit code, 實際送出的訊息)。"""
+    fetches = list(fetch_results)
+    sends = list(send_results)
+    sent = []
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    monkeypatch.setattr(mod, "_fetch_payload", lambda url: fetches.pop(0))
+
+    def fake_send(token, user, text):
+        ok = sends.pop(0)
+        if ok:
+            sent.append(text)
+        return ok
+
+    monkeypatch.setattr(mod, "_send_slack_message", fake_send)
+    token = tmp_path / "token"
+    token.write_text("x")
+    state = tmp_path / "state.json"
+    rc = mod.main(["--url", "http://pi/api/usage", "--token-file", str(token),
+                   "--user", "U1", "--state", str(state)])
+    return rc, sent, state
+
+
+def test_one_slow_connect_then_ok_is_not_down(tmp_path, monkeypatch):
+    """11/19 23:30、11/20 03:45：檢查端第一次連 Pi 逾時就發「連不上」——重試成功就不該發。"""
+    mod = _load()
+    payload = {"fetched_at": datetime.now(timezone.utc).isoformat(), "sections": []}
+    rc, sent, state = _run_main(mod, tmp_path, monkeypatch, [None, payload], [])
+    assert rc == 0
+    assert sent == []
+    assert '"problems": []' in state.read_text()
+
+
+def test_all_attempts_fail_still_alerts_down(tmp_path, monkeypatch):
+    mod = _load()
+    rc, sent, _ = _run_main(mod, tmp_path, monkeypatch, [None] * mod.ATTEMPTS, [True])
+    assert rc == 0
+    assert sent == ["deskbar 連不上"]
+
+
+def test_slack_dns_blip_retries_and_saves_state(tmp_path, monkeypatch):
+    """11/20 04:00：送「已恢復」時查不到 slack.com，狀態沒存、一直停在 down。重試成功就要存。"""
+    mod = _load()
+    (tmp_path / "state.json").write_text('{"problems": ["down"]}')
+    payload = {"fetched_at": datetime.now(timezone.utc).isoformat(), "sections": []}
+    rc, sent, state = _run_main(mod, tmp_path, monkeypatch, [payload], [False, True])
+    assert rc == 0
+    assert sent == ["deskbar 用量已恢復更新"]
+    assert '"problems": []' in state.read_text()

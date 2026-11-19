@@ -5,12 +5,36 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 import urllib.request
 from zoneinfo import ZoneInfo
 
 STALE_ALL_SEC = 15 * 60
 STALE_SECTION_SEC = 60 * 60
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
+# 2026-11-20：檢查端（rpi-home）連 Pi 走 Tailscale，路徑剛切換時第一次連線會卡好幾秒；
+# Slack 也遇過 MagicDNS 一時查不到 slack.com。單次失敗就發「連不上」是誤報，
+# 所以抓用量與送 Slack 都重試幾次、中間隔一下，全部失敗才算數。
+FETCH_TIMEOUT_S = 15
+ATTEMPTS = 3
+RETRY_WAIT_S = 20
+
+
+def _log(msg: str) -> None:
+    stamp = datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"{stamp} {msg}", file=sys.stderr)
+
+
+def _with_retry(fn, attempts: int = ATTEMPTS, wait_s: float = RETRY_WAIT_S):
+    """呼叫 fn()，回傳非 None／非 False 就停；全部失敗回傳最後一次的結果。"""
+    result = None
+    for i in range(attempts):
+        result = fn()
+        if result is not None and result is not False:
+            return result
+        if i < attempts - 1:
+            time.sleep(wait_s)
+    return result
 
 
 def evaluate(payload: dict | None, now: datetime, prev: dict) -> tuple[dict, list[str]]:
@@ -112,8 +136,19 @@ def _send_slack_message(token: str, channel: str, text: str) -> bool:
             data = json.loads(resp.read().decode("utf-8"))
             return bool(data.get("ok"))
     except Exception as e:
-        print(f"Error sending Slack alert: {e}", file=sys.stderr)
+        _log(f"Error sending Slack alert: {e}")
         return False
+
+
+def _fetch_payload(url: str) -> dict | None:
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "deskbar-stale-alert/1.0"})
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_S) as resp:
+            if resp.status == 200:
+                return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        _log(f"fetch failed: {e}")
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -151,14 +186,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Error: token file {token_path} is empty", file=sys.stderr)
             return 2
 
-    payload = None
-    try:
-        req = urllib.request.Request(args.url, headers={"User-Agent": "deskbar-stale-alert/1.0"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            if resp.status == 200:
-                payload = json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        payload = None
+    payload = _with_retry(lambda: _fetch_payload(args.url))
 
     state_path = Path(args.state).expanduser()
     prev = {}
@@ -181,9 +209,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     for msg in messages:
-        if not _send_slack_message(token, args.user, msg):
-            print(f"Failed to send Slack message: {msg}", file=sys.stderr)
+        if not _with_retry(lambda: _send_slack_message(token, args.user, msg)):
+            _log(f"Failed to send Slack message: {msg}")
             return 1
+        _log(f"sent: {msg.splitlines()[0]}")
 
     _save_state(state_path, new_state)
     return 0
